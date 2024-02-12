@@ -445,8 +445,6 @@ ifeq ($(DEBUG), 1)
 		CPUOPTS += -O0 -g
 	endif
 	CPUOPTS += -D_DEBUG
-else ifeq ($(platform), emscripten)
-	CPUOPTS += -O3 -DNDEBUG
 else
 	CPUOPTS += -O2 -DNDEBUG
 endif

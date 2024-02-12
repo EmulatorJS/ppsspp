@@ -28,7 +28,10 @@
 #include "Common/File/DirListing.h"
 #include "Core/Loaders.h"
 #include "Core/FileSystems/BlockDevices.h"
+
+#ifndef __EMSCRIPTEN__
 #include "libchdr/chd.h"
+#endif
 
 extern "C"
 {
@@ -521,6 +524,7 @@ bool NPDRMDemoBlockDevice::ReadBlock(int blockNumber, u8 *outPtr, bool uncached)
 	return true;
 }
 
+#ifndef __EMSCRIPTEN__
 /*
  * CHD file
  */
@@ -702,3 +706,4 @@ bool CHDFileBlockDevice::ReadBlocks(u32 minBlock, int count, u8 *outPtr) {
 	}
 	return true;
 }
+#endif //ifndef __EMSCRIPTEN__

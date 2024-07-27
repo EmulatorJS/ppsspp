@@ -262,6 +262,8 @@ SOURCES_C += \
 	$(EXTDIR)/libchdr/src/libchdr_flac.c \
 	$(EXTDIR)/libchdr/src/libchdr_huffman.c
 
+endif
+
 INCFLAGS += -I$(EXTDIR)/at3_standalone
 
 SOURCES_CXX += \

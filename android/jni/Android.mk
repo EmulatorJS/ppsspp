@@ -109,6 +109,20 @@ SPIRV_CROSS_FILES := \
 NAETT_FILES := \
   ${SRC}/ext/naett/naett.c
 
+MINIMP3_FILES := \
+    ${SRC}/ext/minimp3/minimp3.cpp
+
+AT3_STANDALONE_FILES := \
+	${SRC}/ext/at3_standalone/atrac.cpp \
+	${SRC}/ext/at3_standalone/atrac3.cpp \
+	${SRC}/ext/at3_standalone/atrac3plus.cpp \
+	${SRC}/ext/at3_standalone/atrac3plusdec.cpp \
+	${SRC}/ext/at3_standalone/atrac3plusdsp.cpp \
+	${SRC}/ext/at3_standalone/get_bits.cpp \
+	${SRC}/ext/at3_standalone/compat.cpp \
+	${SRC}/ext/at3_standalone/fft.cpp \
+	${SRC}/ext/at3_standalone/mem.cpp
+
 RCHEEVOS_FILES := \
   ${SRC}/ext/rcheevos/src/rapi/rc_api_common.c \
   ${SRC}/ext/rcheevos/src/rapi/rc_api_editor.c \
@@ -132,10 +146,7 @@ RCHEEVOS_FILES := \
   ${SRC}/ext/rcheevos/src/rcheevos/runtime_progress.c \
   ${SRC}/ext/rcheevos/src/rcheevos/trigger.c \
   ${SRC}/ext/rcheevos/src/rcheevos/value.c \
-  ${SRC}/ext/rcheevos/src/rhash/cdreader.c \
-  ${SRC}/ext/rcheevos/src/rhash/hash.c \
-  ${SRC}/ext/rcheevos/src/rhash/md5.c \
-  ${SRC}/ext/rcheevos/src/rhash/aes.c
+  ${SRC}/ext/rcheevos/src/rhash/md5.c
 
 ifeq ($(TARGET_ARCH_ABI),arm64-v8a)
 	ADRENOTOOLS_FILES := \
@@ -220,6 +231,8 @@ EXEC_AND_LIB_FILES := \
   $(SPIRV_CROSS_FILES) \
   $(RCHEEVOS_FILES) \
   $(NAETT_FILES) \
+  $(MINIMP3_FILES) \
+  $(AT3_STANDALONE_FILES) \
   $(EXT_FILES) \
   $(NATIVE_FILES) \
   $(SRC)/Common/Buffer.cpp \
@@ -313,7 +326,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Common/ExceptionHandlerSetup.cpp \
   $(SRC)/Common/FakeCPUDetect.cpp \
   $(SRC)/Common/Log.cpp \
-  $(SRC)/Common/LogManager.cpp \
+  $(SRC)/Common/Log/LogManager.cpp \
   $(SRC)/Common/LogReporting.cpp \
   $(SRC)/Common/MemArenaAndroid.cpp \
   $(SRC)/Common/MemArenaDarwin.cpp \
@@ -468,6 +481,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/GPU/Common/ReinterpretFramebuffer.cpp \
   $(SRC)/GPU/Common/DepthBufferCommon.cpp \
   $(SRC)/GPU/Common/VertexDecoderCommon.cpp.arm \
+  $(SRC)/GPU/Common/VertexDecoderHandwritten.cpp.arm \
   $(SRC)/GPU/Common/TextureCacheCommon.cpp.arm \
   $(SRC)/GPU/Common/TextureScalerCommon.cpp.arm \
   $(SRC)/GPU/Common/ShaderCommon.cpp \
@@ -512,6 +526,7 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/ELF/PrxDecrypter.cpp \
   $(SRC)/Core/ELF/ParamSFO.cpp \
   $(SRC)/Core/HW/SimpleAudioDec.cpp \
+  $(SRC)/Core/HW/Atrac3Standalone.cpp \
   $(SRC)/Core/HW/AsyncIOManager.cpp \
   $(SRC)/Core/HW/BufferQueue.cpp \
   $(SRC)/Core/HW/Camera.cpp \
@@ -597,6 +612,8 @@ EXEC_AND_LIB_FILES := \
   $(SRC)/Core/HLE/Plugins.cpp \
   $(SRC)/Core/HLE/sceAdler.cpp \
   $(SRC)/Core/HLE/sceAtrac.cpp \
+  $(SRC)/Core/HLE/AtracCtx.cpp \
+  $(SRC)/Core/HLE/AtracCtx2.cpp \
   $(SRC)/Core/HLE/__sceAudio.cpp.arm \
   $(SRC)/Core/HLE/sceAudio.cpp.arm \
   $(SRC)/Core/HLE/sceAudiocodec.cpp.arm \
@@ -838,6 +855,7 @@ LOCAL_SRC_FILES := \
   $(SRC)/UI/TouchControlVisibilityScreen.cpp \
   $(SRC)/UI/CwCheatScreen.cpp \
   $(SRC)/UI/InstallZipScreen.cpp \
+  $(SRC)/UI/JitCompareScreen.cpp \
   $(SRC)/UI/OnScreenDisplay.cpp \
   $(SRC)/UI/ProfilerDraw.cpp \
   $(SRC)/UI/NativeApp.cpp \

@@ -56,6 +56,18 @@ size_t truncate_cpy(char *dest, size_t destSize, const char *src) {
 	return len;
 }
 
+size_t truncate_cpy(char *dest, size_t destSize, std::string_view src) {
+	if (src.size() > destSize - 1) {
+		memcpy(dest, src.data(), destSize - 1);
+		dest[destSize - 1] = 0;
+		return destSize - 1;
+	} else {
+		memcpy(dest, src.data(), src.size());
+		dest[src.size()] = 0;
+		return src.size();
+	}
+}
+
 const char* safe_string(const char* s) {
 	return s ? s : "(null)";
 }
@@ -304,12 +316,15 @@ void SplitString(std::string_view str, const char delim, std::vector<std::string
 
 void SplitString(std::string_view str, const char delim, std::vector<std::string> &output) {
 	size_t next = 0;
-	for (size_t pos = 0, len = str.length(); pos < len; ++pos) {
-		if (str[pos] == delim) {
-			output.emplace_back(str.substr(next, pos - next));
-			// Skip the delimiter itself.
-			next = pos + 1;
+	size_t pos = 0;
+	while (pos < str.length()) {
+		size_t delimPos = str.find(delim, pos);
+		if (delimPos == std::string_view::npos) {
+			break;
 		}
+		output.emplace_back(str.substr(next, delimPos - next));
+		next = delimPos + 1;
+		pos = delimPos + 1;
 	}
 
 	if (next == 0) {
@@ -319,7 +334,7 @@ void SplitString(std::string_view str, const char delim, std::vector<std::string
 	}
 }
 
-static std::string ApplyHtmlEscapes(std::string str) {
+static std::string ApplyHtmlEscapes(std::string_view str_view) {
 	struct Repl {
 		const char *a;
 		const char *b;
@@ -330,15 +345,15 @@ static std::string ApplyHtmlEscapes(std::string str) {
 		// Easy to add more cases.
 	};
 
+	std::string str(str_view);
 	for (const Repl &r : replacements) {
 		str = ReplaceAll(str, r.a, r.b);
 	}
-
 	return str;
 }
 
 // Meant for HTML listings and similar, so supports some HTML escapes.
-void GetQuotedStrings(const std::string& str, std::vector<std::string> &output) {
+void GetQuotedStrings(std::string_view str, std::vector<std::string> &output) {
 	size_t next = 0;
 	bool even = 0;
 	for (size_t pos = 0, len = str.length(); pos < len; ++pos) {
@@ -357,11 +372,11 @@ void GetQuotedStrings(const std::string& str, std::vector<std::string> &output) 
 	}
 }
 
+// TODO: this is quite inefficient.
 std::string ReplaceAll(std::string_view input, std::string_view src, std::string_view dest) {
 	size_t pos = 0;
 
 	std::string result(input);
-
 	if (src == dest)
 		return result;
 
@@ -376,8 +391,8 @@ std::string ReplaceAll(std::string_view input, std::string_view src, std::string
 	return result;
 }
 
-std::string UnescapeMenuString(const char *input, char *shortcutChar) {
-	size_t len = strlen(input);
+std::string UnescapeMenuString(std::string_view input, char *shortcutChar) {
+	size_t len = input.length();
 	std::string output;
 	output.reserve(len);
 	bool escaping = false;
@@ -402,8 +417,8 @@ std::string UnescapeMenuString(const char *input, char *shortcutChar) {
 	return output;
 }
 
-std::string ApplySafeSubstitutions(const char *format, std::string_view string1, std::string_view string2, std::string_view string3, std::string_view string4) {
-	size_t formatLen = strlen(format);
+std::string ApplySafeSubstitutions(std::string_view format, std::string_view string1, std::string_view string2, std::string_view string3, std::string_view string4) {
+	size_t formatLen = format.length();
 	std::string output;
 	output.reserve(formatLen + 20);
 	for (size_t i = 0; i < formatLen; i++) {
@@ -433,8 +448,8 @@ std::string ApplySafeSubstitutions(const char *format, std::string_view string1,
 	return output;
 }
 
-std::string ApplySafeSubstitutions(const char *format, int i1, int i2, int i3, int i4) {
-	size_t formatLen = strlen(format);
+std::string ApplySafeSubstitutions(std::string_view format, int i1, int i2, int i3, int i4) {
+	size_t formatLen = format.length();
 	std::string output;
 	output.reserve(formatLen + 20);
 	for (size_t i = 0; i < formatLen; i++) {

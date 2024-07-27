@@ -26,7 +26,7 @@ class TextureCacheCommon;
 
 enum SoftwareTransformAction {
 	SW_NOT_READY,
-	SW_DRAW_PRIMITIVES,
+	SW_DRAW_INDEXED,
 	SW_CLEAR,
 };
 
@@ -44,8 +44,6 @@ struct SoftwareTransformResult {
 
 	TransformedVertex *drawBuffer;
 	int drawNumTrans;
-	bool drawIndexed;
-
 	bool pixelMapped;
 };
 
@@ -57,10 +55,14 @@ struct SoftwareTransformParams {
 	TextureCacheCommon *texCache;
 	bool allowClear;
 	bool allowSeparateAlphaClear;
-	bool provokeFlatFirst;
 	bool flippedY;
 	bool usesHalfZ;
 };
+
+// Converts an index buffer to make the provoking vertex the last.
+// In-place. So, better not be doing this on GPU memory!
+// TODO: We could do this already during index decode.
+void IndexBufferProvokingLastToFirst(int prim, u16 *inds, int indsSize);
 
 class SoftwareTransform {
 public:
@@ -74,10 +76,10 @@ public:
 	void BuildDrawingParams(int prim, int vertexCount, u32 vertType, u16 *&inds, int indsSize, int &numDecodedVerts, int vertsSize, SoftwareTransformResult *result);
 
 protected:
-	void CalcCullParams(float &minZValue, float &maxZValue);
+	void CalcCullParams(float &minZValue, float &maxZValue) const;
 	bool ExpandRectangles(int vertexCount, int &numDecodedVerts, int vertsSize, u16 *&inds, int indsSize, const TransformedVertex *transformed, TransformedVertex *transformedExpanded, int &numTrans, bool throughmode, bool *pixelMappedExactly) const;
-	bool ExpandLines(int vertexCount, int &numDecodedVerts, int vertsSize, u16 *&inds, int indsSize, const TransformedVertex *transformed, TransformedVertex *transformedExpanded, int &numTrans, bool throughmode) const;
-	bool ExpandPoints(int vertexCount, int &numDecodedVerts, int vertsSize, u16 *&inds, int indsSize, const TransformedVertex *transformed, TransformedVertex *transformedExpanded, int &numTrans, bool throughmode) const;
+	static bool ExpandLines(int vertexCount, int &numDecodedVerts, int vertsSize, u16 *&inds, int indsSize, const TransformedVertex *transformed, TransformedVertex *transformedExpanded, int &numTrans, bool throughmode) ;
+	static bool ExpandPoints(int vertexCount, int &numDecodedVerts, int vertsSize, u16 *&inds, int indsSize, const TransformedVertex *transformed, TransformedVertex *transformedExpanded, int &numTrans, bool throughmode) ;
 
 	const SoftwareTransformParams &params_;
 	Lin::Matrix4x4 projMatrix_;

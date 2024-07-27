@@ -1041,7 +1041,7 @@ void ARM64XEmitter::QuickCallFunction(ARM64Reg scratchreg, const void *func) {
 	s64 distance = (s64)func - (s64)m_code;
 	distance >>= 2;  // Can only branch to opcode-aligned (4) addresses
 	if (!IsInRangeImm26(distance)) {
-		// WARN_LOG(DYNA_REC, "Distance too far in function call (%p to %p)! Using scratch.", m_code, func);
+		// WARN_LOG(Log::JIT, "Distance too far in function call (%p to %p)! Using scratch.", m_code, func);
 		MOVI2R(scratchreg, (uintptr_t)func);
 		BLR(scratchreg);
 	} else {
@@ -4295,7 +4295,7 @@ bool ARM64FloatEmitter::TryAnyMOVI(u8 size, ARM64Reg Rd, uint64_t elementValue) 
 
 	uint64_t value = elementValue;
 	if (size != 64) {
-		uint64_t masked = elementValue & ((1 << size) - 1);
+		uint64_t masked = elementValue & ((1ULL << size) - 1ULL);
 		for (int i = size; i < 64; ++i) {
 			value |= masked << i;
 		}

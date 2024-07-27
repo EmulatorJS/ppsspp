@@ -152,24 +152,24 @@ static void InitSDLAudioDevice(const std::string &name = "") {
 	if (!startDevice.empty()) {
 		audioDev = SDL_OpenAudioDevice(startDevice.c_str(), 0, &fmt, &g_retFmt, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
 		if (audioDev <= 0) {
-			WARN_LOG(AUDIO, "Failed to open audio device: %s", startDevice.c_str());
+			WARN_LOG(Log::Audio, "Failed to open audio device: %s", startDevice.c_str());
 		}
 	}
 	if (audioDev <= 0) {
-		INFO_LOG(AUDIO, "SDL: Trying a different audio device");
+		INFO_LOG(Log::Audio, "SDL: Trying a different audio device");
 		audioDev = SDL_OpenAudioDevice(nullptr, 0, &fmt, &g_retFmt, SDL_AUDIO_ALLOW_FREQUENCY_CHANGE);
 	}
 	if (audioDev <= 0) {
-		ERROR_LOG(AUDIO, "Failed to open audio device: %s", SDL_GetError());
+		ERROR_LOG(Log::Audio, "Failed to open audio device: %s", SDL_GetError());
 	} else {
 		if (g_retFmt.samples != fmt.samples) // Notify, but still use it
-			ERROR_LOG(AUDIO, "Output audio samples: %d (requested: %d)", g_retFmt.samples, fmt.samples);
+			ERROR_LOG(Log::Audio, "Output audio samples: %d (requested: %d)", g_retFmt.samples, fmt.samples);
 		if (g_retFmt.format != fmt.format || g_retFmt.channels != fmt.channels) {
-			ERROR_LOG(AUDIO, "Sound buffer format does not match requested format.");
-			ERROR_LOG(AUDIO, "Output audio freq: %d (requested: %d)", g_retFmt.freq, fmt.freq);
-			ERROR_LOG(AUDIO, "Output audio format: %d (requested: %d)", g_retFmt.format, fmt.format);
-			ERROR_LOG(AUDIO, "Output audio channels: %d (requested: %d)", g_retFmt.channels, fmt.channels);
-			ERROR_LOG(AUDIO, "Provided output format does not match requirement, turning audio off");
+			ERROR_LOG(Log::Audio, "Sound buffer format does not match requested format.");
+			ERROR_LOG(Log::Audio, "Output audio freq: %d (requested: %d)", g_retFmt.freq, fmt.freq);
+			ERROR_LOG(Log::Audio, "Output audio format: %d (requested: %d)", g_retFmt.format, fmt.format);
+			ERROR_LOG(Log::Audio, "Output audio channels: %d (requested: %d)", g_retFmt.channels, fmt.channels);
+			ERROR_LOG(Log::Audio, "Provided output format does not match requirement, turning audio off");
 			SDL_CloseAudioDevice(audioDev);
 		}
 		SDL_PauseAudioDevice(audioDev, 0);
@@ -206,13 +206,12 @@ static void UpdateScreenDPI(SDL_Window *window) {
 
 // Simple implementations of System functions
 
-
-void System_Toast(const char *text) {
+void System_Toast(std::string_view text) {
 #ifdef _WIN32
 	std::wstring str = ConvertUTF8ToWString(text);
 	MessageBox(0, str.c_str(), L"Toast!", MB_ICONINFORMATION);
 #else
-	puts(text);
+    printf("%*.s", (int)text.length(), text.data());
 #endif
 }
 
@@ -224,7 +223,7 @@ void System_Vibrate(int length_ms) {
 	// Ignore on PC
 }
 
-bool System_MakeRequest(SystemRequestType type, int requestId, const std::string &param1, const std::string &param2, int param3) {
+bool System_MakeRequest(SystemRequestType type, int requestId, const std::string &param1, const std::string &param2, int64_t param3, int64_t param4) {
 	switch (type) {
 	case SystemRequestType::RESTART_APP:
 		g_RestartRequested = true;
@@ -274,9 +273,8 @@ bool System_MakeRequest(SystemRequestType type, int requestId, const std::string
 				g_requestManager.PostSystemFailure(requestId);
 			}
 		};
-		DarwinFileSystemServices services;
 		BrowseFileType fileType = (BrowseFileType)param3;
-		services.presentDirectoryPanel(callback, /* allowFiles = */ true, /* allowDirectories = */ false, fileType);
+		DarwinFileSystemServices::presentDirectoryPanel(callback, /* allowFiles = */ true, /* allowDirectories = */ false, fileType);
 		return true;
 	}
 	case SystemRequestType::BROWSE_FOR_FOLDER:
@@ -288,8 +286,7 @@ bool System_MakeRequest(SystemRequestType type, int requestId, const std::string
 				g_requestManager.PostSystemFailure(requestId);
 			}
 		};
-		DarwinFileSystemServices services;
-		services.presentDirectoryPanel(callback, /* allowFiles = */ false, /* allowDirectories = */ true);
+		DarwinFileSystemServices::presentDirectoryPanel(callback, /* allowFiles = */ false, /* allowDirectories = */ true);
 		return true;
 	}
 #endif
@@ -368,7 +365,7 @@ void System_LaunchUrl(LaunchUrlType urlType, const char *url) {
 		webWifiCreate(&conf, NULL, url, uuid, 0);
 		webWifiShow(&conf, NULL);
 #elif defined(MOBILE_DEVICE)
-		INFO_LOG(SYSTEM, "Would have gone to %s but LaunchBrowser is not implemented on this platform", url);
+		INFO_LOG(Log::System, "Would have gone to %s but LaunchBrowser is not implemented on this platform", url);
 #elif defined(_WIN32)
 		std::wstring wurl = ConvertUTF8ToWString(url);
 		ShellExecute(NULL, L"open", wurl.c_str(), NULL, NULL, SW_SHOWNORMAL);
@@ -378,7 +375,7 @@ void System_LaunchUrl(LaunchUrlType urlType, const char *url) {
 		std::string command = std::string("xdg-open ") + url;
 		int err = system(command.c_str());
 		if (err) {
-			INFO_LOG(SYSTEM, "Would have gone to %s but xdg-utils seems not to be installed", url);
+			INFO_LOG(Log::System, "Would have gone to %s but xdg-utils seems not to be installed", url);
 		}
 #endif
 		break;
@@ -386,7 +383,7 @@ void System_LaunchUrl(LaunchUrlType urlType, const char *url) {
 	case LaunchUrlType::EMAIL_ADDRESS:
 	{
 #if defined(MOBILE_DEVICE)
-		INFO_LOG(SYSTEM, "Would have opened your email client for %s but LaunchEmail is not implemented on this platform", url);
+		INFO_LOG(Log::System, "Would have opened your email client for %s but LaunchEmail is not implemented on this platform", url);
 #elif defined(_WIN32)
 		std::wstring mailto = std::wstring(L"mailto:") + ConvertUTF8ToWString(url);
 		ShellExecute(NULL, L"open", mailto.c_str(), NULL, NULL, SW_SHOWNORMAL);
@@ -397,7 +394,7 @@ void System_LaunchUrl(LaunchUrlType urlType, const char *url) {
 		std::string command = std::string("xdg-email ") + url;
 		int err = system(command.c_str());
 		if (err) {
-			INFO_LOG(SYSTEM, "Would have gone to %s but xdg-utils seems not to be installed", url);
+			INFO_LOG(Log::System, "Would have gone to %s but xdg-utils seems not to be installed", url);
 		}
 #endif
 		break;
@@ -493,7 +490,7 @@ std::vector<std::string> System_GetPropertyStringVec(SystemProperty prop) {
 	}
 }
 
-int System_GetPropertyInt(SystemProperty prop) {
+int64_t System_GetPropertyInt(SystemProperty prop) {
 	switch (prop) {
 	case SYSPROP_AUDIO_SAMPLE_RATE:
 		return g_retFmt.freq;
@@ -936,6 +933,14 @@ static void ProcessSDLEvent(SDL_Window *window, const SDL_Event &event, InputSta
 			break;
 		case SDL_BUTTON_RIGHT:
 			{
+				// Right button only emits mouse move events. This is weird,
+				// but consistent with Windows. Needs cleanup.
+				TouchInput input{};
+				input.x = mx;
+				input.y = my;
+				input.flags = TOUCH_MOVE | TOUCH_MOUSE;
+				input.id = 0;
+				NativeTouch(input);
 				KeyInput key(DEVICE_ID_MOUSE, NKCODE_EXT_MOUSEBUTTON_2, KEY_DOWN);
 				NativeKey(key);
 			}
@@ -1009,7 +1014,6 @@ static void ProcessSDLEvent(SDL_Window *window, const SDL_Event &event, InputSta
 				input.x = mx;
 				input.y = my;
 				input.flags = TOUCH_UP | TOUCH_MOUSE;
-				input.id = 0;
 				NativeTouch(input);
 				KeyInput key(DEVICE_ID_MOUSE, NKCODE_EXT_MOUSEBUTTON_1, KEY_UP);
 				NativeKey(key);
@@ -1017,6 +1021,13 @@ static void ProcessSDLEvent(SDL_Window *window, const SDL_Event &event, InputSta
 			break;
 		case SDL_BUTTON_RIGHT:
 			{
+				// Right button only emits mouse move events. This is weird,
+				// but consistent with Windows. Needs cleanup.
+				TouchInput input{};
+				input.x = mx;
+				input.y = my;
+				input.flags = TOUCH_MOVE | TOUCH_MOUSE;
+				NativeTouch(input);
 				KeyInput key(DEVICE_ID_MOUSE, NKCODE_EXT_MOUSEBUTTON_2, KEY_UP);
 				NativeKey(key);
 			}
@@ -1096,6 +1107,8 @@ int main(int argc, char *argv[]) {
 			return 0;
 		}
 	}
+
+	TimeInit();
 
 #ifdef HAVE_LIBNX
 	socketInitializeDefault();
@@ -1304,9 +1317,9 @@ int main(int argc, char *argv[]) {
 			x = g_Config.iWindowX;
 		if (g_Config.iWindowY != -1)
 			y = g_Config.iWindowY;
-		if (g_Config.iWindowWidth > 0)
+		if (g_Config.iWindowWidth > 0 && set_xres <= 0)
 			w = g_Config.iWindowWidth;
-		if (g_Config.iWindowHeight > 0)
+		if (g_Config.iWindowHeight > 0 && set_yres <= 0)
 			h = g_Config.iWindowHeight;
 	}
 
@@ -1407,10 +1420,12 @@ int main(int argc, char *argv[]) {
 	bool waitOnExit = g_Config.iGPUBackend == (int)GPUBackend::OPENGL;
 
 	if (!mainThreadIsRender) {
-		// We should only be a message pump
+		// Vulkan mode uses this.
+		// We should only be a message pump. This allows for lower latency
+		// input events, and so on.
 		while (true) {
 			SDL_Event event;
-			while (SDL_PollEvent(&event)) {
+			while (SDL_WaitEventTimeout(&event, 100)) {
 				ProcessSDLEvent(window, event, &inputTracker);
 			}
 			if (g_QuitRequested || g_RestartRequested)
@@ -1465,7 +1480,7 @@ int main(int argc, char *argv[]) {
 			EmuThreadStop("shutdown");
 			// Skipping GL calls, the old context is gone.
 			while (graphicsContext->ThreadFrame()) {
-				INFO_LOG(SYSTEM, "graphicsContext->ThreadFrame executed to clear buffers");
+				INFO_LOG(Log::System, "graphicsContext->ThreadFrame executed to clear buffers");
 			}
 			EmuThreadJoin();
 			graphicsContext->ThreadEnd();

@@ -507,11 +507,11 @@ void UIDialogScreenWithBackground::sendMessage(UIMessage message, const char *va
 	HandleCommonMessages(message, value, screenManager(), this);
 }
 
-PromptScreen::PromptScreen(const Path &gamePath, std::string message, std::string yesButtonText, std::string noButtonText, std::function<void(bool)> callback)
+PromptScreen::PromptScreen(const Path &gamePath, std::string_view message, std::string_view yesButtonText, std::string_view noButtonText, std::function<void(bool)> callback)
 	: UIDialogScreenWithGameBackground(gamePath), message_(message), callback_(callback) {
 	auto di = GetI18NCategory(I18NCat::DIALOG);
-	yesButtonText_ = di->T(yesButtonText.c_str());
-	noButtonText_ = di->T(noButtonText.c_str());
+	yesButtonText_ = di->T(yesButtonText);
+	noButtonText_ = di->T(noButtonText);
 }
 
 void PromptScreen::CreateViews() {
@@ -553,11 +553,13 @@ UI::EventReturn PromptScreen::OnNo(UI::EventParams &e) {
 }
 
 void PromptScreen::TriggerFinish(DialogResult result) {
-	callback_(result == DR_OK || result == DR_YES);
+	if (callback_) {
+		callback_(result == DR_OK || result == DR_YES);
+	}
 	UIDialogScreenWithBackground::TriggerFinish(result);
 }
 
-TextureShaderScreen::TextureShaderScreen(const std::string &title) : ListPopupScreen(title) {}
+TextureShaderScreen::TextureShaderScreen(std::string_view title) : ListPopupScreen(title) {}
 
 void TextureShaderScreen::CreateViews() {
 	auto ps = GetI18NCategory(I18NCat::TEXTURESHADERS);
@@ -568,7 +570,7 @@ void TextureShaderScreen::CreateViews() {
 	for (int i = 0; i < (int)shaders_.size(); i++) {
 		if (shaders_[i].section == g_Config.sTextureShaderName)
 			selected = i;
-		items.push_back(ps->T(shaders_[i].section.c_str(), shaders_[i].name.c_str()));
+		items.push_back(std::string(ps->T(shaders_[i].section.c_str(), shaders_[i].name.c_str())));
 	}
 	adaptor_ = UI::StringVectorListAdaptor(items, selected);
 
@@ -581,7 +583,7 @@ void TextureShaderScreen::OnCompleted(DialogResult result) {
 	g_Config.sTextureShaderName = shaders_[listView_->GetSelected()].section;
 }
 
-NewLanguageScreen::NewLanguageScreen(const std::string &title) : ListPopupScreen(title) {
+NewLanguageScreen::NewLanguageScreen(std::string_view title) : ListPopupScreen(title) {
 	// Disable annoying encoding warning
 #ifdef _MSC_VER
 #pragma warning(disable:4566)
@@ -761,7 +763,7 @@ void LogoScreen::DrawForeground(UIContext &dc) {
 	auto gr = GetI18NCategory(I18NCat::GRAPHICS);
 	char temp[256];
 	// Manually formatting UTF-8 is fun.  \xXX doesn't work everywhere.
-	snprintf(temp, sizeof(temp), "%s Henrik Rydg%c%crd", cr->T("created", "Created by"), 0xC3, 0xA5);
+	snprintf(temp, sizeof(temp), "%s Henrik Rydg%c%crd", cr->T_cstr("created", "Created by"), 0xC3, 0xA5);
 	if (System_GetPropertyBool(SYSPROP_APP_GOLD)) {
 		dc.Draw()->DrawImage(ImageID("I_ICONGOLD"), bounds.centerX() - 120, bounds.centerY() - 30, 1.2f, 0xFFFFFFFF, ALIGN_CENTER);
 	} else {
@@ -772,7 +774,7 @@ void LogoScreen::DrawForeground(UIContext &dc) {
 	dc.SetFontScale(1.0f, 1.0f);
 	dc.SetFontStyle(dc.theme->uiFont);
 	dc.DrawText(temp, bounds.centerX(), bounds.centerY() + 40, textColor, ALIGN_CENTER);
-	dc.DrawText(cr->T("license", "Free Software under GPL 2.0+"), bounds.centerX(), bounds.centerY() + 70, textColor, ALIGN_CENTER);
+	dc.DrawText(cr->T_cstr("license", "Free Software under GPL 2.0+"), bounds.centerX(), bounds.centerY() + 70, textColor, ALIGN_CENTER);
 
 	int ppsspp_org_y = bounds.h / 2 + 130;
 	dc.DrawText("www.ppsspp.org", bounds.centerX(), ppsspp_org_y, textColor, ALIGN_CENTER);
@@ -785,7 +787,7 @@ void LogoScreen::DrawForeground(UIContext &dc) {
 	// Add some emoji for testing.
 	apiName += CodepointToUTF8(0x1F41B) + CodepointToUTF8(0x1F41C) + CodepointToUTF8(0x1F914);
 #endif
-	dc.DrawText(gr->T(apiName), bounds.centerX(), ppsspp_org_y + 50, textColor, ALIGN_CENTER);
+	dc.DrawText(gr->T_cstr(apiName.c_str()), bounds.centerX(), ppsspp_org_y + 50, textColor, ALIGN_CENTER);
 #endif
 
 	dc.Flush();
@@ -897,7 +899,7 @@ void CreditsScreen::DrawForeground(UIContext &dc) {
 	specialthankssolarmystic += cr->T("testing");
 	specialthankssolarmystic += ')';
 
-	const char *credits[] = {
+	std::string_view credits[] = {
 		System_GetPropertyBool(SYSPROP_APP_GOLD) ? "PPSSPP Gold" : "PPSSPP",
 		"",
 		cr->T("title", "A fast and portable PSP emulator"),
@@ -976,7 +978,7 @@ void CreditsScreen::DrawForeground(UIContext &dc) {
 		"",
 		"",
 		cr->T("tools", "Free tools used:"),
-#ifdef __ANDROID__
+#if PPSSPP_PLATFORM(ANDROID)
 		"Android SDK + NDK",
 #endif
 #if defined(USING_QT_UI)
@@ -988,6 +990,17 @@ void CreditsScreen::DrawForeground(UIContext &dc) {
 		"CMake",
 		"freetype2",
 		"zlib",
+		"rcheevos",
+		"SPIRV-Cross",
+		"armips",
+		"Basis Universal",
+		"cityhash",
+		"zstd",
+		"glew",
+		"libchdr",
+		"minimp3",
+		"xxhash",
+		"naett-http",
 		"PSP SDK",
 		"",
 		"",
@@ -1008,7 +1021,6 @@ void CreditsScreen::DrawForeground(UIContext &dc) {
 		"",
 		cr->T("info5", "PSP is a trademark by Sony, Inc."),
 	};
-
 
 	// TODO: This is kinda ugly, done on every frame...
 	char temp[256];
@@ -1053,7 +1065,7 @@ SettingInfoMessage::SettingInfoMessage(int align, float cutOffY, UI::AnchorLayou
 	Add(new UI::Spacer(10.0f));
 }
 
-void SettingInfoMessage::Show(const std::string &text, const UI::View *refView) {
+void SettingInfoMessage::Show(std::string_view text, const UI::View *refView) {
 	if (refView) {
 		Bounds b = refView->GetBounds();
 		const UI::AnchorLayoutParams *lp = GetLayoutParams()->As<UI::AnchorLayoutParams>();

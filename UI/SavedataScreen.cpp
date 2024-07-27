@@ -267,9 +267,8 @@ UI::EventReturn SavedataPopupScreen::OnDeleteButtonClick(UI::EventParams &e) {
 	return UI::EVENT_DONE;
 }
 
-static std::string CleanSaveString(const std::string &str) {
-	std::string s = ReplaceAll(str, "&", "&&");
-	s = ReplaceAll(s, "\n", " ");
+static std::string CleanSaveString(std::string_view str) {
+	std::string s = ReplaceAll(str, "\n", " ");
 	s = ReplaceAll(s, "\r", " ");
 	return s;
 }
@@ -337,8 +336,8 @@ void SavedataButton::Draw(UIContext &dc) {
 		w = nw;
 	}
 
-	int txOffset = down_ ? 4 : 0;
-	txOffset = 0;
+	// int txOffset = down_ ? 4 : 0;
+	int txOffset = 0;
 
 	Bounds overlayBounds = bounds_;
 

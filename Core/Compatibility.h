@@ -22,7 +22,7 @@
 #include <set>
 
 // Compatibility flags are controlled by assets/compat.ini.
-// Alternatively, if PSP/SYSTEM/compat.ini exists, it is merged on top, to enable editing
+// Alternatively, if PSP/System/compat.ini exists, it is merged on top, to enable editing
 // the file on Android for tests.
 //
 // This file is not meant to be user-editable, although is kept as a separate ini
@@ -66,7 +66,7 @@ struct CompatFlags {
 	bool ForceUMDDelay;
 	bool ForceMax60FPS;
 	bool GoWFramerateHack60;
-	bool GoWFramerateHack30;
+	bool FramerateHack30;
 	bool JitInvalidationHack;
 	bool HideISOFiles;
 	bool MoreAccurateVMMUL;
@@ -108,6 +108,7 @@ struct CompatFlags {
 	bool TacticsOgreEliminateDebugReadback;
 	bool FramebufferAllowLargeVerticalOffset;
 	bool DisableMemcpySlicing;
+	bool ForceEnableGPUReadback;
 };
 
 struct VRCompat {
@@ -115,6 +116,7 @@ struct VRCompat {
 	bool ForceFlatScreen;
 	bool IdentityViewHack;
 	int MirroringVariant;
+	bool ProjectionHack;
 	bool Skyplane;
 	float UnitsPerMeter;
 };

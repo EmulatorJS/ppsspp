@@ -79,7 +79,7 @@ void AsyncImageFileView::DeviceRestored(Draw::DrawContext *draw) {
 void AsyncImageFileView::Draw(UIContext &dc) {
 	using namespace Draw;
 	if (!texture_ && !textureFailed_ && !filename_.empty()) {
-		texture_ = std::unique_ptr<ManagedTexture>(new ManagedTexture(dc.GetDrawContext(), filename_.c_str(), ImageFileType::DETECT, true));
+		texture_ = std::make_unique<ManagedTexture>(dc.GetDrawContext(), filename_.c_str(), ImageFileType::DETECT, true);
 		if (!texture_.get())
 			textureFailed_ = true;
 	}
@@ -96,8 +96,8 @@ void AsyncImageFileView::Draw(UIContext &dc) {
 		dc.Flush();
 		dc.RebindTexture();
 		if (!text_.empty()) {
-			dc.DrawText(text_.c_str(), bounds_.centerX() + 1, bounds_.centerY() + 1, 0x80000000, ALIGN_CENTER | FLAG_DYNAMIC_ASCII);
-			dc.DrawText(text_.c_str(), bounds_.centerX(), bounds_.centerY(), 0xFFFFFFFF, ALIGN_CENTER | FLAG_DYNAMIC_ASCII);
+			dc.DrawText(text_, bounds_.centerX() + 1, bounds_.centerY() + 1, 0x80000000, ALIGN_CENTER | FLAG_DYNAMIC_ASCII);
+			dc.DrawText(text_, bounds_.centerX(), bounds_.centerY(), 0xFFFFFFFF, ALIGN_CENTER | FLAG_DYNAMIC_ASCII);
 		}
 	} else {
 		if (!texture_ || texture_->Failed()) {
@@ -110,7 +110,7 @@ void AsyncImageFileView::Draw(UIContext &dc) {
 			}
 		}
 		if (!text_.empty()) {
-			dc.DrawText(text_.c_str(), bounds_.centerX(), bounds_.centerY(), 0xFFFFFFFF, ALIGN_CENTER | FLAG_DYNAMIC_ASCII);
+			dc.DrawText(text_, bounds_.centerX(), bounds_.centerY(), 0xFFFFFFFF, ALIGN_CENTER | FLAG_DYNAMIC_ASCII);
 		}
 	}
 }

@@ -26,6 +26,13 @@
 #include "Core/KeyMap.h"
 #include "Core/System.h"
 
+enum VRMatrix {
+	VR_PROJECTION_MATRIX,
+	VR_VIEW_MATRIX_LEFT_EYE,
+	VR_VIEW_MATRIX_RIGHT_EYE,
+	VR_MATRIX_COUNT
+};
+
 enum VRMirroring {
 	VR_MIRRORING_AXIS_X,
 	VR_MIRRORING_AXIS_Y,
@@ -44,10 +51,9 @@ static int vr3DGeometryCount = 0;
 static long vrCompat[VR_COMPAT_MAX];
 static bool vrFlatForced = false;
 static bool vrFlatGame = false;
-static double vrFov[2] = {};
+static float vrMatrix[VR_MATRIX_COUNT][16];
 static bool vrMirroring[VR_MIRRORING_COUNT];
 static int vrMirroringVariant = 0;
-static float vrViewMatrix[2][16];
 static XrView vrView[2];
 
 static void (*cbNativeAxis)(const AxisInput *axis, size_t count);
@@ -154,11 +160,12 @@ void InitVROnAndroid(void* vm, void* activity, const char* system, int version, 
 	if (strcmp(vendor, "PICO") == 0) {
 		VR_SetPlatformFLag(VR_PLATFORM_CONTROLLER_PICO, true);
 		VR_SetPlatformFLag(VR_PLATFORM_EXTENSION_INSTANCE, true);
-	} else if ((strcmp(vendor, "META") == 0) || (strcmp(vendor, "OCULUS") == 0)) {
+		VR_SetConfigFloat(VR_CONFIG_VIEWPORT_SUPERSAMPLING, 1.0f);
+	} else {
 		VR_SetPlatformFLag(VR_PLATFORM_CONTROLLER_QUEST, true);
-		VR_SetPlatformFLag(VR_PLATFORM_EXTENSION_FOVEATION, true);
 		VR_SetPlatformFLag(VR_PLATFORM_EXTENSION_PASSTHROUGH, true);
 		VR_SetPlatformFLag(VR_PLATFORM_EXTENSION_PERFORMANCE, true);
+		VR_SetConfigFloat(VR_CONFIG_VIEWPORT_SUPERSAMPLING, 1.3f);
 	}
 	VR_SetPlatformFLag(VR_PLATFORM_RENDERER_VULKAN, (GPUBackend)g_Config.iGPUBackend == GPUBackend::VULKAN);
 
@@ -381,15 +388,9 @@ void UpdateVRInput(bool haptics, float dp_xscale, float dp_yscale) {
 						g_Config.fCameraHeight = clampFloat(g_Config.fCameraHeight, -150.0f, 150.0f);
 						break;
 					case JOYSTICK_AXIS_Z:
-						if (g_Config.bEnableVR) {
-							if (axis.second < -0.75f) g_Config.fHeadUpDisplayScale -= 0.01f;
-							if (axis.second > 0.75f) g_Config.fHeadUpDisplayScale += 0.01f;
-							g_Config.fHeadUpDisplayScale = clampFloat(g_Config.fHeadUpDisplayScale, 0.0f, 1.5f);
-						} else {
-							if (axis.second < -0.75f) g_Config.fCanvas3DDistance += 0.1f;
-							if (axis.second > 0.75f) g_Config.fCanvas3DDistance -= 0.1f;
-							g_Config.fCanvas3DDistance = clampFloat(g_Config.fCanvas3DDistance, 1.0f, 15.0f);
-						}
+						if (axis.second < -0.75f) g_Config.fCameraPitch -= 0.5f;
+						if (axis.second > 0.75f) g_Config.fCameraPitch += 0.5f;
+						g_Config.fCameraPitch = clampFloat(g_Config.fCameraPitch, -90.0f, 90.0f);
 						break;
 					case JOYSTICK_AXIS_RZ:
 						if (axis.second > 0.75f) g_Config.fCameraDistance -= 0.1f;
@@ -427,6 +428,8 @@ void UpdateVRInput(bool haptics, float dp_xscale, float dp_yscale) {
 		float speed = (cx + cy) / 2;
 		float x = cx - tan(ToRadians(angles.y - VR_GetConfigFloat(VR_CONFIG_MENU_YAW))) * speed;
 		float y = cy - tan(ToRadians(angles.x)) * speed * VR_GetConfigFloat(VR_CONFIG_CANVAS_ASPECT);
+		x *= VR_GetConfigFloat(VR_CONFIG_VIEWPORT_SUPERSAMPLING);
+		y *= VR_GetConfigFloat(VR_CONFIG_VIEWPORT_SUPERSAMPLING);
 
 		//set renderer
 		VR_SetConfig(VR_CONFIG_MOUSE_X, (int)x);
@@ -530,11 +533,10 @@ bool UpdateVRKeys(const KeyInput &key) {
 
 	// Reset camera adjust
 	if (pspKeys[VIRTKEY_VR_CAMERA_ADJUST] && pspKeys[VIRTKEY_VR_CAMERA_RESET]) {
-		g_Config.fCanvas3DDistance = 3.0f;
 		g_Config.fCameraHeight = 0;
 		g_Config.fCameraSide = 0;
 		g_Config.fCameraDistance = 0;
-		g_Config.fHeadUpDisplayScale = 0.3f;
+		g_Config.fCameraPitch = 0;
 	}
 
 	//block keys by camera adjust
@@ -619,7 +621,7 @@ void* BindVRFramebuffer() {
 
 bool StartVRRender() {
 	if (!VR_GetConfig(VR_CONFIG_VIEWPORT_VALID)) {
-		VR_InitRenderer(VR_GetEngine(), IsMultiviewSupported());
+		VR_InitRenderer(VR_GetEngine());
 		VR_SetConfig(VR_CONFIG_VIEWPORT_VALID, true);
 	}
 
@@ -636,27 +638,46 @@ bool StartVRRender() {
 		}
 		UpdateVRViewMatrices();
 
-		// Calculate field of view
+		// Update projection matrix
 		XrFovf fov = {};
-		for (auto & eye : vrView) {
-			fov.angleLeft += eye.fov.angleLeft / 2.0f;
-			fov.angleRight += eye.fov.angleRight / 2.0f;
-			fov.angleUp += eye.fov.angleUp / 2.0f;
-			fov.angleDown += eye.fov.angleDown / 2.0f;
+		for (int eye = 0; eye < ovrMaxNumEyes; eye++) {
+			fov.angleLeft += vrView[eye].fov.angleLeft / 2.0f;
+			fov.angleRight += vrView[eye].fov.angleRight / 2.0f;
+			fov.angleUp += vrView[eye].fov.angleUp / 2.0f;
+			fov.angleDown += vrView[eye].fov.angleDown / 2.0f;
 		}
-		vrFov[0] = 2.0 / (tan(fov.angleRight) - tan(fov.angleLeft));
-		vrFov[1] = 2.0 / (tan(fov.angleUp) - tan(fov.angleDown));
+		float nearZ = 0.01f;
+		float fovHack = g_Config.fFieldOfViewPercentage / 200.0f;
+		float tanAngleLeft = tanf(fov.angleLeft);
+		float tanAngleRight = tanf(fov.angleRight);
+		float tanAngleDown = tanf(fov.angleDown);
+		float tanAngleUp = tanf(fov.angleUp);
+		float M[16] = {};
+		M[0] = 2 / (tanAngleRight - tanAngleLeft);
+		M[5] = 2 / (tanAngleUp - tanAngleDown);
+		M[8] = (tanAngleRight + tanAngleLeft) / (tanAngleRight - tanAngleLeft);
+		M[9] = (tanAngleUp + tanAngleDown) / (tanAngleUp - tanAngleDown);
+		M[10] = -1;
+		M[11] = -(fovHack + fovHack);
+		M[14] = -(nearZ + nearZ);
+		if (g_Config.bAntiFlickeringFlow) {
+			M[0] /= 2.0f;
+		}
+		memcpy(vrMatrix[VR_PROJECTION_MATRIX], M, sizeof(float) * 16);
 
 		// Decide if the scene is 3D or not
 		VR_SetConfigFloat(VR_CONFIG_CANVAS_ASPECT, 480.0f / 272.0f);
 		if (g_Config.bEnableVR && !vrIncompatibleGame && (appMode == VR_GAME_MODE) && vrScene) {
 			VR_SetConfig(VR_CONFIG_MODE, vrStereo ? VR_MODE_STEREO_6DOF : VR_MODE_MONO_6DOF);
+			VR_SetConfig(VR_CONFIG_REPROJECTION, g_Config.bAntiFlickeringFlow ? 0 : 1);
 			vrFlatGame = false;
-		} else {
+		} else if (appMode == VR_GAME_MODE) {
 			VR_SetConfig(VR_CONFIG_MODE, vrStereo ? VR_MODE_STEREO_SCREEN : VR_MODE_MONO_SCREEN);
 			if (IsGameVRScene()) {
 				vrFlatGame = true;
 			}
+		} else {
+			VR_SetConfig(VR_CONFIG_MODE, VR_MODE_MONO_SCREEN);
 		}
 		vr3DGeometryCount /= 2;
 
@@ -664,9 +685,8 @@ bool StartVRRender() {
 		vrCompat[VR_COMPAT_SKYPLANE] = PSP_CoreParameter().compat.vrCompat().Skyplane;
 
 		// Set customizations
-		__DisplaySetFramerate(g_Config.bForce72Hz ? 72 : 60);
 		VR_SetConfigFloat(VR_CONFIG_CANVAS_DISTANCE, vrScene && (appMode == VR_GAME_MODE) ? g_Config.fCanvas3DDistance : g_Config.fCanvasDistance);
-		VR_SetConfig(VR_CONFIG_PASSTHROUGH, g_Config.bPassthrough);
+		VR_SetConfig(VR_CONFIG_PASSTHROUGH, g_Config.bPassthrough && IsPassthroughSupported());
 		return true;
 	}
 	return false;
@@ -691,15 +711,7 @@ int GetVRFBOIndex() {
 
 int GetVRPassesCount() {
 	bool vrStereo = !PSP_CoreParameter().compat.vrCompat().ForceMono && g_Config.bEnableStereo;
-	if (!IsMultiviewSupported() && vrStereo) {
-		return 2;
-	} else {
-		return 1;
-	}
-}
-
-bool IsMultiviewSupported() {
-	return false;
+	return vrStereo ? 2 : 1;
 }
 
 bool IsPassthroughSupported() {
@@ -789,17 +801,24 @@ void UpdateVRParams(float* projMatrix) {
 	}
 }
 
-void UpdateVRProjection(float* projMatrix, float* leftEye, float* rightEye) {
-	float hmdProjection[16];
-	memcpy(hmdProjection, projMatrix, 16 * sizeof(float));
-	hmdProjection[0] = vrFov[0];
-	hmdProjection[5] = vrFov[1];
-	memcpy(leftEye, hmdProjection, 16 * sizeof(float));
-	memcpy(rightEye, hmdProjection, 16 * sizeof(float));
+void UpdateVRProjection(float* projMatrix, float* output) {
+	for (int i = 0; i < 16; i++) {
+		if (PSP_CoreParameter().compat.vrCompat().ProjectionHack && ((i == 8) || (i == 9))) {
+			output[i] = 0;
+		} else if (fabs(projMatrix[i]) > 0) {
+			output[i] = vrMatrix[VR_PROJECTION_MATRIX][i];
+			if ((output[i] > 0) != (projMatrix[i] > 0)) {
+				output[i] *= -1.0f;
+			}
+		} else {
+			output[i] = 0;
+		}
+	}
 }
 
 void UpdateVRView(float* leftEye, float* rightEye) {
 	float* dst[] = {leftEye, rightEye};
+	float* matrix[] = {vrMatrix[VR_VIEW_MATRIX_LEFT_EYE], vrMatrix[VR_VIEW_MATRIX_RIGHT_EYE]};
 	for (int index = 0; index < 2; index++) {
 
 		// Validate the view matrix
@@ -813,7 +832,7 @@ void UpdateVRView(float* leftEye, float* rightEye) {
 
 		// Get view matrix from the headset
 		Lin::Matrix4x4 hmdView = {};
-		memcpy(hmdView.m, vrViewMatrix[index], 16 * sizeof(float));
+		memcpy(hmdView.m, matrix[index], 16 * sizeof(float));
 
 		// Combine the matrices
 		Lin::Matrix4x4 renderView = hmdView * gameView;
@@ -852,23 +871,13 @@ void UpdateVRViewMatrices() {
 		invView = XrPosef_Inverse(invView);
 	}
 
-	// apply camera pitch offset
+	// apply camera pitch
+	float s = sin(ToRadians(g_Config.fCameraPitch));
+	float c = cos(ToRadians(g_Config.fCameraPitch));
 	XrVector3f positionOffset = {g_Config.fCameraSide, g_Config.fCameraHeight, g_Config.fCameraDistance};
-	if (!flatScreen) {
-		float pitchOffset = 0;
-		switch (g_Config.iCameraPitch) {
-			case 1: //Top view -> First person
-				pitchOffset = 90;
-				positionOffset = {positionOffset.x, positionOffset.z, -positionOffset.y};
-				break;
-			case 2: //First person -> Top view
-				pitchOffset = -90;
-				positionOffset = {positionOffset.x, -positionOffset.z + 20, positionOffset.y};
-				break;
-		}
-		XrQuaternionf rotationOffset = XrQuaternionf_CreateFromVectorAngle({1, 0, 0}, ToRadians(pitchOffset));
-		invView.orientation = XrQuaternionf_Multiply(rotationOffset, invView.orientation);
-	}
+	positionOffset = {positionOffset.x, s * positionOffset.z + c * positionOffset.y, c * positionOffset.z - s * positionOffset.y};
+	XrQuaternionf rotationOffset = XrQuaternionf_CreateFromVectorAngle({1, 0, 0}, ToRadians(g_Config.fCameraPitch));
+	invView.orientation = XrQuaternionf_Multiply(rotationOffset, invView.orientation);
 
 	// decompose rotation
 	XrVector3f rotation = XrQuaternionf_ToEulerAngles(invView.orientation);
@@ -884,12 +893,16 @@ void UpdateVRViewMatrices() {
 	XrQuaternionf yaw = XrQuaternionf_CreateFromVectorAngle({0, 1, 0}, mYaw);
 	XrQuaternionf roll = XrQuaternionf_CreateFromVectorAngle({0, 0, 1}, mRoll);
 	invView.orientation = XrQuaternionf_Multiply(roll, XrQuaternionf_Multiply(pitch, yaw));
+	if (!VR_GetConfig(VR_CONFIG_REPROJECTION)) {
+        float axis = vrMirroring[VR_MIRRORING_PITCH] ? -1.0f : 1.0f;
+		invView.orientation = XrQuaternionf_CreateFromVectorAngle({axis, 0, 0}, ToRadians(g_Config.fCameraPitch));
+	}
 
 	float M[16];
 	XrQuaternionf_ToMatrix4f(&invView.orientation, M);
 
 	// Apply 6Dof head movement
-	if (g_Config.bEnable6DoF && !g_Config.bHeadRotationEnabled && (g_Config.iCameraPitch == 0)) {
+	if (g_Config.bEnable6DoF && !g_Config.bHeadRotationEnabled) {
 		M[3] -= vrView[0].pose.position.x * (vrMirroring[VR_MIRRORING_AXIS_X] ? -1.0f : 1.0f) * scale;
 		M[7] -= vrView[0].pose.position.y * (vrMirroring[VR_MIRRORING_AXIS_Y] ? -1.0f : 1.0f) * scale;
 		M[11] -= vrView[0].pose.position.z * (vrMirroring[VR_MIRRORING_AXIS_Z] ? -1.0f : 1.0f) * scale;
@@ -922,12 +935,12 @@ void UpdateVRViewMatrices() {
 		M[11] += side.z;
 	}
 
-	for (int eye = 0; eye < ovrMaxNumEyes; eye++) {
+	for (int matrix = VR_VIEW_MATRIX_LEFT_EYE; matrix <= VR_VIEW_MATRIX_RIGHT_EYE; matrix++) {
 
 		// Stereoscopy
 		bool vrStereo = !PSP_CoreParameter().compat.vrCompat().ForceMono && g_Config.bEnableStereo;
 		if (vrStereo) {
-			bool mirrored = vrMirroring[VR_MIRRORING_AXIS_Z] ^ (eye == 1);
+			bool mirrored = vrMirroring[VR_MIRRORING_AXIS_Z] ^ (matrix == VR_VIEW_MATRIX_RIGHT_EYE);
 			float dx = fabs(vrView[1].pose.position.x - vrView[0].pose.position.x);
 			float dy = fabs(vrView[1].pose.position.y - vrView[0].pose.position.y);
 			float dz = fabs(vrView[1].pose.position.z - vrView[0].pose.position.z);
@@ -940,6 +953,6 @@ void UpdateVRViewMatrices() {
 			M[11] += separation.z;
 		}
 
-		memcpy(vrViewMatrix[eye], M, sizeof(float) * 16);
+		memcpy(vrMatrix[matrix], M, sizeof(float) * 16);
 	}
 }

@@ -8,11 +8,16 @@
 #include "Common/Data/Collections/TinySet.h"
 
 class VulkanContext;
+struct VKRImage;
 
 class VulkanBarrierBatch {
 public:
+	VulkanBarrierBatch() : imageBarriers_(4) {}
 	~VulkanBarrierBatch();
 
+	bool empty() const { return imageBarriers_.empty(); }
+
+	// TODO: Replace this with TransitionImage.
 	VkImageMemoryBarrier *Add(VkImage image, VkPipelineStageFlags srcStageMask, VkPipelineStageFlags dstStageMask, VkDependencyFlags dependencyFlags) {
 		srcStageMask_ |= srcStageMask;
 		dstStageMask_ |= dstStageMask;
@@ -32,34 +37,6 @@ public:
 		return &barrier;
 	}
 
-	void Flush(VkCommandBuffer cmd) {
-		if (!imageBarriers_.empty()) {
-			vkCmdPipelineBarrier(cmd, srcStageMask_, dstStageMask_, dependencyFlags_, 0, nullptr, 0, nullptr, (uint32_t)imageBarriers_.size(), imageBarriers_.data());
-			imageBarriers_.clear();
-			srcStageMask_ = 0;
-			dstStageMask_ = 0;
-			dependencyFlags_ = 0;
-		}
-	}
-
-	bool empty() const { return imageBarriers_.empty(); }
-
-private:
-	FastVec<VkImageMemoryBarrier> imageBarriers_;
-	VkPipelineStageFlags srcStageMask_ = 0;
-	VkPipelineStageFlags dstStageMask_ = 0;
-	VkDependencyFlags dependencyFlags_ = 0;
-};
-
-// Collects multiple barriers into one, then flushes it.
-// Reusable after a flush, in case you want to reuse the allocation made by the vector.
-// However, not thread safe in any way!
-class VulkanBarrier {
-public:
-	VulkanBarrier() : imageBarriers_(4) {}
-
-	bool empty() const { return imageBarriers_.empty(); }
-
 	void TransitionImage(
 		VkImage image, int baseMip, int numMipLevels, int numLayers, VkImageAspectFlags aspectMask,
 		VkImageLayout oldImageLayout, VkImageLayout newImageLayout,
@@ -69,14 +46,17 @@ public:
 
 	// Automatically determines access and stage masks from layouts.
 	// Not universally usable, but works for PPSSPP's use.
-	void TransitionImageAuto(VkImage image, int baseMip, int numMipLevels, int numLayers, VkImageAspectFlags aspectMask,
-		VkImageLayout oldImageLayout, VkImageLayout newImageLayout);
+	void TransitionColorImageAuto(VkImage image, VkImageLayout *imageLayout, VkImageLayout newImageLayout, int baseMip, int numMipLevels, int numLayers);
+	void TransitionDepthStencilImageAuto(VkImage image, VkImageLayout *imageLayout, VkImageLayout newImageLayout, int baseMip, int numMipLevels, int numLayers);
+
+	void TransitionColorImageAuto(VKRImage *image, VkImageLayout newImageLayout);
+	void TransitionDepthStencilImageAuto(VKRImage *image, VkImageLayout newImageLayout);
 
 	void Flush(VkCommandBuffer cmd);
 
 private:
+	FastVec<VkImageMemoryBarrier> imageBarriers_;
 	VkPipelineStageFlags srcStageMask_ = 0;
 	VkPipelineStageFlags dstStageMask_ = 0;
-	FastVec<VkImageMemoryBarrier> imageBarriers_;
 	VkDependencyFlags dependencyFlags_ = 0;
 };

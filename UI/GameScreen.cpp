@@ -37,6 +37,7 @@
 #include "Core/System.h"
 #include "Core/Loaders.h"
 #include "Core/Util/GameDB.h"
+#include "Core/HLE/Plugins.h"
 #include "UI/OnScreenDisplay.h"
 #include "UI/CwCheatScreen.h"
 #include "UI/EmuScreen.h"
@@ -150,9 +151,15 @@ void GameScreen::CreateViews() {
 		tvVerified_ = infoLayout->Add(new NoticeView(NoticeLevel::INFO, ga->T("Click \"Calculate CRC\" to verify ISO"), "", new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT)));
 		tvVerified_->SetVisibility(UI::V_GONE);
 		tvVerified_->SetSquishy(true);
-		if (info->badCHD) {
-			auto e = GetI18NCategory(I18NCat::ERRORS);
-			infoLayout->Add(new NoticeView(NoticeLevel::ERROR, e->T("BadCHD", "Bad CHD file.\nCompress using \"chdman createdvd\" for good performance."), "", new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT)))->SetSquishy(true);
+
+		// Show plugin info, if any. Later might add checkboxes.
+		auto plugins = HLEPlugins::FindPlugins(info->id, g_Config.sLanguageIni);
+		if (!plugins.empty()) {
+			auto sy = GetI18NCategory(I18NCat::SYSTEM);
+			infoLayout->Add(new TextView(sy->T("Plugins"), ALIGN_LEFT, true));
+			for (const auto &plugin : plugins) {
+				infoLayout->Add(new TextView(ApplySafeSubstitutions("* %1", plugin.name), ALIGN_LEFT, true));
+			}
 		}
 	} else {
 		tvTitle_ = nullptr;
@@ -301,23 +308,23 @@ ScreenRenderFlags GameScreen::render(ScreenRenderMode mode) {
 	if (info->Ready(GameInfoFlags::SIZE | GameInfoFlags::UNCOMPRESSED_SIZE)) {
 		char temp[256];
 		if (tvGameSize_) {
-			snprintf(temp, sizeof(temp), "%s: %s", ga->T("Game"), NiceSizeFormat(info->gameSizeOnDisk).c_str());
+			snprintf(temp, sizeof(temp), "%s: %s", ga->T_cstr("Game"), NiceSizeFormat(info->gameSizeOnDisk).c_str());
 			if (info->gameSizeUncompressed != info->gameSizeOnDisk) {
 				size_t len = strlen(temp);
-				snprintf(temp + len, sizeof(temp) - len, " (%s: %s)", ga->T("Uncompressed"), NiceSizeFormat(info->gameSizeUncompressed).c_str());
+				snprintf(temp + len, sizeof(temp) - len, " (%s: %s)", ga->T_cstr("Uncompressed"), NiceSizeFormat(info->gameSizeUncompressed).c_str());
 			}
 			tvGameSize_->SetText(temp);
 		}
 		if (tvSaveDataSize_) {
 			if (info->saveDataSize > 0) {
-				snprintf(temp, sizeof(temp), "%s: %s", ga->T("SaveData"), NiceSizeFormat(info->saveDataSize).c_str());
+				snprintf(temp, sizeof(temp), "%s: %s", ga->T_cstr("SaveData"), NiceSizeFormat(info->saveDataSize).c_str());
 				tvSaveDataSize_->SetText(temp);
 			} else {
 				tvSaveDataSize_->SetVisibility(UI::V_GONE);
 			}
 		}
 		if (info->installDataSize > 0 && tvInstallDataSize_) {
-			snprintf(temp, sizeof(temp), "%s: %1.2f %s", ga->T("InstallData"), (float) (info->installDataSize) / 1024.f / 1024.f, ga->T("MB"));
+			snprintf(temp, sizeof(temp), "%s: %1.2f %s", ga->T_cstr("InstallData"), (float) (info->installDataSize) / 1024.f / 1024.f, ga->T_cstr("MB"));
 			tvInstallDataSize_->SetText(temp);
 			tvInstallDataSize_->SetVisibility(UI::V_VISIBLE);
 		}
@@ -364,7 +371,7 @@ ScreenRenderFlags GameScreen::render(ScreenRenderMode mode) {
 				}
 			}
 			if (found) {
-				tvVerified_->SetText(ga->T("ISO OK according to the Redump project"));
+				tvVerified_->SetText(ga->T("ISO OK according to the ReDump project"));
 				tvVerified_->SetLevel(NoticeLevel::SUCCESS);
 				tvVerified_->SetVisibility(UI::V_VISIBLE);
 			} else {
@@ -374,7 +381,7 @@ ScreenRenderFlags GameScreen::render(ScreenRenderMode mode) {
 				tvVerified_->SetVisibility(UI::V_GONE);
 			}
 		} else if (tvVerified_) {
-			// tvVerified_->SetText(ga->T("Game ID unknown - not in the Redump database"));
+			// tvVerified_->SetText(ga->T("Game ID unknown - not in the ReDump database"));
 			// tvVerified_->SetVisibility(UI::V_VISIBLE);
 			// tvVerified_->SetLevel(NoticeLevel::WARN);
 			tvVerified_->SetVisibility(UI::V_GONE);
@@ -399,7 +406,7 @@ ScreenRenderFlags GameScreen::render(ScreenRenderMode mode) {
 					// tvVerified_->SetText(ga->T("File size incorrect, bad or modified ISO"));
 					// tvVerified_->SetVisibility(UI::V_VISIBLE);
 					// tvVerified_->SetLevel(NoticeLevel::ERROR);
-					// INFO_LOG(LOADER, "File size %d not matching game DB", (int)info->gameSizeUncompressed);
+					// INFO_LOG(Log::Loader, "File size %d not matching game DB", (int)info->gameSizeUncompressed);
 				} else {
 					tvVerified_->SetText(ga->T("Click \"Calculate CRC\" to verify ISO"));
 					tvVerified_->SetVisibility(UI::V_VISIBLE);
@@ -543,7 +550,7 @@ UI::EventReturn GameScreen::OnRemoveFromRecent(UI::EventParams &e) {
 
 class SetBackgroundPopupScreen : public PopupScreen {
 public:
-	SetBackgroundPopupScreen(const std::string &title, const Path &gamePath)
+	SetBackgroundPopupScreen(std::string_view title, const Path &gamePath)
 		: PopupScreen(title), gamePath_(gamePath) {
 		timeStart_ = time_now_d();
 	}

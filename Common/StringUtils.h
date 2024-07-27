@@ -86,19 +86,24 @@ void SplitString(std::string_view str, const char delim, std::vector<std::string
 // Try to avoid this when possible, in favor of the string_view version.
 void SplitString(std::string_view str, const char delim, std::vector<std::string> &output);
 
-void GetQuotedStrings(const std::string& str, std::vector<std::string>& output);
+void GetQuotedStrings(std::string_view str, std::vector<std::string> &output);
 
 std::string ReplaceAll(std::string_view input, std::string_view src, std::string_view dest);
 
 // Takes something like R&eplace and returns Replace, plus writes 'e' to *shortcutChar
 // if not nullptr. Useful for Windows menu strings.
-std::string UnescapeMenuString(const char *input, char *shortcutChar);
+std::string UnescapeMenuString(std::string_view input, char *shortcutChar);
 
 void SkipSpace(const char **ptr);
 
 size_t truncate_cpy(char *dest, size_t destSize, const char *src);
 template<size_t Count>
 inline size_t truncate_cpy(char(&out)[Count], const char *src) {
+	return truncate_cpy(out, Count, src);
+}
+size_t truncate_cpy(char *dest, size_t destSize, std::string_view src);
+template<size_t Count>
+inline size_t truncate_cpy(char(&out)[Count], std::string_view src) {
 	return truncate_cpy(out, Count, src);
 }
 
@@ -125,5 +130,5 @@ bool SplitPath(const std::string& full_path, std::string* _pPath, std::string* _
 // Replaces %1, %2, %3 in format with arg1, arg2, arg3.
 // Much safer than snprintf and friends.
 // For mixes of strings and ints, manually convert the ints to strings.
-std::string ApplySafeSubstitutions(const char *format, std::string_view string1, std::string_view string2 = "", std::string_view string3 = "", std::string_view string4 = "");
-std::string ApplySafeSubstitutions(const char *format, int i1, int i2 = 0, int i3 = 0, int i4 = 0);
+std::string ApplySafeSubstitutions(std::string_view format, std::string_view string1, std::string_view string2 = "", std::string_view string3 = "", std::string_view string4 = "");
+std::string ApplySafeSubstitutions(std::string_view format, int i1, int i2 = 0, int i3 = 0, int i4 = 0);

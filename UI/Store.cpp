@@ -183,7 +183,7 @@ void HttpImageFileView::Draw(UIContext &dc) {
 		}
 
 		if (!textureData_.empty()) {
-			texture_ = CreateTextureFromFileData(dc.GetDrawContext(), (const uint8_t *)(textureData_.data()), (int)textureData_.size(), ImageFileType::DETECT, false, "store_icon");
+			texture_ = CreateTextureFromFileData(dc.GetDrawContext(), (const uint8_t *)(textureData_.data()), textureData_.size(), ImageFileType::DETECT, false, "store_icon");
 			if (!texture_)
 				textureFailed_ = true;
 			textureData_.clear();
@@ -332,7 +332,7 @@ void ProductView::CreateViews() {
 	}
 
 	float size = entry_.size / (1024.f * 1024.f);
-	Add(new TextView(StringFromFormat("%s: %.2f %s", st->T("Size"), size, st->T("MB"))));
+	Add(new TextView(StringFromFormat("%s: %.2f %s", st->T_cstr("Size"), size, st->T_cstr("MB"))));
 }
 
 void ProductView::Update() {
@@ -372,7 +372,7 @@ UI::EventReturn ProductView::OnInstall(UI::EventParams &e) {
 	if (cancelButton_) {
 		cancelButton_->SetVisibility(UI::V_VISIBLE);
 	}
-	INFO_LOG(SYSTEM, "Triggering install of '%s'", fileUrl.c_str());
+	INFO_LOG(Log::System, "Triggering install of '%s'", fileUrl.c_str());
 	g_GameManager.DownloadAndInstall(fileUrl);
 	return UI::EVENT_DONE;
 }
@@ -430,7 +430,7 @@ void StoreScreen::update() {
 			RecreateViews();
 		} else {
 			// Failed to contact store. Don't do anything.
-			ERROR_LOG(IO, "Download failed : error code %d", resultCode_);
+			ERROR_LOG(Log::IO, "Download failed : error code %d", resultCode_);
 			connectionError_ = true;
 			loading_ = false;
 			RecreateViews();
@@ -445,7 +445,7 @@ void StoreScreen::ParseListing(const std::string &json) {
 	using namespace json;
 	JsonReader reader(json.c_str(), json.size());
 	if (!reader.ok() || !reader.root()) {
-		ERROR_LOG(IO, "Error parsing JSON from store");
+		ERROR_LOG(Log::IO, "Error parsing JSON from store");
 		connectionError_ = true;
 		RecreateViews();
 		return;
@@ -456,7 +456,7 @@ void StoreScreen::ParseListing(const std::string &json) {
 		entries_.clear();
 		for (const JsonNode *pgame : entries->value) {
 			JsonGet game = pgame->value;
-			StoreEntry e;
+			StoreEntry e{};
 			e.type = ENTRY_PBPZIP;
 			e.name = GetTranslatedString(game, "name");
 			e.description = GetTranslatedString(game, "description", "");
@@ -464,6 +464,12 @@ void StoreScreen::ParseListing(const std::string &json) {
 			e.size = game.getInt("size");
 			e.downloadURL = game.getStringOr("download-url", "");
 			e.iconURL = game.getStringOr("icon-url", "");
+			e.contentRating = game.getInt("content-rating", 0);
+#if PPSSPP_PLATFORM(IOS_APP_STORE)
+			if (e.contentRating >= 100) {
+				continue;
+			}
+#endif
 			e.hidden = false;  // NOTE: Handling of the "hidden" flag is broken in old versions of PPSSPP. Do not use.
 			const char *file = game.getStringOr("file", nullptr);
 			if (!file)
@@ -483,9 +489,9 @@ void StoreScreen::CreateViews() {
 	auto mm = GetI18NCategory(I18NCat::MAINMENU);
 
 	// Top bar
-	LinearLayout *topBar = root_->Add(new LinearLayout(ORIENT_HORIZONTAL));
-	topBar->Add(new Button(di->T("Back")))->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
-	titleText_ = new TextView(mm->T("PPSSPP Homebrew Store"));
+	LinearLayout *topBar = root_->Add(new LinearLayout(ORIENT_HORIZONTAL, new LinearLayoutParams(FILL_PARENT, 64.0f)));
+	topBar->Add(new Choice(di->T("Back"), new LinearLayoutParams(WRAP_CONTENT, FILL_PARENT)))->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
+	titleText_ = new TextView(mm->T("PPSSPP Homebrew Store"), ALIGN_VCENTER, false, new LinearLayoutParams(WRAP_CONTENT, FILL_PARENT));
 	topBar->Add(titleText_);
 	UI::Drawable solid(0xFFbd9939);
 	topBar->SetBG(solid);
@@ -494,7 +500,7 @@ void StoreScreen::CreateViews() {
 	if (connectionError_ || loading_) {
 		auto st = GetI18NCategory(I18NCat::STORE);
 		content = new LinearLayout(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, FILL_PARENT, 1.0f));
-		content->Add(new TextView(loading_ ? std::string(st->T("Loading...")) : StringFromFormat("%s: %d", st->T("Connection Error"), resultCode_)));
+		content->Add(new TextView(loading_ ? std::string(st->T("Loading...")) : StringFromFormat("%s: %d", st->T_cstr("Connection Error"), resultCode_)));
 		if (!loading_) {
 			content->Add(new Button(di->T("Retry")))->OnClick.Handle(this, &StoreScreen::OnRetry);
 

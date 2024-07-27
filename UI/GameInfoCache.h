@@ -109,6 +109,10 @@ public:
 	std::string GetTitle();
 	void SetTitle(const std::string &newTitle);
 
+	const Path &GetFilePath() const {
+		return filePath_;
+	}
+
 	bool Ready(GameInfoFlags flags) {
 		std::unique_lock<std::mutex> guard(lock);
 		// Avoid the operator, we want to check all the bits.
@@ -147,7 +151,6 @@ public:
 	int disc_total = 0;
 	int disc_number = 0;
 	int region = -1;
-	bool badCHD = false;
 	IdentifiedFileType fileType;
 	ParamSFOData paramSFO;
 	bool hasConfig = false;

@@ -22,6 +22,7 @@ XrVector3f hmdorientation;
 
 XrPassthroughFB passthrough = XR_NULL_HANDLE;
 XrPassthroughLayerFB passthroughLayer = XR_NULL_HANDLE;
+bool passthroughRunning = false;
 DECL_PFN(xrCreatePassthroughFB);
 DECL_PFN(xrDestroyPassthroughFB);
 DECL_PFN(xrPassthroughStartFB);
@@ -130,6 +131,9 @@ void VR_GetResolution(engine_t* engine, int *pWidth, int *pHeight) {
 		*pWidth = width;
 		*pHeight = height;
 	}
+
+	*pWidth = (int)(*pWidth * VR_GetConfigFloat(VR_CONFIG_VIEWPORT_SUPERSAMPLING));
+	*pHeight = (int)(*pHeight * VR_GetConfigFloat(VR_CONFIG_VIEWPORT_SUPERSAMPLING));
 }
 
 void VR_Recenter(engine_t* engine) {
@@ -185,7 +189,7 @@ void VR_Recenter(engine_t* engine) {
 	VR_SetConfigFloat(VR_CONFIG_MENU_YAW, 0.0f);
 }
 
-void VR_InitRenderer( engine_t* engine, bool multiview ) {
+void VR_InitRenderer( engine_t* engine ) {
 	if (initialized) {
 		VR_DestroyRenderer(engine);
 	}
@@ -229,20 +233,16 @@ void VR_InitRenderer( engine_t* engine, bool multiview ) {
 	}
 
 	projections = (XrView*)(malloc(ovrMaxNumEyes * sizeof(XrView)));
+	for (int eye = 0; eye < ovrMaxNumEyes; eye++) {
+		memset(&projections[eye], 0, sizeof(XrView));
+		projections[eye].type = XR_TYPE_VIEW;
+	}
 
 	void* vulkanContext = nullptr;
 	if (VR_GetPlatformFlag(VR_PLATFORM_RENDERER_VULKAN)) {
 		vulkanContext = &engine->graphicsBindingVulkan;
 	}
-	ovrRenderer_Create(engine->appState.Session, &engine->appState.Renderer,
-			engine->appState.ViewConfigurationView[0].recommendedImageRectWidth,
-			engine->appState.ViewConfigurationView[0].recommendedImageRectHeight,
-			multiview, vulkanContext);
-#ifdef ANDROID
-	if (VR_GetPlatformFlag(VR_PLATFORM_EXTENSION_FOVEATION)) {
-		ovrRenderer_SetFoveation(&engine->appState.Instance, &engine->appState.Session, &engine->appState.Renderer, XR_FOVEATION_LEVEL_HIGH_TOP_FB, 0, XR_FOVEATION_DYNAMIC_LEVEL_ENABLED_FB);
-	}
-#endif
+	ovrRenderer_Create(engine->appState.Session, &engine->appState.Renderer, eyeW, eyeH, vulkanContext);
 
 	if (VR_GetPlatformFlag(VRPlatformFlag::VR_PLATFORM_EXTENSION_PASSTHROUGH)) {
 		XrPassthroughCreateInfoFB ptci = {XR_TYPE_PASSTHROUGH_CREATE_INFO_FB};
@@ -257,14 +257,15 @@ void VR_InitRenderer( engine_t* engine, bool multiview ) {
 		}
 
 		OXR(xrPassthroughStartFB(passthrough));
-		OXR(xrPassthroughLayerResumeFB(passthroughLayer));
 	}
 	initialized = true;
 }
 
 void VR_DestroyRenderer( engine_t* engine ) {
 	if (VR_GetPlatformFlag(VRPlatformFlag::VR_PLATFORM_EXTENSION_PASSTHROUGH)) {
-		OXR(xrPassthroughLayerPauseFB(passthroughLayer));
+		if (passthroughRunning) {
+			OXR(xrPassthroughLayerPauseFB(passthroughLayer));
+		}
 		OXR(xrPassthroughPauseFB(passthrough));
 		OXR(xrDestroyPassthroughFB(passthrough));
 		passthrough = XR_NULL_HANDLE;
@@ -288,6 +289,16 @@ bool VR_InitFrame( engine_t* engine ) {
 		stageBoundsDirty = false;
 	}
 
+	// Update passthrough
+	if (passthroughRunning != (VR_GetConfig(VR_CONFIG_PASSTHROUGH) != 0)) {
+		if (VR_GetConfig(VR_CONFIG_PASSTHROUGH)) {
+			OXR(xrPassthroughLayerResumeFB(passthroughLayer));
+		} else {
+			OXR(xrPassthroughLayerPauseFB(passthroughLayer));
+		}
+		passthroughRunning = (VR_GetConfig(VR_CONFIG_PASSTHROUGH) != 0);
+	}
+
 	// NOTE: OpenXR does not use the concept of frame indices. Instead,
 	// XrWaitFrame returns the predicted display time.
 	XrFrameWaitInfo waitFrameInfo = {};
@@ -300,17 +311,9 @@ bool VR_InitFrame( engine_t* engine ) {
 	OXR(xrWaitFrame(engine->appState.Session, &waitFrameInfo, &frameState));
 	engine->predictedDisplayTime = frameState.predictedDisplayTime;
 
-	// Get the HMD pose, predicted for the middle of the time period during which
-	// the new eye images will be displayed. The number of frames predicted ahead
-	// depends on the pipeline depth of the engine and the synthesis rate.
-	// The better the prediction, the less black will be pulled in at the edges.
-	XrFrameBeginInfo beginFrameDesc = {};
-	beginFrameDesc.type = XR_TYPE_FRAME_BEGIN_INFO;
-	beginFrameDesc.next = NULL;
-	OXR(xrBeginFrame(engine->appState.Session, &beginFrameDesc));
-
 	XrViewLocateInfo projectionInfo = {};
 	projectionInfo.type = XR_TYPE_VIEW_LOCATE_INFO;
+	projectionInfo.next = NULL;
 	projectionInfo.viewConfigurationType = engine->appState.ViewportConfig.viewConfigurationType;
 	projectionInfo.displayTime = frameState.predictedDisplayTime;
 	projectionInfo.space = engine->appState.CurrentSpace;
@@ -327,11 +330,15 @@ bool VR_InitFrame( engine_t* engine ) {
 			projectionCapacityInput,
 			&projectionCountOutput,
 			projections));
-	if ((viewState.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT) == 0 ||
-	    (viewState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) == 0) {
-		return false;  // There is no valid tracking poses for the views.
-	}
 
+	// Get the HMD pose, predicted for the middle of the time period during which
+	// the new eye images will be displayed. The number of frames predicted ahead
+	// depends on the pipeline depth of the engine and the synthesis rate.
+	// The better the prediction, the less black will be pulled in at the edges.
+	XrFrameBeginInfo beginFrameDesc = {};
+	beginFrameDesc.type = XR_TYPE_FRAME_BEGIN_INFO;
+	beginFrameDesc.next = NULL;
+	OXR(xrBeginFrame(engine->appState.Session, &beginFrameDesc));
 
 	fov = {};
 	for (int eye = 0; eye < ovrMaxNumEyes; eye++) {
@@ -375,31 +382,21 @@ void VR_EndFrame( engine_t* engine ) {
 }
 
 void VR_FinishFrame( engine_t* engine ) {
-
-	if (VR_GetPlatformFlag(VRPlatformFlag::VR_PLATFORM_EXTENSION_PASSTHROUGH) && VR_GetConfig(VR_CONFIG_PASSTHROUGH)) {
-		if (passthroughLayer != XR_NULL_HANDLE) {
-			XrCompositionLayerPassthroughFB passthrough_layer = {XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB};
-			passthrough_layer.layerHandle = passthroughLayer;
-			passthrough_layer.flags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
-			passthrough_layer.space = XR_NULL_HANDLE;
-			engine->appState.Layers[engine->appState.LayerCount++].Passthrough = passthrough_layer;
-		}
-	}
-
 	int vrMode = vrConfig[VR_CONFIG_MODE];
 	XrCompositionLayerProjectionView projection_layer_elements[2] = {};
-	if ((vrMode == VR_MODE_MONO_6DOF) || (vrMode == VR_MODE_STEREO_6DOF)) {
+	bool headTracking = (vrMode == VR_MODE_MONO_6DOF) || (vrMode == VR_MODE_SBS_6DOF) || (vrMode == VR_MODE_STEREO_6DOF);
+	bool reprojection = vrConfig[VR_CONFIG_REPROJECTION];
+	if (headTracking && reprojection) {
 		VR_SetConfigFloat(VR_CONFIG_MENU_YAW, hmdorientation.y);
 
-		for (int eye = 0; eye < ovrMaxNumEyes; eye++) {
-			int imageLayer = engine->appState.Renderer.Multiview ? eye : 0;
+		for (int eye = 0; eye < ovrMaxNumEyes; eye++) {;
 			ovrFramebuffer* frameBuffer = &engine->appState.Renderer.FrameBuffer[0];
 			XrPosef pose = invViewTransform[0];
 			if (vrMode != VR_MODE_MONO_6DOF) {
-				if (!engine->appState.Renderer.Multiview) {
-					frameBuffer = &engine->appState.Renderer.FrameBuffer[eye];
-				}
 				pose = invViewTransform[eye];
+			}
+			if (vrMode == VR_MODE_STEREO_6DOF) {
+				frameBuffer = &engine->appState.Renderer.FrameBuffer[eye];
 			}
 
 			memset(&projection_layer_elements[eye], 0, sizeof(XrCompositionLayerProjectionView));
@@ -413,7 +410,14 @@ void VR_FinishFrame( engine_t* engine ) {
 			projection_layer_elements[eye].subImage.imageRect.offset.y = 0;
 			projection_layer_elements[eye].subImage.imageRect.extent.width = frameBuffer->ColorSwapChain.Width;
 			projection_layer_elements[eye].subImage.imageRect.extent.height = frameBuffer->ColorSwapChain.Height;
-			projection_layer_elements[eye].subImage.imageArrayIndex = imageLayer;
+			projection_layer_elements[eye].subImage.imageArrayIndex = 0;
+
+			if (vrMode == VR_MODE_SBS_6DOF) {
+				projection_layer_elements[eye].subImage.imageRect.extent.width /= 2;
+				if (eye == 1) {
+					projection_layer_elements[eye].subImage.imageRect.offset.x += frameBuffer->ColorSwapChain.Width / 2;
+				}
+			}
 		}
 
 		XrCompositionLayerProjection projection_layer = {};
@@ -425,7 +429,7 @@ void VR_FinishFrame( engine_t* engine ) {
 		projection_layer.views = projection_layer_elements;
 
 		engine->appState.Layers[engine->appState.LayerCount++].Projection = projection_layer;
-	} else if ((vrMode == VR_MODE_MONO_SCREEN) || (vrMode == VR_MODE_STEREO_SCREEN)) {
+	} else {
 
 		// Flat screen pose
 		float distance = VR_GetConfigFloat(VR_CONFIG_CANVAS_DISTANCE) / 4.0f - 1.0f;
@@ -457,16 +461,23 @@ void VR_FinishFrame( engine_t* engine ) {
 		cylinder_layer.radius = 2.0f;
 		cylinder_layer.centralAngle = (float)(M_PI * 0.5);
 		cylinder_layer.aspectRatio = VR_GetConfigFloat(VR_CONFIG_CANVAS_ASPECT);
+		if (headTracking && !reprojection) {
+			float width = engine->appState.ViewConfigurationView[0].recommendedImageRectWidth;
+			float height = engine->appState.ViewConfigurationView[0].recommendedImageRectHeight;
+			cylinder_layer.aspectRatio = 2.0f * width / height;
+			cylinder_layer.centralAngle = (float)(M_PI);
+		}
 
 		// Build the cylinder layer
-		if (vrMode == VR_MODE_MONO_SCREEN) {
+		if ((vrMode == VR_MODE_MONO_SCREEN) || (vrMode == VR_MODE_MONO_6DOF)) {
 			cylinder_layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
 			engine->appState.Layers[engine->appState.LayerCount++].Cylinder = cylinder_layer;
-		} else if (engine->appState.Renderer.Multiview) {
+		} else if ((vrMode == VR_MODE_SBS_SCREEN) || (vrMode == VR_MODE_SBS_6DOF)) {
 			cylinder_layer.eyeVisibility = XR_EYE_VISIBILITY_LEFT;
+			cylinder_layer.subImage.imageRect.extent.width /= 2;
 			engine->appState.Layers[engine->appState.LayerCount++].Cylinder = cylinder_layer;
 			cylinder_layer.eyeVisibility = XR_EYE_VISIBILITY_RIGHT;
-			cylinder_layer.subImage.imageArrayIndex = 1;
+			cylinder_layer.subImage.imageRect.offset.x += cylinder_layer.subImage.imageRect.extent.width;
 			engine->appState.Layers[engine->appState.LayerCount++].Cylinder = cylinder_layer;
 		} else {
 			cylinder_layer.eyeVisibility = XR_EYE_VISIBILITY_LEFT;
@@ -475,8 +486,6 @@ void VR_FinishFrame( engine_t* engine ) {
 			cylinder_layer.subImage.swapchain = engine->appState.Renderer.FrameBuffer[1].ColorSwapChain.Handle;
 			engine->appState.Layers[engine->appState.LayerCount++].Cylinder = cylinder_layer;
 		}
-	} else {
-		assert(false);
 	}
 
 	// Compose the layers for this frame.

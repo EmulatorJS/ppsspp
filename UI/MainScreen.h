@@ -44,7 +44,7 @@ bool LaunchFile(ScreenManager *screenManager, const Path &path);
 
 class GameBrowser : public UI::LinearLayout {
 public:
-	GameBrowser(int token, const Path &path, BrowseFlags browseFlags, bool *gridStyle, ScreenManager *screenManager, std::string lastText, std::string lastLink, UI::LayoutParams *layoutParams = nullptr);
+	GameBrowser(int token, const Path &path, BrowseFlags browseFlags, bool *gridStyle, ScreenManager *screenManager, std::string_view lastText, std::string_view lastLink, UI::LayoutParams *layoutParams = nullptr);
 
 	UI::Event OnChoice;
 	UI::Event OnHoldChoice;
@@ -72,8 +72,8 @@ protected:
 
 private:
 	bool IsCurrentPathPinned();
-	const std::vector<Path> GetPinnedPaths();
-	const std::string GetBaseName(const std::string &path);
+	std::vector<Path> GetPinnedPaths() const;
+	std::string GetBaseName(const std::string &path) const;
 
 	UI::EventReturn GameButtonClick(UI::EventParams &e);
 	UI::EventReturn GameButtonHoldClick(UI::EventParams &e);
@@ -191,7 +191,7 @@ private:
 
 class GridSettingsScreen : public PopupScreen {
 public:
-	GridSettingsScreen(std::string label) : PopupScreen(label) {}
+	GridSettingsScreen(std::string_view label) : PopupScreen(label) {}
 	void CreatePopupContents(UI::ViewGroup *parent) override;
 	UI::Event OnRecentChanged;
 

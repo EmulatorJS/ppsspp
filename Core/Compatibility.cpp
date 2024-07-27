@@ -96,7 +96,7 @@ void Compatibility::CheckSettings(IniFile &iniFile, const std::string &gameID) {
 	CheckSetting(iniFile, gameID, "ForceUMDDelay", &flags_.ForceUMDDelay);
 	CheckSetting(iniFile, gameID, "ForceMax60FPS", &flags_.ForceMax60FPS);
 	CheckSetting(iniFile, gameID, "GoWFramerateHack60", &flags_.GoWFramerateHack60);
-	CheckSetting(iniFile, gameID, "GoWFramerateHack30", &flags_.GoWFramerateHack30);
+	CheckSetting(iniFile, gameID, "FramerateHack30", &flags_.FramerateHack30);
 	CheckSetting(iniFile, gameID, "JitInvalidationHack", &flags_.JitInvalidationHack);
 	CheckSetting(iniFile, gameID, "HideISOFiles", &flags_.HideISOFiles);
 	CheckSetting(iniFile, gameID, "MoreAccurateVMMUL", &flags_.MoreAccurateVMMUL);
@@ -138,6 +138,7 @@ void Compatibility::CheckSettings(IniFile &iniFile, const std::string &gameID) {
 	CheckSetting(iniFile, gameID, "TacticsOgreEliminateDebugReadback", &flags_.TacticsOgreEliminateDebugReadback);
 	CheckSetting(iniFile, gameID, "FramebufferAllowLargeVerticalOffset", &flags_.FramebufferAllowLargeVerticalOffset);
 	CheckSetting(iniFile, gameID, "DisableMemcpySlicing", &flags_.DisableMemcpySlicing);
+	CheckSetting(iniFile, gameID, "ForceEnableGPUReadback", &flags_.ForceEnableGPUReadback);
 }
 
 void Compatibility::CheckVRSettings(IniFile &iniFile, const std::string &gameID) {
@@ -145,10 +146,11 @@ void Compatibility::CheckVRSettings(IniFile &iniFile, const std::string &gameID)
 	CheckSetting(iniFile, gameID, "ForceMono", &vrCompat_.ForceMono);
 	CheckSetting(iniFile, gameID, "IdentityViewHack", &vrCompat_.IdentityViewHack);
 	CheckSetting(iniFile, gameID, "MirroringVariant", &vrCompat_.MirroringVariant);
+	CheckSetting(iniFile, gameID, "ProjectionHack", &vrCompat_.ProjectionHack);
 	CheckSetting(iniFile, gameID, "Skyplane", &vrCompat_.Skyplane);
 	CheckSetting(iniFile, gameID, "UnitsPerMeter", &vrCompat_.UnitsPerMeter);
 
-	NOTICE_LOG(G3D, "UnitsPerMeter for %s: %f", gameID.c_str(), vrCompat_.UnitsPerMeter);
+	NOTICE_LOG(Log::G3D, "UnitsPerMeter for %s: %f", gameID.c_str(), vrCompat_.UnitsPerMeter);
 }
 
 void Compatibility::CheckSetting(IniFile &iniFile, const std::string &gameID, const char *option, bool *flag) {

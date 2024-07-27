@@ -2,6 +2,7 @@
 #include "Common/GPU/thin3d.h"
 #include "Common/System/System.h"
 #include "Common/Data/Text/I18n.h"
+#include "Common/CPUDetect.h"
 #include "Core/MIPS/MIPS.h"
 #include "Core/HW/Display.h"
 #include "Core/FrameTiming.h"
@@ -229,7 +230,7 @@ void DrawDebugOverlay(UIContext *ctx, const Bounds &bounds, DebugOverlay overlay
 	case DebugOverlay::FRAME_TIMING:
 		DrawFrameTiming(ctx, ctx->GetLayoutBounds());
 		break;
-	case DebugOverlay::AUDIO:
+	case DebugOverlay::Audio:
 		DrawAudioDebugStats(ctx, ctx->GetLayoutBounds());
 		break;
 #if !PPSSPP_PLATFORM(UWP) && !PPSSPP_PLATFORM(SWITCH)
@@ -277,7 +278,7 @@ void DrawCrashDump(UIContext *ctx, const Path &gamePath) {
 	if (ctx->Draw()->GetFontAtlas()->getFont(ubuntu24))
 		ctx->BindFontTexture();
 	ctx->Draw()->SetFontScale(1.1f, 1.1f);
-	ctx->Draw()->DrawTextShadow(ubuntu24, sy->T("Game crashed"), x, y, 0xFFFFFFFF);
+	ctx->Draw()->DrawTextShadow(ubuntu24, sy->T_cstr("Game crashed"), x, y, 0xFFFFFFFF);
 
 	char statbuf[4096];
 	char versionString[256];
@@ -324,7 +325,7 @@ void DrawCrashDump(UIContext *ctx, const Path &gamePath) {
 
 	ctx->PushScissor(Bounds(x, y, columnWidth, height));
 
-	// INFO_LOG(SYSTEM, "DrawCrashDump (%d %d %d %d)", x, y, columnWidth, height);
+	// INFO_LOG(Log::System, "DrawCrashDump (%d %d %d %d)", x, y, columnWidth, height);
 
 	snprintf(statbuf, sizeof(statbuf), R"(%s
 %s (%s)
@@ -436,7 +437,7 @@ void DrawFPS(UIContext *ctx, const Bounds &bounds) {
 
 	char fpsbuf[256]{};
 	if (g_Config.iShowStatusFlags == ((int)ShowStatusFlags::FPS_COUNTER | (int)ShowStatusFlags::SPEED_COUNTER)) {
-		snprintf(fpsbuf, sizeof(fpsbuf), "%0.0f/%0.0f (%0.1f%%)", actual_fps, fps, vps / (59.94f / 100.0f));
+		snprintf(fpsbuf, sizeof(fpsbuf), "%0.0f/%0.0f (%0.1f%%)", actual_fps, fps, vps / ((g_Config.iDisplayRefreshRate / 60.0f * 59.94f) / 100.0f));
 	} else {
 		if (g_Config.iShowStatusFlags & (int)ShowStatusFlags::FPS_COUNTER) {
 			snprintf(fpsbuf, sizeof(fpsbuf), "FPS: %0.1f", actual_fps);

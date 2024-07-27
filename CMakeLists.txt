@@ -1,5 +1,5 @@
 # vim:noexpandtab:
-cmake_minimum_required(VERSION 3.8)
+cmake_minimum_required(VERSION 3.16)
 project(PPSSPP)
 enable_testing()
 
@@ -121,10 +121,9 @@ include(GNUInstallDirs)
 
 add_definitions(-DASSETS_DIR="${CMAKE_INSTALL_FULL_DATADIR}/ppsspp/assets/")
 
-if(OPENXR)
+if(OPENXR AND NOT ARMV7_DEVICE)
 	add_definitions(-DOPENXR)
-	add_library(openxr SHARED IMPORTED)
-	set_property(TARGET openxr PROPERTY IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/ext/openxr/stub/arm64-v8a/libopenxr_loader.so")
+	add_subdirectory(ext/OpenXR-SDK)
 	message("OpenXR enabled")
 endif()
 
@@ -132,7 +131,20 @@ if(GOLD)
 	add_definitions(-DGOLD)
 	message("Gold Build")
 else()
-	message("Normal Build")
+	message("Non-gold Build")
+endif()
+
+if(IOS_APP_STORE)
+	add_definitions(-DPPSSPP_PLATFORM_IOS_APP_STORE)
+	add_definitions(-DGLES_SILENCE_DEPRECATION)
+	# Set a global default to not generate schemes for each target.
+	# Makes using XCode sligthly more sane.
+	set(CMAKE_XCODE_GENERATE_SCHEME NO)
+	set(CMAKE_XCODE_SCHEME_ENABLE_GPU_API_VALIDATION FALSE)
+	set(CMAKE_XCODE_SCHEME_ENABLE_GPU_FRAME_CAPTURE_MODE DISABLED)
+	message("iOS App Store build")
+elseif(IOS)
+	message("iOS sideload build")
 endif()
 
 # User-editable options (go into CMakeCache.txt)
@@ -242,7 +254,7 @@ include_directories(ext/glslang)
 # Anyway, glew will be going away anyway.
 include_directories(ext/glew)
 
-if(OPENXR)
+if(OPENXR AND NOT ARMV7_DEVICE)
 	set(OPENGL_LIBRARIES GLESv3 EGL)
 elseif(NOT OPENGL_LIBRARIES AND USING_GLES2)
 	set(OPENGL_LIBRARIES GLESv2 EGL)
@@ -313,6 +325,8 @@ endif()
 if(NOT CMAKE_BUILD_TYPE)
 	message(STATUS "No build type selected, default to Release")
 	set(CMAKE_BUILD_TYPE "Release")
+else()
+	message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 endif()
 
 message("CMAKE_SYSTEM_PROCESSOR: ${CMAKE_SYSTEM_PROCESSOR}")
@@ -365,9 +379,17 @@ if(NOT MSVC)
 		set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=gnu++17")
 	endif()
 	if(CLANG)
-		add_definitions(-Wno-nullability-completeness)
-		add_definitions(-Wno-tautological-pointer-compare)
-		add_definitions(-Wno-deprecated-register)
+		add_definitions(
+			-Wno-nullability-completeness
+			-Wno-tautological-pointer-compare
+			-Wno-deprecated-register
+			-Wno-sign-conversion
+			-Wno-shorten-64-to-32
+		)
+		if(MACOSX OR IOS)
+			# Hack around a bad check for __GNUC__ in basis_universal that makes it use old stuff on iOS
+			add_definitions(-Wno-deprecated-builtins)
+		endif()
 	endif()
 
 	if(USE_ASAN)
@@ -423,7 +445,7 @@ if(NOT MSVC)
 	endif()
 
 	if(IOS)
-		set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0")
+		set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0")
 	elseif(APPLE AND NOT CMAKE_CROSSCOMPILING)
 		if(LIBRETRO AND ARM64)
 			set(CMAKE_OSX_DEPLOYMENT_TARGET "10.14")
@@ -587,7 +609,7 @@ set(CommonVR
 	Common/VR/VRRenderer.cpp
 	Common/VR/VRRenderer.h
 )
-include_directories(ext/openxr)
+include_directories(ext/OpenXR-SDK/include)
 
 add_library(Common STATIC
 	${CommonX86}
@@ -841,8 +863,6 @@ add_library(Common STATIC
 	Common/Common.h
 	Common/CommonFuncs.h
 	Common/CommonTypes.h
-	Common/ConsoleListener.cpp
-	Common/ConsoleListener.h
 	Common/DbgNew.h
 	Common/FakeEmitter.h
 	Common/FakeCPUDetect.cpp
@@ -850,8 +870,12 @@ add_library(Common STATIC
 	Common/ExceptionHandlerSetup.h
 	Common/Log.h
 	Common/Log.cpp
-	Common/LogManager.cpp
-	Common/LogManager.h
+	Common/Log/ConsoleListener.cpp
+	Common/Log/ConsoleListener.h
+	Common/Log/StdioListener.cpp
+	Common/Log/StdioListener.h
+	Common/Log/LogManager.cpp
+	Common/Log/LogManager.h
 	Common/LogReporting.cpp
 	Common/LogReporting.h
 	Common/MemArenaAndroid.cpp
@@ -1247,6 +1271,16 @@ set(BASISU_LIBRARIES basis_universal)
 set(nativeExtra)
 set(nativeExtraLibs)
 
+if(OPENXR AND NOT ARMV7_DEVICE)
+	set(nativeExtraLibs ${nativeExtraLibs} openxr_loader)
+endif()
+
+if(IOS OR MACOSX)
+	set(nativeExtra ${nativeExtra}
+		Common/Render/Text/draw_text_cocoa.mm
+		Common/Render/Text/draw_text_cocoa.h)
+endif()
+
 if(ANDROID)
 	set(NativeAppSource ${NativeAppSource}
 		android/jni/app-android.cpp
@@ -1260,9 +1294,6 @@ if(ANDROID)
 		android/jni/OpenSLContext.cpp
 		android/jni/OpenSLContext.h
 	)
-	if (OPENXR)
-		set(nativeExtraLibs ${nativeExtraLibs} openxr)
-	endif()
 	# No target
 elseif(IOS AND NOT LIBRETRO)
 	set(nativeExtra ${nativeExtra}
@@ -1271,8 +1302,13 @@ elseif(IOS AND NOT LIBRETRO)
 		ios/AppDelegate.h
 		ios/DisplayManager.h
 		ios/DisplayManager.mm
+		ios/Controls.h
+		ios/Controls.mm
+		ios/ViewControllerCommon.h
 		ios/ViewController.mm
 		ios/ViewController.h
+		ios/ViewControllerMetal.mm
+		ios/ViewControllerMetal.h
 		ios/iOSCoreAudio.mm
 		ios/iOSCoreAudio.h
 		ios/CameraHelper.mm
@@ -1291,7 +1327,7 @@ elseif(IOS AND NOT LIBRETRO)
 		Common/Battery/AppleBatteryClient.m
 	)
 
-	set(nativeExtraLibs ${nativeExtraLibs} "-framework Foundation -framework MediaPlayer -framework AudioToolbox -framework CoreGraphics -framework QuartzCore -framework UIKit -framework GLKit -framework OpenAL -framework AVFoundation -framework CoreLocation -framework CoreVideo -framework CoreMedia -framework CoreServices" )
+	set(nativeExtraLibs ${nativeExtraLibs} "-framework Foundation -framework MediaPlayer -framework AudioToolbox -framework CoreGraphics -framework CoreMotion -framework QuartzCore -framework UIKit -framework GLKit -framework OpenAL -framework AVFoundation -framework CoreLocation -framework CoreText -framework CoreVideo -framework CoreMedia -framework CoreServices -framework Metal -framework IOSurface" )
 	if(EXISTS "${CMAKE_IOS_SDK_ROOT}/System/Library/Frameworks/GameController.framework")
 		set(nativeExtraLibs ${nativeExtraLibs} "-weak_framework GameController")
 	endif()
@@ -1300,16 +1336,23 @@ elseif(IOS AND NOT LIBRETRO)
 		set(nativeExtraLibs ${nativeExtraLibs} iconv)
 	endif()
 
+	# TODO: Enable arc globally?
 	set_source_files_properties(ios/AppDelegate.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
 	set_source_files_properties(ios/ViewController.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+	set_source_files_properties(ios/ViewControllerMetal.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
 	set_source_files_properties(ios/iOSCoreAudio.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
 	set_source_files_properties(ios/PPSSPPUIApplication.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
 	set_source_files_properties(ios/iCade/iCadeReaderView.m PROPERTIES COMPILE_FLAGS -fobjc-arc)
 	set_source_files_properties(ios/main.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
 	set_source_files_properties(ios/CameraHelper.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+	set_source_files_properties(ios/AudioEngine.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
 	set_source_files_properties(ios/LocationHelper.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+	set_source_files_properties(ios/DisplayManager.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+	set_source_files_properties(ios/Controls.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
 	set_source_files_properties(UI/DarwinFileSystemServices.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
 	set_source_files_properties(Common/Battery/AppleBatteryClient.m PROPERTIES COMPILE_FLAGS -fobjc-arc)
+	set_source_files_properties(Common/Render/Text/draw_text_cocoa.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+
 	set(TargetBin PPSSPP)
 elseif(IOS AND LIBRETRO)
     set(nativeExtraLibs ${nativeExtraLibs} "-framework GLKit")
@@ -1333,6 +1376,7 @@ elseif(USING_QT_UI)
 			Common/Battery/AppleBatteryClient.m)
 		set_source_files_properties(Common/Battery/AppleBatteryClient.m PROPERTIES COMPILE_FLAGS -fobjc-arc)
 		set_source_files_properties(UI/DarwinFileSystemServices.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+		set_source_files_properties(Common/Render/Text/draw_text_cocoa.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
 		set(nativeExtraLibs ${nativeExtraLibs} ${COCOA_LIBRARY} ${QUARTZ_CORE_LIBRARY} ${IOKIT_LIBRARY})
 	endif()
 	include_directories(Qt)
@@ -1410,11 +1454,16 @@ else()
 		UI/PSPNSApplicationDelegate.mm
 		UI/PSPNSApplicationDelegate.h)
 
+		# TODO
+		# set_source_files_properties(SDL/SDLMain.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+
         set_source_files_properties(UI/DarwinFileSystemServices.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
 		set_source_files_properties(UI/PSPNSApplicationDelegate.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
+		set_source_files_properties(SDL/CocoaMetalLayer.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
 		set_source_files_properties(SDL/CocoaBarItems.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
 		set_source_files_properties(SDL/PPSSPPAboutViewController.m PROPERTIES COMPILE_FLAGS -fobjc-arc)
 		set_source_files_properties(Common/Battery/AppleBatteryClient.m PROPERTIES COMPILE_FLAGS -fobjc-arc)
+		set_source_files_properties(Common/Render/Text/draw_text_cocoa.mm PROPERTIES COMPILE_FLAGS -fobjc-arc)
 		set(nativeExtraLibs ${nativeExtraLibs} ${COCOA_LIBRARY} ${QUARTZ_CORE_LIBRARY} ${IOKIT_LIBRARY})
 
 		if(USE_SYSTEM_LIBSDL2)
@@ -1507,6 +1556,8 @@ list(APPEND NativeAppSource
 	UI/CwCheatScreen.cpp
 	UI/InstallZipScreen.h
 	UI/InstallZipScreen.cpp
+	UI/JitCompareScreen.h
+	UI/JitCompareScreen.cpp
 	UI/MemStickScreen.h
 	UI/MemStickScreen.cpp
 	UI/ProfilerDraw.h
@@ -1858,6 +1909,8 @@ set(GPU_SOURCES
 	GPU/Common/SoftwareTransformCommon.h
 	GPU/Common/VertexDecoderCommon.cpp
 	GPU/Common/VertexDecoderCommon.h
+	GPU/Common/VertexDecoderHandwritten.cpp
+	GPU/Common/VertexDecoderHandwritten.h
 	GPU/Common/TransformCommon.cpp
 	GPU/Common/TransformCommon.h
 	GPU/Common/IndexGenerator.cpp
@@ -2079,6 +2132,10 @@ add_library(${CoreLibName} ${CoreLinkType}
 	Core/HLE/__sceAudio.h
 	Core/HLE/sceAdler.cpp
 	Core/HLE/sceAdler.h
+	Core/HLE/AtracCtx.cpp
+	Core/HLE/AtracCtx.h
+	Core/HLE/AtracCtx2.cpp
+	Core/HLE/AtracCtx2.h
 	Core/HLE/sceAtrac.cpp
 	Core/HLE/sceAtrac.h
 	Core/HLE/sceAudio.cpp
@@ -2214,6 +2271,9 @@ add_library(${CoreLibName} ${CoreLinkType}
 	Core/HLE/scePauth.cpp
 	Core/HLE/scePauth.h
 	Core/HW/SimpleAudioDec.cpp
+	Core/HW/SimpleAudioDec.h
+	Core/HW/Atrac3Standalone.cpp
+	Core/HW/Atrac3Standalone.h
 	Core/HW/SimpleAudioDec.h
 	Core/HW/AsyncIOManager.cpp
 	Core/HW/AsyncIOManager.h
@@ -2354,16 +2414,14 @@ if(USE_SYSTEM_ZSTD)
 	target_include_directories(${CoreLibName} PRIVATE ${ZSTD_INCLUDE_DIR})
 	target_link_libraries(${CoreLibName} ${ZSTD_LIBRARY})
 else()
-	set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "we don't need zstd programs" FORCE)
-	set(ZSTD_LEGACY_SUPPORT OFF CACHE BOOL "we don't use any old zstd files" FORCE)
-	add_subdirectory(ext/zstd/build/cmake EXCLUDE_FROM_ALL)
+	add_subdirectory(ext/zstd-build)
 	set(CoreExtraLibs ${CoreExtraLibs} libzstd_static)
 	include_directories(ext/zstd/lib)
 endif()
 
 include_directories(ext/libchdr/include)
 
-target_link_libraries(${CoreLibName} Common native chdr kirk cityhash sfmt19937 xbrz xxhash rcheevos ${GlslangLibs}
+target_link_libraries(${CoreLibName} Common native chdr kirk cityhash sfmt19937 xbrz xxhash rcheevos minimp3 at3_standalone ${GlslangLibs}
 	${CoreExtraLibs} ${OPENGL_LIBRARIES} ${X11_LIBRARIES} ${CMAKE_DL_LIBS})
 
 if(NOT HTTPS_NOT_AVAILABLE)
@@ -2406,8 +2464,8 @@ if(USE_MINIUPNPC)
 		target_link_libraries(${CoreLibName} ${MINIUPNP_LIBRARY})
 		add_definitions(-DWITH_UPNP -DUSE_SYSTEM_MINIUPNPC)
 	else()
-		set (MINIUPNPC_VERSION 2.1) # used by miniupnpcstrings.h.cmake
-		set (MINIUPNPC_API_VERSION 17)
+		set (MINIUPNPC_VERSION 2.2) # used by miniupnpcstrings.h.cmake
+		set (MINIUPNPC_API_VERSION 18)
 		option(UPNPC_BUILD_STATIC "Build static library" TRUE)
 		option(NO_GETADDRINFO "Define NO_GETADDRINFO" FALSE)
 		mark_as_advanced(NO_GETADDRINFO)
@@ -2431,25 +2489,28 @@ if(USE_MINIUPNPC)
 		add_definitions(-DWITH_UPNP -DMINIUPNP_STATICLIB)
 		set(MINIUPNP_DIR "ext/miniupnp/miniupnpc")
 		include_directories(${CMAKE_CURRENT_BINARY_DIR})
+		include_directories(ext/miniupnp/miniupnpc/src)
+		include_directories(ext/miniupnp/miniupnpc/include)
 		configure_file(${MINIUPNP_DIR}/miniupnpcstrings.h.cmake ${CMAKE_CURRENT_BINARY_DIR}/miniupnpcstrings.h) # by default miniupnp repo doesn't contains miniupnpcstrings.h and need to be generated
 		set(MINIUPNPC_SOURCES
 			# the needed bits of miniupnpc (no python module, no tests, no cli)
-			${MINIUPNP_DIR}/addr_is_reserved.c
-			${MINIUPNP_DIR}/connecthostport.c
-			${MINIUPNP_DIR}/igd_desc_parse.c
-			${MINIUPNP_DIR}/minisoap.c
-			${MINIUPNP_DIR}/minissdpc.c
-			${MINIUPNP_DIR}/miniupnpc.c
-			${MINIUPNP_DIR}/miniwget.c
-			${MINIUPNP_DIR}/minixml.c
-			${MINIUPNP_DIR}/minixmlvalid.c
-			${MINIUPNP_DIR}/portlistingparse.c
-			${MINIUPNP_DIR}/receivedata.c
+			${MINIUPNP_DIR}/src/addr_is_reserved.c
+			${MINIUPNP_DIR}/src/connecthostport.c
+			${MINIUPNP_DIR}/src/igd_desc_parse.c
+			${MINIUPNP_DIR}/src/minisoap.c
+			${MINIUPNP_DIR}/src/minissdpc.c
+			${MINIUPNP_DIR}/src/miniupnpc.c
+			#${MINIUPNP_DIR}/miniupnpcmodule.c
+			${MINIUPNP_DIR}/src/miniwget.c
+			${MINIUPNP_DIR}/src/minixml.c
+			${MINIUPNP_DIR}/src/minixmlvalid.c
+			${MINIUPNP_DIR}/src/portlistingparse.c
+			${MINIUPNP_DIR}/src/receivedata.c
 			#${MINIUPNP_DIR}/upnpc.c # causing an error due to already existing _main()
-			${MINIUPNP_DIR}/upnpcommands.c
-			${MINIUPNP_DIR}/upnpdev.c
-			${MINIUPNP_DIR}/upnperrors.c
-			${MINIUPNP_DIR}/upnpreplyparse.c
+			${MINIUPNP_DIR}/src/upnpcommands.c
+			${MINIUPNP_DIR}/src/upnpdev.c
+			${MINIUPNP_DIR}/src/upnperrors.c
+			${MINIUPNP_DIR}/src/upnpreplyparse.c
 			${CMAKE_CURRENT_BINARY_DIR}/miniupnpcstrings.h
 		)
 		if (NOT WIN32 AND NOT CMAKE_SYSTEM_NAME STREQUAL "AmigaOS")
@@ -2601,7 +2662,7 @@ set(WindowsFiles
 list(APPEND LinkCommon ${CoreLibName} ${CMAKE_THREAD_LIBS_INIT})
 
 if(WIN32)
-	list(APPEND LinkCommon kernel32 user32 gdi32 shell32 comctl32 dsound xinput d3d9 winmm dinput8 ole32 winspool ksuser mf uxtheme mfplat mfreadwrite mfuuid shlwapi)
+	list(APPEND LinkCommon kernel32 user32 gdi32 shell32 comctl32 dsound xinput d3d9 winmm dinput8 ole32 winspool ksuser dwmapi mf uxtheme mfplat mfreadwrite mfuuid shlwapi)
 	#setup_target_project(${TargetBin} Windows)
 	list(APPEND NativeAppSource ${WindowsFiles})
 endif()
@@ -2636,6 +2697,8 @@ set(NativeAssets
 	assets/sfx_select.wav
 	assets/sfx_toggle_off.wav
 	assets/sfx_toggle_on.wav
+	assets/sfx_achievement_unlocked.wav
+	assets/sfx_leaderbord_submitted.wav
 	source_assets/image/logo.png
 	source_assets/image/icon_regular_72.png
 )
@@ -2753,8 +2816,11 @@ if(TargetBin)
 		endif()
 
 		if(IOS)
-			add_executable(${TargetBin} MACOSX_BUNDLE ${ICON_PATH_ABS} ${NativeAssets} ${BigFontAssets} ${SHADER_FILES} ${THEME_FILE} ${DEBUGGER_FILES} ${FLASH0_FILES} ${LANG_FILES} ${NativeAppSource} "ios/Settings.bundle" "ios/Launch Screen.storyboard")
-			file(INSTALL "${CMAKE_SOURCE_DIR}/ext/vulkan/iOS/Frameworks/libMoltenVK.dylib" DESTINATION "${CMAKE_BINARY_DIR}/PPSSPP.app/Frameworks/")
+			set(AssetCatalog "${CMAKE_SOURCE_DIR}/ios/assets.xcassets")
+			add_executable(${TargetBin} MACOSX_BUNDLE ${ICON_PATH_ABS} ${NativeAssets} ${BigFontAssets} ${AssetCatalog} ${SHADER_FILES} ${THEME_FILE} ${DEBUGGER_FILES} ${FLASH0_FILES} ${LANG_FILES} ${NativeAppSource} "ios/Settings.bundle" "ios/Launch Screen.storyboard")
+			if(NOT IOS_APP_STORE)
+				file(INSTALL "${CMAKE_SOURCE_DIR}/ext/vulkan/iOS/Frameworks/libMoltenVK.dylib" DESTINATION "${CMAKE_BINARY_DIR}/PPSSPP.app/Frameworks/")
+			endif()
 		else()
 			add_executable(${TargetBin} MACOSX_BUNDLE ${ICON_PATH_ABS} ${NativeAssets} ${BigFontAssets} ${SHADER_FILES} ${THEME_FILE} ${DEBUGGER_FILES} ${FLASH0_FILES} ${LANG_FILES} ${NativeAppSource})
 			file(INSTALL "${CMAKE_SOURCE_DIR}/ext/vulkan/macOS/Frameworks/libMoltenVK.dylib" DESTINATION "${CMAKE_BINARY_DIR}/${TargetBin}.app/Contents/Frameworks/")
@@ -2786,7 +2852,11 @@ if(NOT ANDROID)
 endif()
 # packaging and code signing
 if(IOS AND NOT LIBRETRO)
-	set(DEPLOYMENT_TARGET 11.0)
+	if(IOS_APP_STORE)
+		set(DEPLOYMENT_TARGET 12.0)
+	else()
+		set(DEPLOYMENT_TARGET 11.0)
+	endif()
 	file(GLOB IOSAssets ios/assets/*.png)
 	list(REMOVE_ITEM IOSAssets ${CMAKE_CURRENT_SOURCE_DIR}/ios/assets/Default-568h@2x.png)
 	list(REMOVE_ITEM IOSAssets ${CMAKE_CURRENT_SOURCE_DIR}/ios/assets/Default-568h@3x.png)
@@ -2796,33 +2866,113 @@ if(IOS AND NOT LIBRETRO)
 	if(IOS_DEBUG)
 		file(INSTALL pspautotests DESTINATION ${CMAKE_CURRENT_BINARY_DIR}/assets)
 	endif()
-	set(RSRC_XIB_FILES assets/Icon@2x.png)
-	set(RSRC_XIB_FILES "Launch Screen.storyboard")
+	set(RSRC_XIB_FILES "Launch Screen.storyboard" ${CMAKE_CURRENT_SOURCE_DIR}/ios/assets.xcassets)
+
 	set_source_files_properties(${RSRC_XIB_FILES}
 		PROPERTIES MACOSX_PACKAGE_LOCATION Resources
 	)
+
 	#This breaks in modern XCode. Not sure when it worked...
 	#if(CMAKE_GENERATOR STREQUAL "Xcode")
 	#	set(APP_DIR_NAME "$(TARGET_BUILD_DIR)/$(FULL_PRODUCT_NAME)")
 	#else()
 		set(APP_DIR_NAME "$<TARGET_FILE_DIR:PPSSPP>")
 	#endif()
-	add_custom_command(TARGET PPSSPP POST_BUILD
-		COMMAND mkdir -p \"${APP_DIR_NAME}\"
-		COMMAND tar -c -C ${CMAKE_CURRENT_BINARY_DIR} --exclude .DS_Store --exclude .git assets *.png | tar -x -C \"${APP_DIR_NAME}\"
-		COMMAND /bin/bash "${CMAKE_SOURCE_DIR}/ios/macbundle.sh" \"${APP_DIR_NAME}\"
-	)
+
 	set(MACOSX_DEPLOYMENT_TARGET ${DEPLOYMENT_TARGET})
-	set_target_properties(${TargetBin} PROPERTIES
-		MACOSX_BUNDLE_INFO_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/ios/PPSSPP-Info.plist"
-		RESOURCE "ios/Launch Screen.storyboard"
-		RESOURCE "ios/Settings.bundle"
-		RESOURCE "ext/vulkan/iOS/Frameworks"
-		XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET ${DEPLOYMENT_TARGET}
-		XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "iPhone/iPad"
-		XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
-		XCODE_ATTRIBUTE_ENABLE_BITCODE NO
-		XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "-"
+	set(PRODUCT_NAME "PPSSPP")
+	set(BUNDLE_PLIST "${CMAKE_CURRENT_SOURCE_DIR}/ios/PPSSPP-Info.plist")
+	if(GOLD)
+		if(IOS_APP_STORE)
+			set(BUNDLE_IDENTIFIER "org.ppsspp.ppsspp-gold")
+		else()
+			set(BUNDLE_IDENTIFIER "org.ppsspp.ppssppgold")
+		endif()
+		set(ICON_NAME "AppIconGold")
+		set(DISPLAY_NAME "PPSSPP Gold")
+	else()
+		if(IOS_APP_STORE)
+			set(BUNDLE_IDENTIFIER "org.ppsspp.ppsspp-free")
+		else()
+			set(BUNDLE_IDENTIFIER "org.ppsspp.ppsspp")
+		endif()
+		set(ICON_NAME "AppIcon")
+		set(DISPLAY_NAME "PPSSPP")
+	endif()
+	if(IOS_APP_STORE)
+		message(STATUS "DevTeam: ${DEVELOPMENT_TEAM_ID} Icon: ${ICON_NAME} Target: ${TargetBin}")
+		message(STATUS "CURRENT_BINARY_DIR: ${CMAKE_CURRENT_BINARY_DIR}")
+
+		# This is for injecting the version into the plist, and also copying resources.
+		# Should find a different way to do both these things.
+		add_custom_command(TARGET ${TargetBin} POST_BUILD
+			COMMAND echo "Creating ${APP_DIR_NAME} for app store build"
+			COMMAND mkdir -p \"${APP_DIR_NAME}\"
+			# This tar command seems to be responsible for copying assets. I thought we had another step that did that..
+			# Prepend -v to the extracting command to see the files copied.
+			COMMAND tar -c -C ${CMAKE_CURRENT_BINARY_DIR} --exclude .DS_Store --exclude .git assets *.png | tar -x -C \"${APP_DIR_NAME}\"
+			# This updates the version in the plist.
+			COMMAND /bin/bash "${CMAKE_SOURCE_DIR}/ios/iosbundle.sh" \"${APP_DIR_NAME}\" "${CMAKE_CURRENT_BINARY_DIR}"
+		)
+
+		# Can't figure out properly using .xcframework from CMake, so just linking directly to the .a file.
+		target_link_libraries(${TargetBin}
+			"${CMAKE_CURRENT_SOURCE_DIR}/ios/MoltenVK/MoltenVK.xcframework/ios-arm64/libMoltenVK.a"
+		)
+
+		# https://stackoverflow.com/questions/40664125/cmake-and-code-signing-in-xcode-8-for-ios-projects
+		set_target_properties(${TargetBin} PROPERTIES
+			XCODE_GENERATE_SCHEME YES  # Avoid the scheme bloat in XCode by only setting it to YES for this target.
+			RESOURCE "ios/Launch Screen.storyboard"
+			RESOURCE "ios/Settings.bundle"
+			RESOURCE "ios/assets.xcassets"
+			XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER ${BUNDLE_IDENTIFIER}
+			XCODE_ATTRIBUTE_PRODUCT_NAME ${PRODUCT_NAME}
+			XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME ${ICON_NAME}
+			BUILD_WITH_INSTALL_RPATH YES
+			MACOSX_BUNDLE_INFO_PLIST ${BUNDLE_PLIST}
+			# Some sources say we should generate the PLIST. There's stuff in it that
+			# I don't know how to generate, though.
+			#XCODE_ATTRIBUTE_GENERATE_INFOPLIST_FILE "YES"
+			#XCODE_ATTRIBUTE_INFOPLIST_KEY_UIRequiredDeviceCapabilities arm64
+			XCODE_ATTRIBUTE_INFOPLIST_KEY_UIFileSharingEnabled YES
+			XCODE_EMBED_FRAMEWORKS_REMOVE_HEADERS_ON_COPY YES
+			XCODE_EMBED_FRAMEWORKS_CODE_SIGN_ON_COPY YES
+			XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET ${DEPLOYMENT_TARGET}
+			XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+			XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
+			XCODE_ATTRIBUTE_ENABLE_BITCODE NO
+			XCODE_ATTRIBUTE_DEVELOPMENT_TEAM ${DEVELOPMENT_TEAM_ID}
+			XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "Apple Development"
+			XCODE_ATTRIBUTE_CODE_SIGN_STYLE "Automatic"
+			XCODE_ATTRIBUTE_SKIP_INSTALL NO
+   			XCODE_ATTRIBUTE_INSTALL_PATH "$(LOCAL_APPS_DIR)"
+		)
+	else()
+		# This is for injecting the version into the plist.
+		add_custom_command(TARGET PPSSPP POST_BUILD
+			COMMAND echo "Creating ${APP_DIR_NAME} for sideload build"
+			COMMAND mkdir -p \"${APP_DIR_NAME}\"
+			COMMAND tar -c -C ${CMAKE_CURRENT_BINARY_DIR} --exclude .DS_Store --exclude .git assets *.png | tar -x -C \"${APP_DIR_NAME}\"
+			COMMAND /bin/bash "${CMAKE_SOURCE_DIR}/ios/macbundle.sh" \"${APP_DIR_NAME}\"
+		)
+		set_target_properties(${TargetBin} PROPERTIES
+			MACOSX_BUNDLE_INFO_PLIST ${BUNDLE_PLIST}
+			XCODE_GENERATE_SCHEME YES
+			RESOURCE "ios/Launch Screen.storyboard"
+			RESOURCE "ios/Settings.bundle"
+			RESOURCE "ext/vulkan/iOS/Frameworks"
+			XCODE_ATTRIBUTE_ASSETCATALOG_COMPILER_APPICON_NAME ${ICON_NAME}
+			XCODE_ATTRIBUTE_IPHONEOS_DEPLOYMENT_TARGET ${DEPLOYMENT_TARGET}
+			XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1,2"
+			XCODE_ATTRIBUTE_CLANG_ENABLE_OBJC_ARC YES
+			XCODE_ATTRIBUTE_ENABLE_BITCODE NO
+			XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY "-"
+		)
+	endif()
+	add_custom_command(TARGET PPSSPP POST_BUILD
+		COMMAND plutil -replace CFBundleDisplayName -string "${DISPLAY_NAME}" "${APP_DIR_NAME}/Info.plist"
+		COMMAND plutil -replace CFBundleIdentifier -string "${BUNDLE_IDENTIFIER}" "${APP_DIR_NAME}/Info.plist"
 	)
 endif()
 

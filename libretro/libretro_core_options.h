@@ -397,7 +397,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       "video",
       BOOL_OPTIONS,
-      "disabled"
+      "enabled"
    },
    {
       "ppsspp_frame_duplication",
@@ -407,7 +407,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       NULL,
       "video",
       BOOL_OPTIONS,
-      "enabled"
+      "disabled"
    },
    {
       "ppsspp_detect_vsync_swap_interval",

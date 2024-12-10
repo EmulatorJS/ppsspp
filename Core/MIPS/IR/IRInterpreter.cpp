@@ -96,7 +96,7 @@ void IRApplyRounding(MIPSState *mips) {
 	if (fcr1Bits) {
 		int rmode = fcr1Bits & 3;
 		bool ftz = (fcr1Bits & 0x01000000) != 0;
-#if PPSSPP_ARCH(SSE2)
+#if PPSSPP_ARCH(SSE2) && !defined(__EMSCRIPTEN__)
 		u32 csr = _mm_getcsr() & ~0x6000;
 		// Translate the rounding mode bits to X86, the same way as in Asm.cpp.
 		if (rmode & 1) {
@@ -133,7 +133,7 @@ void IRApplyRounding(MIPSState *mips) {
 }
 
 void IRRestoreRounding() {
-#if PPSSPP_ARCH(SSE2)
+#if PPSSPP_ARCH(SSE2) && !defined(__EMSCRIPTEN__)
 	// TODO: We should avoid this if we didn't apply rounding in the first place.
 	// In the meantime, clear out FTZ and rounding mode bits.
 	u32 csr = _mm_getcsr();

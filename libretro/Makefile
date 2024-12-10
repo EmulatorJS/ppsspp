@@ -307,6 +307,11 @@ else ifeq ($(platform), emscripten)
 	PLATFORM_EXT = emscripten
 	STATIC_LINKING = 1
 
+        FFMPEGINCFLAGS += -I$(FFMPEGDIR)/linux/$(TARGET_ARCH)/include
+        FFMPEGLIBDIR := $(FFMPEGDIR)/linux/$(TARGET_ARCH)/lib
+        FFMPEGLDFLAGS += -L$(FFMPEGLIBDIR) -lavformat -lavcodec -lavutil -lswresample -lswscale
+
+
 # Windows MSVC all architectures
 else ifneq (,$(findstring windows_msvc2019,$(platform)))
 
@@ -426,16 +431,12 @@ endif
 include Makefile.common
 
 ifeq ($(GLES), 1)
-	GLFLAGS += -DGLES -DUSING_GLES2
+	GLFLAGS += -DGLES # -DUSING_GLES2
 else
 	GLFLAGS += -DHAVE_OPENGL
 endif
 
-COREFLAGS += -D__LIBRETRO__ -DPPSSPP -DWITH_UPNP -DGLEW_STATIC -DGLEW_NO_GLU -DMINIUPNP_STATICLIB
-ifneq ($(platform), emscripten)
-	# ffmpeg does not work with emscripten
-	COREFLAGS += -DUSE_FFMPEG
-endif
+COREFLAGS += -D__LIBRETRO__ -DPPSSPP -DWITH_UPNP -DGLEW_STATIC -DGLEW_NO_GLU -DMINIUPNP_STATICLIB -DUSE_FFMPEG
 
 ifeq ($(DEBUG), 1)
 	ifneq (,$(findstring msvc,$(platform)))
@@ -445,8 +446,6 @@ ifeq ($(DEBUG), 1)
 		CPUOPTS += -O0 -g
 	endif
 	CPUOPTS += -D_DEBUG
-else ifeq ($(platform), emscripten)
-	CPUOPTS += -O3 -DNDEBUG
 else
 	CPUOPTS += -O2 -DNDEBUG
 endif

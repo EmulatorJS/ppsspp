@@ -268,6 +268,8 @@ SOURCES_C += \
 COREFLAGS += -DSTACK_LINE_READER_BUFFER_SIZE=1024
 COREFLAGS += -DHTTPS_NOT_AVAILABLE
 
+ifneq ($(platform), emscripten)
+
 COREFLAGS += -D_7ZIP_ST
 INCFLAGS += -I$(EXTDIR)/libchdr/deps/lzma-22.01/include
 
@@ -296,6 +298,8 @@ SOURCES_C += \
 	$(EXTDIR)/libchdr/src/libchdr_chd.c \
 	$(EXTDIR)/libchdr/src/libchdr_flac.c \
 	$(EXTDIR)/libchdr/src/libchdr_huffman.c
+
+endif
 
 INCFLAGS += -I$(EXTDIR)/at3_standalone
 

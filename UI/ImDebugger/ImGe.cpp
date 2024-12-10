@@ -12,6 +12,7 @@
 #include "Core/HW/Display.h"
 #include "Common/StringUtils.h"
 #include "GPU/Debugger/State.h"
+#include "GPU/Debugger/GECommandTable.h"
 #include "GPU/Debugger/Breakpoints.h"
 #include "GPU/Debugger/Debugger.h"
 #include "GPU/GPUState.h"
@@ -242,9 +243,11 @@ void ImGeDebuggerWindow::Draw(ImConfig &cfg, GPUDebugInterface *gpuDebug) {
 		return;
 	}
 
+	ImGui::BeginDisabled(coreState != CORE_STEPPING_GE);
 	if (ImGui::Button("Run/Resume")) {
 		Core_Resume();
 	}
+	ImGui::EndDisabled();
 	ImGui::SameLine();
 	ImGui::TextUnformatted("Break:");
 	ImGui::SameLine();
@@ -302,6 +305,10 @@ void ImGeDebuggerWindow::Draw(ImConfig &cfg, GPUDebugInterface *gpuDebug) {
 	// Display any pending step event.
 	if (GPUDebug::GetBreakNext() != GPUDebug::BreakNext::NONE) {
 		ImGui::Text("Step pending (waiting for CPU): %s", GPUDebug::BreakNextToString(GPUDebug::GetBreakNext()));
+		ImGui::SameLine();
+		if (ImGui::Button("Cancel step")) {
+			GPUDebug::SetBreakNext(GPUDebug::BreakNext::NONE);
+		}
 	}
 
 	// Let's display the current CLUT.
@@ -331,7 +338,7 @@ void DrawGeStateWindow(ImConfig &cfg, GPUDebugInterface *gpuDebug) {
 		return;
 	}
 	if (ImGui::BeginTabBar("GeRegs", ImGuiTabBarFlags_None)) {
-		auto buildStateTab = [&](const char *tabName, const TabStateRow *rows, size_t numRows) {
+		auto buildStateTab = [&](const char *tabName, const GECommand *rows, size_t numRows) {
 			if (ImGui::BeginTabItem(tabName)) {
 				if (ImGui::BeginTable("fpr", 3, ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersH)) {
 					ImGui::TableSetupColumn("bkpt", ImGuiTableColumnFlags_WidthFixed);
@@ -339,14 +346,15 @@ void DrawGeStateWindow(ImConfig &cfg, GPUDebugInterface *gpuDebug) {
 					ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
 					for (size_t i = 0; i < numRows; i++) {
+						const GECmdInfo &info = GECmdInfoByCmd(rows[i]);
+
 						ImGui::TableNextRow();
 						ImGui::TableNextColumn();
 						ImGui::Text("-");  // breakpoint
 						ImGui::TableNextColumn();
-						ImGui::TextUnformatted(rows[i].title.data(), rows[i].title.data() + rows[i].title.size());
+						ImGui::TextUnformatted(info.uiName.data(), info.uiName.data() + info.uiName.size());
 						ImGui::TableNextColumn();
 						char temp[256];
-						auto &info = rows[i];
 
 						const bool enabled = info.enableCmd == 0 || (gstate.cmdmem[info.enableCmd] & 1) == 1;
 						const u32 value = gstate.cmdmem[info.cmd] & 0xFFFFFF;
@@ -394,7 +402,7 @@ void DrawGeStateWindow(ImConfig &cfg, GPUDebugInterface *gpuDebug) {
 						static VertexDecoder decoder;
 						decoder.SetVertexType(state.vertType, options);
 
-						static const char *colNames[] = {
+						static const char * const colNames[] = {
 							"Index",
 							"X",
 							"Y",

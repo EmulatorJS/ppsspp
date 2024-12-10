@@ -75,7 +75,7 @@ bool MainThread_Ready() {
 	return g_inLoop;
 }
 
-static bool Core_Run(GraphicsContext *ctx) {
+static bool Run(GraphicsContext *ctx) {
 	System_Notify(SystemNotification::DISASSEMBLY);
 	while (true) {
 		if (GetUIState() != UISTATE_INGAME) {
@@ -105,9 +105,13 @@ static bool Core_Run(GraphicsContext *ctx) {
 			NativeFrame(ctx);
 			return true;
 
+		case CORE_RUNTIME_ERROR:
+			// Need to step the loop.
+			NativeFrame(ctx);
+			break;
+
 		case CORE_POWERUP:
 		case CORE_BOOT_ERROR:
-		case CORE_RUNTIME_ERROR:
 			// Exit loop!!
 			return true;
 
@@ -127,11 +131,11 @@ static void EmuThreadFunc(GraphicsContext *graphicsContext) {
 	NativeInitGraphics(graphicsContext);
 
 	while (emuThreadState != (int)EmuThreadState::QUIT_REQUESTED) {
-		// We're here again, so the game quit.  Restart Core_Run() which controls the UI.
+		// We're here again, so the game quit.  Restart Run() which controls the UI.
 		// This way they can load a new game.
 		if (!Core_IsActive())
 			UpdateUIState(UISTATE_MENU);
-		if (!Core_Run(g_graphicsContext)) {
+		if (!Run(g_graphicsContext)) {
 			emuThreadState = (int)EmuThreadState::QUIT_REQUESTED;
 		}
 	}
@@ -338,11 +342,11 @@ void MainThreadFunc() {
 		}
 	} else {
 		while (GetUIState() != UISTATE_EXIT) {  //  && GetUIState() != UISTATE_EXCEPTION
-			// We're here again, so the game quit.  Restart Core_Run() which controls the UI.
+			// We're here again, so the game quit.  Restart Run() which controls the UI.
 			// This way they can load a new game.
 			if (!Core_IsActive())
 				UpdateUIState(UISTATE_MENU);
-			Core_Run(g_graphicsContext);
+			Run(g_graphicsContext);
 			if (coreState == CORE_BOOT_ERROR) {
 				break;
 			}
@@ -351,7 +355,7 @@ void MainThreadFunc() {
 	Core_Stop();
 	if (!useEmuThread) {
 		// Process the shutdown.  Without this, non-GL delays 800ms on shutdown.
-		Core_Run(g_graphicsContext);
+		Run(g_graphicsContext);
 	}
 	Core_WaitInactive();
 

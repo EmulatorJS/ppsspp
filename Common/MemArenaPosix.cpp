@@ -132,6 +132,8 @@ void *MemArena::CreateView(s64 offset, size_t size, void *base)
 void MemArena::ReleaseView(s64 offset, void* view, size_t size) {
 #ifndef NO_MMAP
 	munmap(view, size);
+#else
+	free(view);
 #endif
 }
 

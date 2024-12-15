@@ -21,6 +21,7 @@
 #include "Common/Log.h"
 #include "Common/Thread/ThreadUtil.h"
 #include "Core/Core.h"
+#include "Core/HW/Display.h"
 #include "GPU/Common/GPUDebugInterface.h"
 #include "GPU/Debugger/Stepping.h"
 #include "GPU/GPUState.h"
@@ -44,6 +45,10 @@ static bool isStepping;
 // Number of times we've entered stepping, to detect a resume asynchronously.
 static int stepCounter = 0;
 
+// Debug stats.
+static double g_timeSteppingStarted;
+static double g_timeSpentStepping;
+
 static std::mutex pauseLock;
 static PauseAction pauseAction = PAUSE_CONTINUE;
 static std::mutex actionLock;
@@ -66,6 +71,7 @@ static int bufferLevel;
 static bool lastWasFramebuffer;
 static u32 pauseSetCmdValue;
 
+// This is used only to highlight differences. Should really be owned by the debugger.
 static GPUgstate lastGState;
 
 const char *PauseActionToString(PauseAction action) {
@@ -156,23 +162,6 @@ void WaitForPauseAction() {
 	actionWait.wait(guard);
 }
 
-static void StartStepping() {
-	if (lastGState.cmdmem[1] == 0) {
-		lastGState = gstate;
-		// Play it safe so we don't keep resetting.
-		lastGState.cmdmem[1] |= 0x01000000;
-	}
-	gpuDebug->NotifySteppingEnter();
-	isStepping = true;
-	stepCounter++;
-}
-
-static void StopStepping() {
-	gpuDebug->NotifySteppingExit();
-	lastGState = gstate;
-	isStepping = false;
-}
-
 bool ProcessStepping() {
 	_dbg_assert_(gpuDebug);
 
@@ -197,7 +186,7 @@ bool ProcessStepping() {
 	return true;
 }
 
-bool EnterStepping() {
+bool EnterStepping(CoreState coreState) {
 	_dbg_assert_(gpuDebug);
 
 	std::unique_lock<std::mutex> guard(pauseLock);
@@ -212,19 +201,28 @@ bool EnterStepping() {
 		return false;
 	}
 
-	StartStepping();
+	// StartStepping
+	if (lastGState.cmdmem[1] == 0) {
+		lastGState = gstate;
+		// Play it safe so we don't keep resetting.
+		lastGState.cmdmem[1] |= 0x01000000;
+	}
+
+	isStepping = true;
+	stepCounter++;
 
 	// Just to be sure.
 	if (pauseAction == PAUSE_CONTINUE) {
 		pauseAction = PAUSE_BREAK;
 	}
 
-	coreState = CORE_STEPPING_GE;
+	::coreState = CORE_STEPPING_GE;
 	return true;
 }
 
 void ResumeFromStepping() {
-	StopStepping();
+	lastGState = gstate;
+	isStepping = false;
 	SetPauseAction(PAUSE_CONTINUE, false);
 }
 
@@ -297,7 +295,7 @@ bool GPU_FlushDrawing() {
 	return true;
 }
 
-GPUgstate LastState() {
+const GPUgstate &LastState() {
 	return lastGState;
 }
 

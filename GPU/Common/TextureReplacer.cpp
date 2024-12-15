@@ -95,13 +95,6 @@ void TextureReplacer::NotifyConfigChanged() {
 		}
 	}
 
-	if (saveEnabled_) {
-		// Somewhat crude message, re-using translation strings.
-		auto d = GetI18NCategory(I18NCat::DEVELOPER);
-		auto di = GetI18NCategory(I18NCat::DIALOG);
-		g_OSD.Show(OSDType::MESSAGE_INFO, std::string(d->T("Save new textures")) + ": " + std::string(di->T("Enabled")), 2.0f);
-	}
-
 	if (!replaceEnabled_ && wasReplaceEnabled) {
 		delete vfs_;
 		vfs_ = nullptr;
@@ -115,6 +108,23 @@ void TextureReplacer::NotifyConfigChanged() {
 			ERROR_LOG(Log::G3D, "ERROR: %s", error.c_str());
 			g_OSD.Show(OSDType::MESSAGE_ERROR, error, 5.0f);
 		}
+	} else if (saveEnabled_) {
+		// Even if just saving is enabled, it makes sense to load the ini to get the correct
+		// settings for saving. See issue #19086
+		std::string error;
+		bool result = LoadIni(&error);
+		if (!result) {
+			// Ignore errors here, just log if we successfully loaded an ini.
+		} else {
+			INFO_LOG(Log::G3D, "Loaded INI file for saving.");
+		}
+	}
+
+	if (saveEnabled_) {
+		// Somewhat crude message, re-using translation strings.
+		auto d = GetI18NCategory(I18NCat::DEVELOPER);
+		auto di = GetI18NCategory(I18NCat::DIALOG);
+		g_OSD.Show(OSDType::MESSAGE_INFO, std::string(d->T("Save new textures")) + ": " + std::string(di->T("Enabled")), 2.0f);
 	}
 }
 
@@ -144,6 +154,9 @@ bool TextureReplacer::LoadIni(std::string *error) {
 		vfsIsZip_ = false;
 		dir = new DirectoryReader(basePath_);
 	} else {
+		if (!replaceEnabled_ && saveEnabled_) {
+			WARN_LOG(Log::TexReplacement, "Found zip file even though only saving is enabled! This is weird.");
+		}
 		vfsIsZip_ = true;
 	}
 
@@ -187,7 +200,9 @@ bool TextureReplacer::LoadIni(std::string *error) {
 			delete dir;
 			return false;
 		} else {
-			WARN_LOG(Log::TexReplacement, "Texture pack lacking ini file: %s  Proceeding with only hash-named textures in the root.", basePath_.c_str());
+			if (replaceEnabled_) {
+				WARN_LOG(Log::TexReplacement, "Texture pack lacking ini file: %s  Proceeding with only hash-named textures in the root.", basePath_.c_str());
+			}
 			// Do what we can do anyway: Scan for textures and build the map.
 			std::map<ReplacementCacheKey, std::map<int, std::string>> filenameMap;
 			ScanForHashNamedFiles(dir, filenameMap);
@@ -202,7 +217,9 @@ bool TextureReplacer::LoadIni(std::string *error) {
 	}
 
 	auto gr = GetI18NCategory(I18NCat::GRAPHICS);
-	g_OSD.Show(OSDType::MESSAGE_SUCCESS, gr->T("Texture replacement pack activated"), 3.0f);
+	if (replaceEnabled_) {
+		g_OSD.Show(OSDType::MESSAGE_SUCCESS, gr->T("Texture replacement pack activated"), 3.0f);
+	}
 
 	vfs_ = dir;
 
@@ -212,10 +229,12 @@ bool TextureReplacer::LoadIni(std::string *error) {
 		repl.second->vfs_ = vfs_;
 	}
 
-	if (vfsIsZip_) {
-		INFO_LOG(Log::TexReplacement, "Texture pack activated from '%s'", (basePath_ / ZIP_FILENAME).c_str());
-	} else {
-		INFO_LOG(Log::TexReplacement, "Texture pack activated from '%s'", basePath_.c_str());
+	if (replaceEnabled_) {
+		if (vfsIsZip_) {
+			INFO_LOG(Log::TexReplacement, "Texture pack activated from '%s'", (basePath_ / ZIP_FILENAME).c_str());
+		} else {
+			INFO_LOG(Log::TexReplacement, "Texture pack activated from '%s'", basePath_.c_str());
+		}
 	}
 
 	// The ini doesn't have to exist for the texture directory or zip to be valid.
@@ -301,6 +320,7 @@ bool TextureReplacer::LoadIniValues(IniFile &ini, VFSBackend *dir, bool isOverri
 	// Multiplies sizeInRAM/bytesPerLine in XXHASH by 0.5.
 	options->Get("reduceHash", &reduceHash_, reduceHash_);
 	options->Get("ignoreMipmap", &ignoreMipmap_, ignoreMipmap_);
+	options->Get("skipLastDXT1Blocks128x64", &skipLastDXT1Blocks128x64_, skipLastDXT1Blocks128x64_);
 	if (reduceHash_ && hash_ == ReplacedTextureHash::QUICK) {
 		reduceHash_ = false;
 		ERROR_LOG(Log::TexReplacement, "Texture Replacement: reduceHash option requires safer hash, use xxh32 or xxh64 instead.");
@@ -506,19 +526,28 @@ u32 TextureReplacer::ComputeHash(u32 addr, int bufw, int w, int h, bool swizzled
 	}
 
 	const u8 *checkp = Memory::GetPointerUnchecked(addr);
+
+	float reduceHashSize = 1.0f;
 	if (reduceHash_) {
 		reduceHashSize = LookupReduceHashRange(w, h);
 		// default to reduceHashGlobalValue which default is 0.5
 	}
+
 	if (bufw <= w) {
 		// We can assume the data is contiguous.  These are the total used pixels.
 		const u32 totalPixels = bufw * h + (w - bufw);
-		const u32 sizeInRAM = (textureBitsPerPixel[fmt] * totalPixels) / 8 * reduceHashSize;
+		u32 sizeInRAM = (textureBitsPerPixel[fmt] * totalPixels) / 8 * reduceHashSize;
 
 		// Sanity check: Ignore textures that are at the end of RAM.
 		if (Memory::MaxSizeAtAddress(addr) < sizeInRAM) {
 			ERROR_LOG(Log::G3D, "Can't hash a %d bytes textures at %08x - end point is outside memory", sizeInRAM, addr);
 			return 0;
+		}
+
+		// Hack for Yu Gi Oh texture hashing problem. See issue #19714
+		if (skipLastDXT1Blocks128x64_ && fmt == GE_TFMT_DXT1 && w == 128 && h == 64) {
+			// Skip the last few blocks as specified.
+			sizeInRAM -= 8 * skipLastDXT1Blocks128x64_;
 		}
 
 		switch (hash_) {

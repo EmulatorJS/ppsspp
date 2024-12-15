@@ -9,6 +9,8 @@
 
 #include "imgui_impl_platform.h"
 
+static ImGuiMouseCursor g_cursor = ImGuiMouseCursor_Arrow;
+
 void ImGui_ImplPlatform_KeyEvent(const KeyInput &key) {
 	ImGuiIO &io = ImGui::GetIO();
 
@@ -79,6 +81,7 @@ void ImGui_ImplPlatform_Init(const Path &configPath) {
 	static char path[1024];
 	truncate_cpy(path, configPath.ToString());
 	ImGui::GetIO().IniFilename = path;
+	ImGui::GetIO().ConfigFlags |= ImGuiConfigFlags_DockingEnable;
 }
 
 void ImGui_ImplPlatform_AxisEvent(const AxisInput &axis) {
@@ -93,12 +96,17 @@ void ImGui_ImplPlatform_NewFrame() {
 
 	double now = time_now_d();
 
+	g_cursor = ImGui::GetMouseCursor();
 	ImGuiIO &io = ImGui::GetIO();
 	io.DisplaySize = ImVec2(g_display.pixel_xres, g_display.pixel_yres);
 	io.DisplayFramebufferScale = ImVec2(1.0f, 1.0f);
 	io.DeltaTime = now - lastTime;
 	io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 	lastTime = now;
+}
+
+ImGuiMouseCursor ImGui_ImplPlatform_GetCursor() {
+	return g_cursor;
 }
 
 // Written by chatgpt

@@ -47,6 +47,7 @@
 #include "Core/Util/PPGeDraw.h"
 
 #include "ext/imgui/imgui.h"
+#include "ext/imgui/imgui_internal.h"
 #include "ext/imgui/imgui_impl_thin3d.h"
 
 
@@ -1309,7 +1310,7 @@ void TextureCacheCommon::NotifyWriteFormattedFromMemory(u32 addr, int size, int 
 	videos_.push_back({ addr, (u32)size, gpuStats.numFlips });
 }
 
-void TextureCacheCommon::LoadClut(u32 clutAddr, u32 loadBytes) {
+void TextureCacheCommon::LoadClut(u32 clutAddr, u32 loadBytes, GPURecord::Recorder *recorder) {
 	if (loadBytes == 0) {
 		// Don't accidentally overwrite clutTotalBytes_ with a zero.
 		return;
@@ -1429,7 +1430,7 @@ void TextureCacheCommon::LoadClut(u32 clutAddr, u32 loadBytes) {
 	u32 bytes = Memory::ValidSize(clutAddr, loadBytes);
 	_assert_(bytes <= 2048);
 	bool performDownload = PSP_CoreParameter().compat.flags().AllowDownloadCLUT;
-	if (GPURecord::IsActive())
+	if (recorder->IsActive())
 		performDownload = true;
 	if (clutRenderAddress_ != 0xFFFFFFFF && performDownload) {
 		framebufferManager_->DownloadFramebufferForClut(clutRenderAddress_, clutRenderOffset_ + bytes);
@@ -3066,7 +3067,7 @@ void TextureCacheCommon::DrawImGuiDebug(uint64_t &selectedTextureId) const {
 	ImVec2 avail = ImGui::GetContentRegionAvail();
 	auto &style = ImGui::GetStyle();
 	ImGui::BeginChild("left", ImVec2(140.0f, 0.0f), ImGuiChildFlags_ResizeX);
-	float window_visible_x2 = ImGui::GetWindowPos().x + ImGui::GetWindowContentRegionMax().x;
+	float window_visible_x2 = ImGui::GetCursorScreenPos().x + ImGui::GetContentRegionAvail().x;
 
 	// Global texture stats
 	int replacementStateCounts[(int)ReplacementState::COUNT]{};

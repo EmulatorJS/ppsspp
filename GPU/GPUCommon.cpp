@@ -44,6 +44,7 @@
 #include "GPU/Common/TextureCacheCommon.h"
 #include "GPU/Debugger/Debugger.h"
 #include "GPU/Debugger/Record.h"
+#include "GPU/Debugger/Stepping.h"
 
 void GPUCommon::Flush() {
 	drawEngineCommon_->DispatchFlush();
@@ -105,7 +106,6 @@ void GPUCommon::Reinitialize() {
 	isbreak = false;
 	drawCompleteTicks = 0;
 	busyTicks = 0;
-	timeSpentStepping_ = 0.0;
 	interruptsEnabled_ = true;
 
 	if (textureCache_)
@@ -615,107 +615,6 @@ u32 GPUCommon::Break(int mode) {
 	return currentList->id;
 }
 
-void GPUCommon::NotifySteppingEnter() {
-	if (coreCollectDebugStats) {
-		timeSteppingStarted_ = time_now_d();
-	}
-}
-void GPUCommon::NotifySteppingExit() {
-	if (coreCollectDebugStats) {
-		if (timeSteppingStarted_ <= 0.0) {
-			ERROR_LOG(Log::G3D, "Mismatched stepping enter/exit.");
-		}
-		double total = time_now_d() - timeSteppingStarted_;
-		_dbg_assert_msg_(total >= 0.0, "Time spent stepping became negative");
-		timeSpentStepping_ += total;
-		timeSteppingStarted_ = 0.0;
-	}
-}
-
-bool GPUCommon::InterpretList(DisplayList &list) {
-	// Initialized to avoid a race condition with bShowDebugStats changing.
-	double start = 0.0;
-	if (coreCollectDebugStats) {
-		start = time_now_d();
-	}
-
-	if (list.state == PSP_GE_DL_STATE_PAUSED)
-		return false;
-	currentList = &list;
-
-	if (!list.started && list.context.IsValid()) {
-		gstate.Save(list.context);
-	}
-	list.started = true;
-
-	gstate_c.offsetAddr = list.offsetAddr;
-
-	if (!Memory::IsValidAddress(list.pc)) {
-		ERROR_LOG_REPORT(Log::G3D, "DL PC = %08x WTF!!!!", list.pc);
-		return true;
-	}
-
-	cycleLastPC = list.pc;
-	cyclesExecuted += 60;
-	downcount = list.stall == 0 ? 0x0FFFFFFF : (list.stall - list.pc) / 4;
-	list.state = PSP_GE_DL_STATE_RUNNING;
-	list.interrupted = false;
-
-	gpuState = list.pc == list.stall ? GPUSTATE_STALL : GPUSTATE_RUNNING;
-
-	// To enable breakpoints, we don't do fast matrix loads while debugger active.
-	debugRecording_ = GPUDebug::IsActive() || GPURecord::IsActive();
-	const bool useFastRunLoop = !dumpThisFrame_ && !debugRecording_;
-	while (gpuState == GPUSTATE_RUNNING) {
-		if (list.pc == list.stall) {
-			gpuState = GPUSTATE_STALL;
-			downcount = 0;
-		}
-
-		if (useFastRunLoop) {
-			// When no Ge debugger is active, we go full speed.
-			FastRunLoop(list);
-		} else {
-			// When a Ge debugger is active (or similar), we do more checking.
-			if (!SlowRunLoop(list)) {
-				// Hit a breakpoint, so we set the state and bail. We can resume later.
-				// TODO: Cycle counting might need some more care?
-				FinishDeferred();
-				_dbg_assert_(!GPURecord::IsActive());
-				gpuState = GPUSTATE_BREAK;
-				return false;
-			}
-		}
-
-		downcount = list.stall == 0 ? 0x0FFFFFFF : (list.stall - list.pc) / 4;
-		if (gpuState == GPUSTATE_STALL && list.pc != list.stall) {
-			// Unstalled (Can this happen?)
-			gpuState = GPUSTATE_RUNNING;
-		}
-	}
-
-	FinishDeferred();
-	if (debugRecording_)
-		GPURecord::NotifyCPU();
-
-	// We haven't run the op at list.pc, so it shouldn't count.
-	if (cycleLastPC != list.pc) {
-		UpdatePC(list.pc - 4, list.pc);
-	}
-
-	list.offsetAddr = gstate_c.offsetAddr;
-
-	if (coreCollectDebugStats) {
-		double total = time_now_d() - start - timeSpentStepping_;
-		_dbg_assert_msg_(total >= 0.0, "Time spent DL processing became negative");
-		hleSetSteppingTime(timeSpentStepping_);
-		DisplayNotifySleep(timeSpentStepping_);
-		timeSpentStepping_ = 0.0;
-		gpuStats.msProcessingDisplayLists += total;
-	}
-	return gpuState == GPUSTATE_DONE || gpuState == GPUSTATE_ERROR;
-}
-
 void GPUCommon::PSPFrame() {
 	immCount_ = 0;
 	if (dumpNextFrame_) {
@@ -726,17 +625,17 @@ void GPUCommon::PSPFrame() {
 		dumpThisFrame_ = false;
 	}
 	GPUDebug::NotifyBeginFrame();
-	GPURecord::NotifyBeginFrame();
+	recorder_.NotifyBeginFrame();
 }
 
 // Returns false on breakpoint.
 bool GPUCommon::SlowRunLoop(DisplayList &list) {
 	const bool dumpThisFrame = dumpThisFrame_;
 	while (downcount > 0) {
-		GPUDebug::NotifyResult result = GPUDebug::NotifyCommand(list.pc);
+		GPUDebug::NotifyResult result = GPUDebug::NotifyCommand(list.pc, &breakpoints_);
 
 		if (result == GPUDebug::NotifyResult::Execute) {
-			GPURecord::NotifyCommand(list.pc);
+			recorder_.NotifyCommand(list.pc);
 			u32 op = Memory::ReadUnchecked_U32(list.pc);
 			u32 cmd = op >> 24;
 
@@ -841,35 +740,126 @@ int GPUCommon::GetNextListIndex() {
 	}
 }
 
-// This is now called when coreState == CORE_RUNNING_GE.
-// TODO: It should return the next action.. (break into debugger or continue running)
+// This is now called when coreState == CORE_RUNNING_GE, in addition to from the various sceGe commands.
 DLResult GPUCommon::ProcessDLQueue() {
-	startingTicks = CoreTiming::GetTicks();
-	cyclesExecuted = 0;
+	if (!resumingFromDebugBreak_) {
+		startingTicks = CoreTiming::GetTicks();
+		cyclesExecuted = 0;
 
-	// Seems to be correct behaviour to process the list anyway?
-	if (startingTicks < busyTicks) {
-		DEBUG_LOG(Log::G3D, "Can't execute a list yet, still busy for %lld ticks", busyTicks - startingTicks);
-		//return;
+		// ?? Seems to be correct behaviour to process the list anyway?
+		if (startingTicks < busyTicks) {
+			DEBUG_LOG(Log::G3D, "Can't execute a list yet, still busy for %lld ticks", busyTicks - startingTicks);
+			//return;
+		}
 	}
 
+	TimeCollector collectStat(&gpuStats.msProcessingDisplayLists, coreCollectDebugStats);
+
 	for (int listIndex = GetNextListIndex(); listIndex != -1; listIndex = GetNextListIndex()) {
-		DisplayList &l = dls[listIndex];
-		DEBUG_LOG(Log::G3D, "%s DL execution at %08x - stall = %08x (startingTicks=%d)", l.pc == l.startpc ? "Starting" : "Resuming", l.pc, l.stall, startingTicks);
-		if (!InterpretList(l)) {
-			switch (gpuState) {
-			case GPURunState::GPUSTATE_STALL:
-				return DLResult::Stall;
-			case GPURunState::GPUSTATE_BREAK:
-				return DLResult::Break;
-			default:
-				return DLResult::Error;
+		DisplayList &list = dls[listIndex];
+
+		if (!Memory::IsValidAddress(list.pc)) {
+			ERROR_LOG(Log::G3D, "DL PC = %08x WTF!!!!", list.pc);
+			return DLResult::Error;
+		}
+
+		DEBUG_LOG(Log::G3D, "%s DL execution at %08x - stall = %08x (startingTicks=%d)",
+			list.pc == list.startpc ? "Starting" : "Resuming", list.pc, list.stall, startingTicks);
+
+		if (list.state == PSP_GE_DL_STATE_PAUSED) {
+			return DLResult::Done;
+		}
+
+		if (!resumingFromDebugBreak_) {
+			// TODO: Need to be careful when *resuming* a list (when it wasn't from a stall...)
+			currentList = &list;
+
+			if (!list.started && list.context.IsValid()) {
+				gstate.Save(list.context);
 			}
+			list.started = true;
+
+			gstate_c.offsetAddr = list.offsetAddr;
+
+			cycleLastPC = list.pc;
+			cyclesExecuted += 60;
+			downcount = list.stall == 0 ? 0x0FFFFFFF : (list.stall - list.pc) / 4;
+			list.state = PSP_GE_DL_STATE_RUNNING;
+			list.interrupted = false;
+
+			gpuState = list.pc == list.stall ? GPUSTATE_STALL : GPUSTATE_RUNNING;
+
+			// To enable breakpoints, we don't do fast matrix loads while debugger active.
+			debugRecording_ = recorder_.IsActive();
+			useFastRunLoop_ = !(dumpThisFrame_ || debugRecording_ || GPUDebug::NeedsSlowInterpreter() || breakpoints_.HasBreakpoints());
+		} else {
+			resumingFromDebugBreak_ = false;
+			// The bottom part of the gpuState loop below, that wasn't executed
+			// when we bailed.
+			downcount = list.stall == 0 ? 0x0FFFFFFF : (list.stall - list.pc) / 4;
+			if (gpuState == GPUSTATE_STALL && list.pc != list.stall) {
+				// Unstalled (Can this happen?)
+				gpuState = GPUSTATE_RUNNING;
+			}
+			// Proceed...
+		}
+
+		const bool useFastRunLoop = useFastRunLoop_;
+
+		while (gpuState == GPUSTATE_RUNNING) {
+			if (list.pc == list.stall) {
+				gpuState = GPUSTATE_STALL;
+				downcount = 0;
+			}
+
+			if (useFastRunLoop) {
+				// When no Ge debugger is active, we go full speed.
+				FastRunLoop(list);
+			} else {
+				// When a Ge debugger is active (or similar), we do more checking.
+				if (!SlowRunLoop(list)) {
+					// Hit a breakpoint, so we set the state and bail. We can resume later.
+					// TODO: Cycle counting might need some more care?
+					FinishDeferred();
+					_dbg_assert_(!recorder_.IsActive());
+
+					resumingFromDebugBreak_ = true;
+					return DLResult::DebugBreak;
+				}
+			}
+
+			downcount = list.stall == 0 ? 0x0FFFFFFF : (list.stall - list.pc) / 4;
+			if (gpuState == GPUSTATE_STALL && list.pc != list.stall) {
+				// Unstalled (Can this happen?)
+				gpuState = GPUSTATE_RUNNING;
+			}
+		}
+
+		FinishDeferred();
+		if (debugRecording_)
+			recorder_.NotifyCPU();
+
+		// We haven't run the op at list.pc, so it shouldn't count.
+		if (cycleLastPC != list.pc) {
+			UpdatePC(list.pc - 4, list.pc);
+		}
+
+		list.offsetAddr = gstate_c.offsetAddr;
+
+		switch (gpuState) {
+		case GPUSTATE_DONE:
+		case GPUSTATE_ERROR:
+			// don't do anything - though dunno about error...
+			break;
+		case GPUSTATE_STALL:
+			return DLResult::Done;
+		default:
+			return DLResult::Error;
 		}
 
 		// Some other list could've taken the spot while we dilly-dallied around, so we need the check.
 		// Yes, this does happen.
-		if (l.state != PSP_GE_DL_STATE_QUEUED) {
+		if (list.state != PSP_GE_DL_STATE_QUEUED) {
 			// At the end, we can remove it from the queue and continue.
 			dlQueue.erase(std::remove(dlQueue.begin(), dlQueue.end(), listIndex), dlQueue.end());
 		}
@@ -890,9 +880,9 @@ DLResult GPUCommon::ProcessDLQueue() {
 }
 
 bool GPUCommon::ShouldSplitOverGe() const {
-	// Check for debugger active, etc.
+	// Check for debugger active.
 	// We only need to do this if we want to be able to step through Ge display lists using the Ge debuggers.
-	return GPUDebug::IsActive() || g_Config.bShowImDebugger;
+	return GPUDebug::NeedsSlowInterpreter() || breakpoints_.HasBreakpoints();
 }
 
 void GPUCommon::Execute_OffsetAddr(u32 op, u32 diff) {
@@ -954,9 +944,12 @@ void GPUCommon::Execute_Call(u32 op, u32 diff) {
 }
 
 void GPUCommon::DoExecuteCall(u32 target) {
+	// Local variable for better codegen
+	DisplayList *currentList = this->currentList;
+
 	// Bone matrix optimization - many games will CALL a bone matrix (!).
-	// We don't optimize during recording - so the matrix data gets recorded.
-	if (!debugRecording_ && Memory::IsValidRange(target, 13 * 4) && (Memory::ReadUnchecked_U32(target) >> 24) == GE_CMD_BONEMATRIXDATA) {
+	// We don't optimize during recording or debugging - so the matrix data gets recorded.
+	if (useFastRunLoop_ && Memory::IsValidRange(target, 13 * 4) && (Memory::ReadUnchecked_U32(target) >> 24) == GE_CMD_BONEMATRIXDATA) {
 		// Check for the end
 		if ((Memory::ReadUnchecked_U32(target + 11 * 4) >> 24) == GE_CMD_BONEMATRIXDATA &&
 			(Memory::ReadUnchecked_U32(target + 12 * 4) >> 24) == GE_CMD_RET &&
@@ -983,6 +976,8 @@ void GPUCommon::DoExecuteCall(u32 target) {
 }
 
 void GPUCommon::Execute_Ret(u32 op, u32 diff) {
+	// Local variable for better codegen
+	DisplayList *currentList = this->currentList;
 	if (currentList->stackptr == 0) {
 		DEBUG_LOG(Log::G3D, "RET: Stack empty!");
 	} else {
@@ -1184,7 +1179,7 @@ void GPUCommon::Execute_End(u32 op, u32 diff) {
 		}
 		break;
 	default:
-		DEBUG_LOG(Log::G3D,"Ah, not finished: %06x", prev & 0xFFFFFF);
+		DEBUG_LOG(Log::G3D, "END: Not finished: %06x", prev & 0xFFFFFF);
 		break;
 	}
 }
@@ -1204,43 +1199,44 @@ void GPUCommon::Execute_BoundingBox(u32 op, u32 diff) {
 	VertexDecoder *dec = drawEngineCommon_->GetVertexDecoder(gstate.vertType);
 	int bytesRead = (useInds ? 1 : dec->VertexSize()) * count;
 
-	if (Memory::IsValidRange(gstate_c.vertexAddr, bytesRead)) {
-		const void *control_points = Memory::GetPointerUnchecked(gstate_c.vertexAddr);
-		if (!control_points) {
-			ERROR_LOG_REPORT_ONCE(boundingbox, Log::G3D, "Invalid verts in bounding box check");
-			currentList->bboxResult = true;
-			return;
-		}
-
-		const void *inds = nullptr;
-		if (useInds) {
-			int indexShift = ((gstate.vertType & GE_VTYPE_IDX_MASK) >> GE_VTYPE_IDX_SHIFT) - 1;
-			inds = Memory::GetPointerUnchecked(gstate_c.indexAddr);
-			if (!inds || !Memory::IsValidRange(gstate_c.indexAddr, count << indexShift)) {
-				ERROR_LOG_REPORT_ONCE(boundingboxInds, Log::G3D, "Invalid inds in bounding box check");
-				currentList->bboxResult = true;
-				return;
-			}
-		}
-
-		// Test if the bounding box is within the drawing region.
-		// The PSP only seems to vary the result based on a single range of 0x100.
-		if (count > 0x200) {
-			// The second to last set of 0x100 is checked (even for odd counts.)
-			size_t skipSize = (count - 0x200) * dec->VertexSize();
-			currentList->bboxResult = drawEngineCommon_->TestBoundingBox((const uint8_t *)control_points + skipSize, inds, 0x100, gstate.vertType);
-		} else if (count > 0x100) {
-			int checkSize = count - 0x100;
-			currentList->bboxResult = drawEngineCommon_->TestBoundingBox(control_points, inds, checkSize, gstate.vertType);
-		} else {
-			currentList->bboxResult = drawEngineCommon_->TestBoundingBox(control_points, inds, count, gstate.vertType);
-		}
-		AdvanceVerts(gstate.vertType, count, bytesRead);
-	} else {
+	if (!Memory::IsValidRange(gstate_c.vertexAddr, bytesRead)) {
 		ERROR_LOG_REPORT_ONCE(boundingbox, Log::G3D, "Bad bounding box data: %06x", count);
 		// Data seems invalid. Let's assume the box test passed.
 		currentList->bboxResult = true;
+		return;
 	}
+
+	const void *control_points = Memory::GetPointerUnchecked(gstate_c.vertexAddr);
+	if (!control_points) {
+		ERROR_LOG_REPORT_ONCE(boundingbox, Log::G3D, "Invalid verts in bounding box check");
+		currentList->bboxResult = true;
+		return;
+	}
+
+	const void *inds = nullptr;
+	if (useInds) {
+		int indexShift = ((gstate.vertType & GE_VTYPE_IDX_MASK) >> GE_VTYPE_IDX_SHIFT) - 1;
+		inds = Memory::GetPointerUnchecked(gstate_c.indexAddr);
+		if (!inds || !Memory::IsValidRange(gstate_c.indexAddr, count << indexShift)) {
+			ERROR_LOG_REPORT_ONCE(boundingboxInds, Log::G3D, "Invalid inds in bounding box check");
+			currentList->bboxResult = true;
+			return;
+		}
+	}
+
+	// Test if the bounding box is within the drawing region.
+	// The PSP only seems to vary the result based on a single range of 0x100.
+	if (count > 0x200) {
+		// The second to last set of 0x100 is checked (even for odd counts.)
+		size_t skipSize = (count - 0x200) * dec->VertexSize();
+		currentList->bboxResult = drawEngineCommon_->TestBoundingBox((const uint8_t *)control_points + skipSize, inds, 0x100, gstate.vertType);
+	} else if (count > 0x100) {
+		int checkSize = count - 0x100;
+		currentList->bboxResult = drawEngineCommon_->TestBoundingBox(control_points, inds, checkSize, gstate.vertType);
+	} else {
+		currentList->bboxResult = drawEngineCommon_->TestBoundingBox(control_points, inds, count, gstate.vertType);
+	}
+	AdvanceVerts(gstate.vertType, count, bytesRead);
 }
 
 void GPUCommon::Execute_MorphWeight(u32 op, u32 diff) {
@@ -1259,7 +1255,7 @@ void GPUCommon::Execute_ImmVertexAlphaPrim(u32 op, u32 diff) {
 		return;
 	}
 
-	int prim = (op >> 8) & 0x7;
+	const int prim = (op >> 8) & 0x7;
 	if (prim != GE_PRIM_KEEP_PREVIOUS) {
 		// Flush before changing the prim type.  Only continue can be used to continue a prim.
 		FlushImm();
@@ -1688,7 +1684,7 @@ u32 GPUCommon::GetIndexAddress() {
 	return gstate_c.indexAddr;
 }
 
-GPUgstate GPUCommon::GetGState() {
+const GPUgstate &GPUCommon::GetGState() {
 	return gstate;
 }
 
@@ -1948,7 +1944,7 @@ bool GPUCommon::PerformMemoryCopy(u32 dest, u32 src, int size, GPUCopyFlag flags
 	}
 	InvalidateCache(dest, size, GPU_INVALIDATE_HINT);
 	if (!(flags & GPUCopyFlag::DEBUG_NOTIFIED))
-		GPURecord::NotifyMemcpy(dest, src, size);
+		recorder_.NotifyMemcpy(dest, src, size);
 	return false;
 }
 
@@ -1965,7 +1961,7 @@ bool GPUCommon::PerformMemorySet(u32 dest, u8 v, int size) {
 	NotifyMemInfo(MemBlockFlags::WRITE, dest, size, "GPUMemset");
 	// Or perhaps a texture, let's invalidate.
 	InvalidateCache(dest, size, GPU_INVALIDATE_HINT);
-	GPURecord::NotifyMemset(dest, v, size);
+	recorder_.NotifyMemset(dest, v, size);
 	return false;
 }
 
@@ -1978,7 +1974,7 @@ bool GPUCommon::PerformReadbackToMemory(u32 dest, int size) {
 
 bool GPUCommon::PerformWriteColorFromMemory(u32 dest, int size) {
 	if (Memory::IsVRAMAddress(dest)) {
-		GPURecord::NotifyUpload(dest, size);
+		recorder_.NotifyUpload(dest, size);
 		return PerformMemoryCopy(dest, dest, size, GPUCopyFlag::FORCE_SRC_MATCH_MEM | GPUCopyFlag::DEBUG_NOTIFIED);
 	}
 	return false;

@@ -371,18 +371,23 @@ void hleCoreTimingForceCheck() {
 }
 
 // Pauses execution after an HLE call.
-bool hleExecuteDebugBreak(const HLEFunction &func)
-{
+static bool hleExecuteDebugBreak(const HLEFunction *func) {
+	if (!func || coreState == CORE_RUNNING_GE) {
+		// Let's break on the next one.
+		return false;
+	}
+
 	const u32 NID_SUSPEND_INTR = 0x092968F4, NID_RESUME_INTR = 0x5F10D406;
 
 	// Never break on these, they're noise.
 	u32 blacklistedNIDs[] = {NID_SUSPEND_INTR, NID_RESUME_INTR, NID_IDLE};
 	for (size_t i = 0; i < ARRAY_SIZE(blacklistedNIDs); ++i)
 	{
-		if (func.ID == blacklistedNIDs[i])
+		if (func->ID == blacklistedNIDs[i])
 			return false;
 	}
 
+	INFO_LOG(Log::CPU, "Broke after syscall: %s", func->name);
 	Core_Break("hle.step", latestSyscallPC);
 	return true;
 }
@@ -624,9 +629,7 @@ static void hleFinishSyscall(const HLEFunction *info) {
 		__KernelReSchedule(hleAfterSyscallReschedReason);
 
 	if ((hleAfterSyscall & HLE_AFTER_DEBUG_BREAK) != 0) {
-		_dbg_assert_(info);
-		if (!hleExecuteDebugBreak(*info))
-		{
+		if (!hleExecuteDebugBreak(info)) {
 			// We'll do it next syscall.
 			hleAfterSyscall = HLE_AFTER_DEBUG_BREAK;
 			hleAfterSyscallReschedReason = 0;
@@ -755,16 +758,11 @@ void *GetQuickSyscallFunc(MIPSOpcode op) {
 	return (void *)&CallSyscallWithoutFlags;
 }
 
-void hleSetSteppingTime(double t) {
-	hleSteppingTime += t;
-}
-
 void hleSetFlipTime(double t) {
 	hleFlipTime = t;
 }
 
-void CallSyscall(MIPSOpcode op)
-{
+void CallSyscall(MIPSOpcode op) {
 	PROFILE_THIS_SCOPE("syscall");
 	double start = 0.0;  // need to initialize to fix the race condition where coreCollectDebugStats is enabled in the middle of this func.
 	if (coreCollectDebugStats) {
@@ -794,11 +792,10 @@ void CallSyscall(MIPSOpcode op)
 		u32 callno = (op >> 6) & 0xFFFFF; //20 bits
 		int funcnum = callno & 0xFFF;
 		int modulenum = (callno & 0xFF000) >> 12;
-		double total = time_now_d() - start - hleSteppingTime;
+		double total = time_now_d() - start;
 		if (total >= hleFlipTime)
 			total -= hleFlipTime;
 		_dbg_assert_msg_(total >= 0.0, "Time spent in syscall became negative");
-		hleSteppingTime = 0.0;
 		hleFlipTime = 0.0;
 		updateSyscallStats(modulenum, funcnum, total);
 	}

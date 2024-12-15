@@ -1539,6 +1539,11 @@ ScreenRenderFlags EmuScreen::render(ScreenRenderMode mode) {
 		}
 	}
 
+	// Running it early allows things like direct readbacks of buffers, things we can't do
+	// when we have started the final render pass. Well, technically we probably could with some manipulation
+	// of pass order in the render managers..
+	runImDebugger();
+
 	bool blockedExecution = Achievements::IsBlockingExecution();
 	uint32_t clearColor = 0;
 	if (!blockedExecution) {
@@ -1655,7 +1660,7 @@ ScreenRenderFlags EmuScreen::render(ScreenRenderMode mode) {
 	return flags;
 }
 
-void EmuScreen::renderImDebugger() {
+void EmuScreen::runImDebugger() {
 	if (g_Config.bShowImDebugger) {
 		Draw::DrawContext *draw = screenManager()->getDrawContext();
 		if (!imguiInited_) {
@@ -1686,9 +1691,19 @@ void EmuScreen::renderImDebugger() {
 			io.AddKeyEvent(ImGuiMod_Alt, keyAltLeft_ || keyAltRight_);
 			// io.AddKeyEvent(ImGuiMod_Super, e.key.super);
 
+			ImGui::DockSpaceOverViewport(0, ImGui::GetMainViewport(), ImGuiDockNodeFlags_PassthruCentralNode);
+
 			imDebugger_->Frame(currentDebugMIPS, gpuDebug);
 
 			ImGui::Render();
+		}
+	}
+}
+
+void EmuScreen::renderImDebugger() {
+	if (g_Config.bShowImDebugger) {
+		Draw::DrawContext *draw = screenManager()->getDrawContext();
+		if (PSP_IsInited()) {
 			ImGui_ImplThin3d_RenderDrawData(ImGui::GetDrawData(), draw);
 		}
 	}

@@ -74,7 +74,7 @@ struct WebSocketCPUBreakpointParams {
 		if (hasCondition) {
 			if (!req.ParamString("condition", &condition))
 				return false;
-			if (!currentDebugMIPS->initExpression(condition.c_str(), compiledCondition)) {
+			if (!initExpression(currentDebugMIPS, condition.c_str(), compiledCondition)) {
 				req.Fail(StringFromFormat("Could not parse expression syntax: %s", getExpressionError()));
 				return false;
 			}
@@ -227,9 +227,8 @@ void WebSocketCPUBreakpointList(DebuggerRequest &req) {
 		else
 			json.writeString("symbol", symbol);
 
-		DisassemblyManager manager;
 		DisassemblyLineInfo line;
-		manager.getLine(manager.getStartAddress(bp.addr), true, line);
+		g_disassemblyManager.getLine(g_disassemblyManager.getStartAddress(bp.addr), true, line, currentDebugMIPS);
 		json.writeString("code", line.name + " " + line.params);
 
 		json.pop();
@@ -292,7 +291,7 @@ struct WebSocketMemoryBreakpointParams {
 		if (hasCondition) {
 			if (!req.ParamString("condition", &condition))
 				return false;
-			if (!currentDebugMIPS->initExpression(condition.c_str(), compiledCondition)) {
+			if (!initExpression(currentDebugMIPS, condition.c_str(), compiledCondition)) {
 				req.Fail(StringFromFormat("Could not parse expression syntax: %s", getExpressionError()));
 				return false;
 			}

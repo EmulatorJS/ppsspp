@@ -17,6 +17,9 @@
 
 #pragma once
 
+#include <string>
+#include <string_view>
+
 #include "ppsspp_config.h"
 #include <mutex>
 #include "Common/CommonTypes.h"
@@ -120,7 +123,7 @@ public:
 	DisassemblyMacro(u32 _address): address(_address) { }
 
 	void setMacroLi(u32 _immediate, u8 _rt);
-	void setMacroMemory(const std::string &_name, u32 _immediate, u8 _rt, int _dataSize);
+	void setMacroMemory(std::string_view _name, u32 _immediate, u8 _rt, int _dataSize);
 
 	void recheck() override { };
 	int getNumLines() override { return 1; };
@@ -175,7 +178,7 @@ private:
 class DisassemblyComment: public DisassemblyEntry
 {
 public:
-	DisassemblyComment(u32 _address, u32 _size, std::string name, std::string param);
+	DisassemblyComment(u32 _address, u32 _size, std::string_view name, std::string_view param);
 
 	void recheck() override { };
 	int getNumLines() override { return 1; };
@@ -193,16 +196,15 @@ private:
 
 class DebugInterface;
 
-class DisassemblyManager
-{
+class DisassemblyManager {
 public:
 	~DisassemblyManager();
 
 	void clear();
 
-	void setCpu(DebugInterface* _cpu) { cpu = _cpu; };
+	void setCpu(DebugInterface *cpu);
 	void setMaxParamChars(int num) { maxParamChars = num; clear(); };
-	void getLine(u32 address, bool insertSymbols, DisassemblyLineInfo &dest, DebugInterface *cpuDebug = nullptr);
+	void getLine(u32 address, bool insertSymbols, DisassemblyLineInfo &dest, DebugInterface *cpuDebug);
 	void analyze(u32 address, u32 size);
 	std::vector<BranchLine> getBranchLines(u32 start, u32 size);
 
@@ -210,14 +212,17 @@ public:
 	u32 getNthPreviousAddress(u32 address, int n = 1);
 	u32 getNthNextAddress(u32 address, int n = 1);
 
-	static DebugInterface* getCpu() { return cpu; };
-	static int getMaxParamChars() { return maxParamChars; };
+	DebugInterface *getCpu() { return cpu_; };
+	int getMaxParamChars() { return maxParamChars; };
+
 private:
-	static std::map<u32,DisassemblyEntry*> entries;
-	static std::recursive_mutex entriesLock_;
-	static DebugInterface* cpu;
-	static int maxParamChars;
+	std::map<u32,DisassemblyEntry*> entries;
+	std::recursive_mutex entriesLock_;
+	DebugInterface *cpu_;
+	int maxParamChars = 29;
 };
+
+extern DisassemblyManager g_disassemblyManager;
 
 bool isInInterval(u32 start, u32 size, u32 value);
 bool IsLikelyStringAt(uint32_t addr);

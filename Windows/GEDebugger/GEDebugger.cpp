@@ -53,9 +53,9 @@
 #include "GPU/Debugger/Breakpoints.h"
 #include "GPU/Debugger/Debugger.h"
 #include "GPU/Debugger/Record.h"
+#include "GPU/Debugger/State.h"
 #include "GPU/Debugger/Stepping.h"
 
-using namespace GPUBreakpoints;
 using namespace GPUStepping;
 
 enum PrimaryDisplayType {
@@ -135,7 +135,7 @@ StepCountDlg::~StepCountDlg() {
 void StepCountDlg::Jump(int count, bool relative) {
 	if (relative && count == 0)
 		return;
-	GPUDebug::SetBreakNext(GPUDebug::BreakNext::COUNT);
+	GPUDebug::SetBreakNext(GPUDebug::BreakNext::COUNT, gpuDebug->GetBreakpoints());
 	GPUDebug::SetBreakCount(count, relative);
 };
 
@@ -568,7 +568,10 @@ void CGEDebugger::UpdatePreviews() {
 	UpdatePrimaryPreview(state);
 	UpdateSecondPreview(state);
 
-	u32 primOp = PrimPreviewOp();
+	u32 primOp = 0;
+	if (!showClut_) {
+		primOp = PrimPreviewOp();
+	}
 	if (primOp != 0) {
 		UpdatePrimPreview(primOp, 3);
 	}
@@ -676,9 +679,9 @@ void CGEDebugger::UpdatePrimaryPreview(const GPUgstate &state) {
 		bufferResult = GPU_GetCurrentTexture(primaryBuffer_, textureLevel_, &primaryIsFramebuffer_);
 		flags = TexturePreviewFlags(state);
 		if (bufferResult) {
-			UpdateLastTexture(state.getTextureAddress(textureLevel_));
+			gpuDebug->GetBreakpoints()->UpdateLastTexture(state.getTextureAddress(textureLevel_));
 		} else {
-			UpdateLastTexture((u32)-1);
+			gpuDebug->GetBreakpoints()->UpdateLastTexture((u32)-1);
 		}
 	} else {
 		switch (PrimaryDisplayType(fbTabs->CurrentTabIndex())) {
@@ -729,9 +732,9 @@ void CGEDebugger::UpdateSecondPreview(const GPUgstate &state) {
 	} else {
 		bufferResult = GPU_GetCurrentTexture(secondBuffer_, textureLevel_, &secondIsFramebuffer_);
 		if (bufferResult) {
-			UpdateLastTexture(state.getTextureAddress(textureLevel_));
+			gpuDebug->GetBreakpoints()->UpdateLastTexture(state.getTextureAddress(textureLevel_));
 		} else {
-			UpdateLastTexture((u32)-1);
+			gpuDebug->GetBreakpoints()->UpdateLastTexture((u32)-1);
 		}
 	}
 
@@ -824,148 +827,6 @@ void CGEDebugger::SecondPreviewHover(int x, int y) {
 	wchar_t w_desc[256];
 	ConvertUTF8ToWString(w_desc, ARRAY_SIZE(w_desc), desc);
 	SetDlgItemText(m_hDlg, IDC_GEDBG_TEXADDR, w_desc);
-}
-
-void CGEDebugger::DescribePixel(u32 pix, GPUDebugBufferFormat fmt, int x, int y, char desc[256]) {
-	switch (fmt) {
-	case GPU_DBG_FORMAT_565:
-	case GPU_DBG_FORMAT_565_REV:
-	case GPU_DBG_FORMAT_5551:
-	case GPU_DBG_FORMAT_5551_REV:
-	case GPU_DBG_FORMAT_5551_BGRA:
-	case GPU_DBG_FORMAT_4444:
-	case GPU_DBG_FORMAT_4444_REV:
-	case GPU_DBG_FORMAT_4444_BGRA:
-	case GPU_DBG_FORMAT_8888:
-	case GPU_DBG_FORMAT_8888_BGRA:
-		DescribePixelRGBA(pix, fmt, x, y, desc);
-		break;
-
-	case GPU_DBG_FORMAT_16BIT:
-		snprintf(desc, 256, "%d,%d: %d / %f", x, y, pix, pix * (1.0f / 65535.0f));
-		break;
-
-	case GPU_DBG_FORMAT_8BIT:
-		snprintf(desc, 256, "%d,%d: %d / %f", x, y, pix, pix * (1.0f / 255.0f));
-		break;
-
-	case GPU_DBG_FORMAT_24BIT_8X:
-	{
-		DepthScaleFactors depthScale = GetDepthScaleFactors(gstate_c.UseFlags());
-		// These are only ever going to be depth values, so let's also show scaled to 16 bit.
-		snprintf(desc, 256, "%d,%d: %d / %f / %f", x, y, pix & 0x00FFFFFF, (pix & 0x00FFFFFF) * (1.0f / 16777215.0f), depthScale.DecodeToU16((pix & 0x00FFFFFF) * (1.0f / 16777215.0f)));
-		break;
-	}
-
-	case GPU_DBG_FORMAT_24BIT_8X_DIV_256:
-		{
-			// These are only ever going to be depth values, so let's also show scaled to 16 bit.
-			int z24 = pix & 0x00FFFFFF;
-			int z16 = z24 - 0x800000 + 0x8000;
-			snprintf(desc, 256, "%d,%d: %d / %f", x, y, z16, z16 * (1.0f / 65535.0f));
-		}
-		break;
-
-	case GPU_DBG_FORMAT_24X_8BIT:
-		snprintf(desc, 256, "%d,%d: %d / %f", x, y, (pix >> 24) & 0xFF, ((pix >> 24) & 0xFF) * (1.0f / 255.0f));
-		break;
-
-	case GPU_DBG_FORMAT_FLOAT: {
-		float pixf = *(float *)&pix;
-		DepthScaleFactors depthScale = GetDepthScaleFactors(gstate_c.UseFlags());
-		snprintf(desc, 256, "%d,%d: %f / %f", x, y, pixf, depthScale.DecodeToU16(pixf));
-		break;
-	}
-
-	case GPU_DBG_FORMAT_FLOAT_DIV_256:
-		{
-			double z = *(float *)&pix;
-			int z24 = (int)(z * 16777215.0);
-
-			DepthScaleFactors factors = GetDepthScaleFactors(gstate_c.UseFlags());
-			// TODO: Use GetDepthScaleFactors here too, verify it's the same.
-			int z16 = z24 - 0x800000 + 0x8000;
-
-			int z16_2 = factors.DecodeToU16(z);
-
-			snprintf(desc, 256, "%d,%d: %d / %f", x, y, z16, (z - 0.5 + (1.0 / 512.0)) * 256.0);
-		}
-		break;
-
-	default:
-		snprintf(desc, 256, "Unexpected format");
-	}
-}
-
-void CGEDebugger::DescribePixelRGBA(u32 pix, GPUDebugBufferFormat fmt, int x, int y, char desc[256]) {
-	u32 r = -1, g = -1, b = -1, a = -1;
-
-	switch (fmt) {
-	case GPU_DBG_FORMAT_565:
-		r = Convert5To8((pix >> 0) & 0x1F);
-		g = Convert6To8((pix >> 5) & 0x3F);
-		b = Convert5To8((pix >> 11) & 0x1F);
-		break;
-	case GPU_DBG_FORMAT_565_REV:
-		b = Convert5To8((pix >> 0) & 0x1F);
-		g = Convert6To8((pix >> 5) & 0x3F);
-		r = Convert5To8((pix >> 11) & 0x1F);
-		break;
-	case GPU_DBG_FORMAT_5551:
-		r = Convert5To8((pix >> 0) & 0x1F);
-		g = Convert5To8((pix >> 5) & 0x1F);
-		b = Convert5To8((pix >> 10) & 0x1F);
-		a = (pix >> 15) & 1 ? 255 : 0;
-		break;
-	case GPU_DBG_FORMAT_5551_REV:
-		a = pix & 1 ? 255 : 0;
-		b = Convert5To8((pix >> 1) & 0x1F);
-		g = Convert5To8((pix >> 6) & 0x1F);
-		r = Convert5To8((pix >> 11) & 0x1F);
-		break;
-	case GPU_DBG_FORMAT_5551_BGRA:
-		b = Convert5To8((pix >> 0) & 0x1F);
-		g = Convert5To8((pix >> 5) & 0x1F);
-		r = Convert5To8((pix >> 10) & 0x1F);
-		a = (pix >> 15) & 1 ? 255 : 0;
-		break;
-	case GPU_DBG_FORMAT_4444:
-		r = Convert4To8((pix >> 0) & 0x0F);
-		g = Convert4To8((pix >> 4) & 0x0F);
-		b = Convert4To8((pix >> 8) & 0x0F);
-		a = Convert4To8((pix >> 12) & 0x0F);
-		break;
-	case GPU_DBG_FORMAT_4444_REV:
-		a = Convert4To8((pix >> 0) & 0x0F);
-		b = Convert4To8((pix >> 4) & 0x0F);
-		g = Convert4To8((pix >> 8) & 0x0F);
-		r = Convert4To8((pix >> 12) & 0x0F);
-		break;
-	case GPU_DBG_FORMAT_4444_BGRA:
-		b = Convert4To8((pix >> 0) & 0x0F);
-		g = Convert4To8((pix >> 4) & 0x0F);
-		r = Convert4To8((pix >> 8) & 0x0F);
-		a = Convert4To8((pix >> 12) & 0x0F);
-		break;
-	case GPU_DBG_FORMAT_8888:
-		r = (pix >> 0) & 0xFF;
-		g = (pix >> 8) & 0xFF;
-		b = (pix >> 16) & 0xFF;
-		a = (pix >> 24) & 0xFF;
-		break;
-	case GPU_DBG_FORMAT_8888_BGRA:
-		b = (pix >> 0) & 0xFF;
-		g = (pix >> 8) & 0xFF;
-		r = (pix >> 16) & 0xFF;
-		a = (pix >> 24) & 0xFF;
-		break;
-
-	default:
-		snprintf(desc, 256, "Unexpected format");
-		return;
-	}
-
-	snprintf(desc, 256, "%d,%d: r=%d, g=%d, b=%d, a=%d", x, y, r, g, b, a);
 }
 
 void CGEDebugger::UpdateTextureLevel(int level) {
@@ -1063,8 +924,6 @@ BOOL CGEDebugger::DlgProc(UINT message, WPARAM wParam, LPARAM lParam) {
 		return TRUE;
 
 	case WM_CLOSE:
-		GPUDebug::SetActive(false);
-
 		stepCountDlg.Show(false);
 		Show(false);
 		return TRUE;
@@ -1116,7 +975,7 @@ BOOL CGEDebugger::DlgProc(UINT message, WPARAM wParam, LPARAM lParam) {
 			break;
 		case IDC_GEDBG_FBTABS:
 			fbTabs->HandleNotify(lParam);
-			if (GPUDebug::IsActive() && gpuDebug != nullptr) {
+			if (gpuDebug != nullptr) {
 				UpdatePreviews();
 			}
 			break;
@@ -1130,31 +989,31 @@ BOOL CGEDebugger::DlgProc(UINT message, WPARAM wParam, LPARAM lParam) {
 	case WM_COMMAND:
 		switch (LOWORD(wParam)) {
 		case IDC_GEDBG_STEPDRAW:
-			GPUDebug::SetBreakNext(GPUDebug::BreakNext::DRAW);
+			GPUDebug::SetBreakNext(GPUDebug::BreakNext::DRAW, gpuDebug->GetBreakpoints());
 			break;
 
 		case IDC_GEDBG_STEP:
-			GPUDebug::SetBreakNext(GPUDebug::BreakNext::OP);
+			GPUDebug::SetBreakNext(GPUDebug::BreakNext::OP, gpuDebug->GetBreakpoints());
 			break;
 
 		case IDC_GEDBG_STEPTEX:
-			GPUDebug::SetBreakNext(GPUDebug::BreakNext::TEX);
+			GPUDebug::SetBreakNext(GPUDebug::BreakNext::TEX, gpuDebug->GetBreakpoints());
 			break;
 
 		case IDC_GEDBG_STEPFRAME:
-			GPUDebug::SetBreakNext(GPUDebug::BreakNext::FRAME);
+			GPUDebug::SetBreakNext(GPUDebug::BreakNext::FRAME, gpuDebug->GetBreakpoints());
 			break;
 
 		case IDC_GEDBG_STEPVSYNC:
-			GPUDebug::SetBreakNext(GPUDebug::BreakNext::VSYNC);
+			GPUDebug::SetBreakNext(GPUDebug::BreakNext::VSYNC, gpuDebug->GetBreakpoints());
 			break;
 
 		case IDC_GEDBG_STEPPRIM:
-			GPUDebug::SetBreakNext(GPUDebug::BreakNext::PRIM);
+			GPUDebug::SetBreakNext(GPUDebug::BreakNext::PRIM, gpuDebug->GetBreakpoints());
 			break;
 
 		case IDC_GEDBG_STEPCURVE:
-			GPUDebug::SetBreakNext(GPUDebug::BreakNext::CURVE);
+			GPUDebug::SetBreakNext(GPUDebug::BreakNext::CURVE, gpuDebug->GetBreakpoints());
 			break;
 
 		case IDC_GEDBG_STEPCOUNT:
@@ -1163,7 +1022,6 @@ BOOL CGEDebugger::DlgProc(UINT message, WPARAM wParam, LPARAM lParam) {
 
 		case IDC_GEDBG_BREAKTEX:
 			{
-				GPUDebug::SetActive(true);
 				if (!gpuDebug) {
 					break;
 				}
@@ -1171,10 +1029,10 @@ BOOL CGEDebugger::DlgProc(UINT message, WPARAM wParam, LPARAM lParam) {
 				u32 texAddr = state.getTextureAddress(textureLevel_);
 				// TODO: Better interface that allows add/remove or something.
 				if (InputBox_GetHex(GetModuleHandle(NULL), m_hDlg, L"Texture Address", texAddr, texAddr)) {
-					if (IsTextureBreakpoint(texAddr)) {
-						RemoveTextureBreakpoint(texAddr);
+					if (gpuDebug->GetBreakpoints()->IsTextureBreakpoint(texAddr)) {
+						gpuDebug->GetBreakpoints()->RemoveTextureBreakpoint(texAddr);
 					} else {
-						AddTextureBreakpoint(texAddr);
+						gpuDebug->GetBreakpoints()->AddTextureBreakpoint(texAddr);
 					}
 				}
 			}
@@ -1182,7 +1040,6 @@ BOOL CGEDebugger::DlgProc(UINT message, WPARAM wParam, LPARAM lParam) {
 
 		case IDC_GEDBG_BREAKTARGET:
 			{
-				GPUDebug::SetActive(true);
 				if (!gpuDebug) {
 					break;
 				}
@@ -1190,25 +1047,25 @@ BOOL CGEDebugger::DlgProc(UINT message, WPARAM wParam, LPARAM lParam) {
 				u32 fbAddr = state.getFrameBufRawAddress();
 				// TODO: Better interface that allows add/remove or something.
 				if (InputBox_GetHex(GetModuleHandle(NULL), m_hDlg, L"Framebuffer Address", fbAddr, fbAddr)) {
-					if (IsRenderTargetBreakpoint(fbAddr)) {
-						RemoveRenderTargetBreakpoint(fbAddr);
+					if (gpuDebug->GetBreakpoints()->IsRenderTargetBreakpoint(fbAddr)) {
+						gpuDebug->GetBreakpoints()->RemoveRenderTargetBreakpoint(fbAddr);
 					} else {
-						AddRenderTargetBreakpoint(fbAddr);
+						gpuDebug->GetBreakpoints()->AddRenderTargetBreakpoint(fbAddr);
 					}
 				}
 			}
 			break;
 
 		case IDC_GEDBG_TEXLEVELDOWN:
-			UpdateTextureLevel(textureLevel_ - 1);
-			if (GPUDebug::IsActive() && gpuDebug != nullptr) {
+			if (gpuDebug != nullptr) {
+				UpdateTextureLevel(textureLevel_ - 1);
 				UpdatePreviews();
 			}
 			break;
 
 		case IDC_GEDBG_TEXLEVELUP:
-			UpdateTextureLevel(textureLevel_ + 1);
-			if (GPUDebug::IsActive() && gpuDebug != nullptr) {
+			if (gpuDebug != nullptr) {
+				UpdateTextureLevel(textureLevel_ + 1);
 				UpdatePreviews();
 			}
 			break;
@@ -1221,18 +1078,18 @@ BOOL CGEDebugger::DlgProc(UINT message, WPARAM wParam, LPARAM lParam) {
 			SetDlgItemText(m_hDlg, IDC_GEDBG_TEXADDR, L"");
 			SetDlgItemText(m_hDlg, IDC_GEDBG_PRIMCOUNTER, L"");
 
-			GPUDebug::SetBreakNext(GPUDebug::BreakNext::NONE);
+			GPUDebug::SetBreakNext(GPUDebug::BreakNext::NONE, gpuDebug->GetBreakpoints());
 			break;
 
 		case IDC_GEDBG_RECORD:
-			GPURecord::RecordNextFrame([](const Path &path) {
+			gpuDebug->GetRecorder()->RecordNextFrame([](const Path &path) {
 				// Opens a Windows Explorer window with the file, when done.
 				System_ShowFileInFolder(path);
 			});
 			break;
 
 		case IDC_GEDBG_FLUSH:
-			if (GPUDebug::IsActive() && gpuDebug != nullptr) {
+			if (gpuDebug != nullptr) {
 				if (!autoFlush_)
 					GPU_FlushDrawing();
 				UpdatePreviews();
@@ -1244,14 +1101,14 @@ BOOL CGEDebugger::DlgProc(UINT message, WPARAM wParam, LPARAM lParam) {
 			break;
 
 		case IDC_GEDBG_FORCEOPAQUE:
-			if (GPUDebug::IsActive() && gpuDebug != nullptr) {
+			if (gpuDebug != nullptr) {
 				forceOpaque_ = SendMessage(GetDlgItem(m_hDlg, IDC_GEDBG_FORCEOPAQUE), BM_GETCHECK, 0, 0) != 0;
 				UpdatePreviews();
 			}
 			break;
 
 		case IDC_GEDBG_SHOWCLUT:
-			if (GPUDebug::IsActive() && gpuDebug != nullptr) {
+			if (gpuDebug != nullptr) {
 				showClut_ = SendMessage(GetDlgItem(m_hDlg, IDC_GEDBG_SHOWCLUT), BM_GETCHECK, 0, 0) != 0;
 				UpdatePreviews();
 			}
@@ -1269,34 +1126,32 @@ BOOL CGEDebugger::DlgProc(UINT message, WPARAM wParam, LPARAM lParam) {
 		break;
 
 	case WM_GEDBG_STEPDISPLAYLIST:
-		GPUDebug::SetBreakNext(GPUDebug::BreakNext::OP);
+		GPUDebug::SetBreakNext(GPUDebug::BreakNext::OP, gpuDebug->GetBreakpoints());
 		break;
 
 	case WM_GEDBG_TOGGLEPCBREAKPOINT:
 		{
-			GPUDebug::SetActive(true);
 			u32 pc = (u32)wParam;
 			bool temp;
-			bool isBreak = IsAddressBreakpoint(pc, temp);
+			bool isBreak = gpuDebug->GetBreakpoints()->IsAddressBreakpoint(pc, temp);
 			if (isBreak && !temp) {
-				if (GetAddressBreakpointCond(pc, nullptr)) {
+				if (gpuDebug->GetBreakpoints()->GetAddressBreakpointCond(pc, nullptr)) {
 					int ret = MessageBox(m_hDlg, L"This breakpoint has a custom condition.\nDo you want to remove it?", L"Confirmation", MB_YESNO);
 					if (ret == IDYES)
-						RemoveAddressBreakpoint(pc);
+						gpuDebug->GetBreakpoints()->RemoveAddressBreakpoint(pc);
 				} else {
-					RemoveAddressBreakpoint(pc);
+					gpuDebug->GetBreakpoints()->RemoveAddressBreakpoint(pc);
 				}
 			} else {
-				AddAddressBreakpoint(pc);
+				gpuDebug->GetBreakpoints()->AddAddressBreakpoint(pc);
 			}
 		}
 		break;
 
 	case WM_GEDBG_RUNTOWPARAM:
 		{
-			GPUDebug::SetActive(true);
 			u32 pc = (u32)wParam;
-			AddAddressBreakpoint(pc, true);
+			gpuDebug->GetBreakpoints()->AddAddressBreakpoint(pc, true);
 			SendMessage(m_hDlg,WM_COMMAND,IDC_GEDBG_RESUME,0);
 		}
 		break;

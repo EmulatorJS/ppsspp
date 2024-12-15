@@ -18,7 +18,6 @@
 #pragma once
 
 #include <cstdint>
-#include <string_view>
 
 #include "GPU/ge_constants.h"
 
@@ -120,9 +119,9 @@ enum CmdFormatType {
 
 struct GECmdInfo {
 	GECommand cmd;
-	std::string_view name;  // scripting / expression name
+	const char *name;  // scripting / expression name
 	GECmdFormat cmdFmt;
-	std::string_view uiName;  // friendly name
+	const char *uiName;  // friendly name
 	CmdFormatType fmt;
 	uint8_t enableCmd;
 	uint8_t otherCmd;
@@ -131,5 +130,3 @@ struct GECmdInfo {
 
 bool GECmdInfoByName(const char *name, GECmdInfo &info);
 const GECmdInfo &GECmdInfoByCmd(GECommand reg);
-
-bool ToggleBreakpoint(const GECmdInfo &info);

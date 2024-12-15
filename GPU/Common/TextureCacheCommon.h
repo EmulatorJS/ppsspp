@@ -63,6 +63,10 @@ class DrawContext;
 class Texture;
 }
 
+namespace GPURecord {
+class Recorder;
+}
+
 // Used by D3D11 and Vulkan, could be used by modern GL
 struct SamplerCacheKey {
 	union {
@@ -334,7 +338,7 @@ public:
 	TextureCacheCommon(Draw::DrawContext *draw, Draw2D *draw2D);
 	virtual ~TextureCacheCommon();
 
-	void LoadClut(u32 clutAddr, u32 loadBytes);
+	void LoadClut(u32 clutAddr, u32 loadBytes, GPURecord::Recorder *recorder);
 	bool GetCurrentClutBuffer(GPUDebugBuffer &buffer);
 
 	// This updates nextTexture_ / nextFramebufferTexture_, which is then used by ApplyTexture.
@@ -382,8 +386,8 @@ public:
 
 	virtual void DrawImGuiDebug(uint64_t &selectedTextureId) const;
 
-protected:
 	virtual void *GetNativeTextureView(const TexCacheEntry *entry, bool flat) const = 0;
+protected:
 	bool PrepareBuildTexture(BuildTexturePlan &plan, TexCacheEntry *entry);
 
 	virtual void BindTexture(TexCacheEntry *entry) = 0;

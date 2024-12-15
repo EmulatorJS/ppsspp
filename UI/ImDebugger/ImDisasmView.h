@@ -8,11 +8,13 @@
 #include "ext/imgui/imgui.h"
 
 #include "Common/CommonTypes.h"
+#include "Common/Math/geom2d.h"
 
 #include "Core/Debugger/DisassemblyManager.h"
-#include "Core/Debugger/DebugInterface.h"
+#include "Core/MIPS/MIPSDebugInterface.h"
 
 struct ImConfig;
+struct ImControl;
 
 // Corresponds to CtrlDisAsmView
 // TODO: Fold out common code.
@@ -24,9 +26,10 @@ public:
 	// Public variables bounds to imgui checkboxes
 	bool followPC_ = true;
 
-	void Draw(ImDrawList *drawList);
+	void Draw(ImDrawList *drawList, ImControl &control);
 
-	void PopupMenu();
+	void PopupMenu(ImControl &control);
+	void NotifyStep();
 
 	void ScrollRelative(int amount);
 
@@ -37,20 +40,21 @@ public:
 	void scrollAddressIntoView();
 	bool curAddressIsVisible();
 	void ScanVisibleFunctions();
-	void clearFunctions() { manager.clear(); };
+	void clearFunctions() { g_disassemblyManager.clear(); };
 
 	void getOpcodeText(u32 address, char *dest, int bufsize);
 	u32 yToAddress(float y);
 
-	void setDebugger(DebugInterface *deb) {
-		if (debugger != deb) {
-			debugger = deb;
-			curAddress_ = debugger->getPC();
-			manager.setCpu(deb);
+	void setDebugger(MIPSDebugInterface *deb) {
+		if (debugger_ != deb) {
+			debugger_ = deb;
+			curAddress_ = debugger_->GetPC();
+			g_disassemblyManager.setCpu(deb);
 		}
 	}
-	DebugInterface *getDebugger() {
-		return debugger;
+
+	MIPSDebugInterface *getDebugger() {
+		return debugger_;
 	}
 
 	void scrollStepping(u32 newPc);
@@ -59,18 +63,21 @@ public:
 	void gotoAddr(unsigned int addr) {
 		if (positionLocked_ != 0)
 			return;
-		u32 windowEnd = manager.getNthNextAddress(windowStart_, visibleRows_);
-		u32 newAddress = manager.getStartAddress(addr);
+		u32 windowEnd = g_disassemblyManager.getNthNextAddress(windowStart_, visibleRows_);
+		u32 newAddress = g_disassemblyManager.getStartAddress(addr);
 
 		if (newAddress < windowStart_ || newAddress >= windowEnd) {
-			windowStart_ = manager.getNthPreviousAddress(newAddress, visibleRows_ / 2);
+			windowStart_ = g_disassemblyManager.getNthPreviousAddress(newAddress, visibleRows_ / 2);
 		}
 
 		setCurAddress(newAddress);
 		ScanVisibleFunctions();
 	}
-	void gotoPC() {
-		gotoAddr(debugger->getPC());
+	void GotoPC() {
+		gotoAddr(debugger_->GetPC());
+	}
+	void GotoRA() {
+		gotoAddr(debugger_->GetRA());
 	}
 	u32 getSelection() {
 		return curAddress_;
@@ -82,8 +89,8 @@ public:
 	void editBreakpoint(ImConfig &cfg);
 
 	void setCurAddress(u32 newAddress, bool extend = false) {
-		newAddress = manager.getStartAddress(newAddress);
-		const u32 after = manager.getNthNextAddress(newAddress, 1);
+		newAddress = g_disassemblyManager.getStartAddress(newAddress);
+		const u32 after = g_disassemblyManager.getNthNextAddress(newAddress, 1);
 		curAddress_ = newAddress;
 		selectRangeStart_ = extend ? std::min(selectRangeStart_, newAddress) : newAddress;
 		selectRangeEnd_ = extend ? std::max(selectRangeEnd_, after) : after;
@@ -117,13 +124,6 @@ private:
 		ADDRESSES,
 	};
 
-	struct Rect {
-		float left;
-		float top;
-		float right;
-		float bottom;
-	};
-
 	void ProcessKeyboardShortcuts(bool focused);
 	void assembleOpcode(u32 address, const std::string &defaultText);
 	std::string disassembleRange(u32 start, u32 size);
@@ -132,13 +132,11 @@ private:
 	void calculatePixelPositions();
 	bool getDisasmAddressText(u32 address, char* dest, bool abbreviateLabels, bool showData);
 	void updateStatusBarText();
-	void drawBranchLine(ImDrawList *list, ImDisasmView::Rect rc, std::map<u32, float> &addressPositions, const BranchLine &line);
+	void drawBranchLine(ImDrawList *list, Bounds rc, std::map<u32, float> &addressPositions, const BranchLine &line);
 	void CopyInstructions(u32 startAddr, u32 endAddr, CopyInstructionsMode mode);
-	void NopInstructions(u32 startAddr, u32 endAddr);
 	std::set<std::string> getSelectedLineArguments();
-	void drawArguments(ImDrawList *list, ImDisasmView::Rect rc, const DisassemblyLineInfo &line, float x, float y, ImColor textColor, const std::set<std::string> &currentArguments);
+	void drawArguments(ImDrawList *list, Bounds rc, const DisassemblyLineInfo &line, float x, float y, ImColor textColor, const std::set<std::string> &currentArguments);
 
-	DisassemblyManager manager;
 	u32 curAddress_ = 0;
 	u32 selectRangeStart_ = 0;
 	u32 selectRangeEnd_ = 0;
@@ -149,7 +147,7 @@ private:
 	bool hasFocus_ = true;
 	bool showHex_ = false;
 
-	DebugInterface *debugger = nullptr;
+	MIPSDebugInterface *debugger_ = nullptr;
 
 	u32 windowStart_ = 0;
 	int visibleRows_ = 1;
@@ -160,7 +158,7 @@ private:
 		int opcodeStart;
 		int argumentsStart;
 		int arrowsStart;
-	} pixelPositions_;
+	} pixelPositions_{};
 
 	std::vector<u32> jumpStack_;
 
@@ -171,9 +169,8 @@ private:
 	bool mapReloaded_ = false;
 
 	int positionLocked_ = 0;
-	int lastSteppingCount_ = 0;
 
 	std::string statusBarText_;
-	u32 funcBegin_;
-	char funcNameTemp_[128];
+	u32 funcBegin_ = 0;
+	char funcNameTemp_[128]{};
 };

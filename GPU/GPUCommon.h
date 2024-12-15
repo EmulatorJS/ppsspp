@@ -12,6 +12,8 @@
 #include "GPU/GPU.h"
 #include "GPU/GPUCommon.h"
 #include "GPU/GPUState.h"
+#include "GPU/Debugger/Record.h"
+#include "GPU/Debugger/Breakpoints.h"
 #include "GPU/Common/ShaderCommon.h"
 #include "GPU/Common/GPUDebugInterface.h"
 #include "GPU/GPUDefinitions.h"
@@ -80,7 +82,6 @@ enum GPURunState {
 	GPUSTATE_STALL = 2,
 	GPUSTATE_INTERRUPT = 3,
 	GPUSTATE_ERROR = 4,
-	GPUSTATE_BREAK = 5,
 };
 
 enum GPUSyncType {
@@ -236,8 +237,6 @@ public:
 
 	virtual void PreExecuteOp(u32 op, u32 diff) {}
 
-	bool InterpretList(DisplayList &list);
-
 	DLResult ProcessDLQueue();
 
 	u32 UpdateStall(int listid, u32 newstall, bool *runList);
@@ -349,13 +348,10 @@ public:
 	GPUDebugOp DisassembleOp(u32 pc, u32 op) override;
 	std::vector<GPUDebugOp> DisassembleOpRange(u32 startpc, u32 endpc) override;
 
-	void NotifySteppingEnter() override;
-	void NotifySteppingExit() override;
-
 	u32 GetRelativeAddress(u32 data) override;
 	u32 GetVertexAddress() override;
 	u32 GetIndexAddress() override;
-	GPUgstate GetGState() override;
+	const GPUgstate &GetGState() override;
 	void SetCmdValue(u32 op) override;
 
 	DisplayList* getList(int listid) {
@@ -382,6 +378,13 @@ public:
 	}
 
 	void PSPFrame();
+
+	GPURecord::Recorder *GetRecorder() override {
+		return &recorder_;
+	}
+	GPUBreakpoints *GetBreakpoints() override {
+		return &breakpoints_;
+	}
 
 protected:
 	virtual void ClearCacheNextFrame() {}
@@ -453,7 +456,7 @@ protected:
 
 	bool interruptRunning = false;
 	GPURunState gpuState = GPUSTATE_RUNNING;
-	bool isbreak;
+	bool isbreak;  // This doesn't mean debugger breakpoints.
 	u64 drawCompleteTicks;
 	u64 busyTicks;
 
@@ -462,10 +465,12 @@ protected:
 	u32 cycleLastPC;
 	int cyclesExecuted;
 
+	bool resumingFromDebugBreak_ = false;
 	bool dumpNextFrame_ = false;
 	bool dumpThisFrame_ = false;
-	bool debugRecording_;
-	bool interruptsEnabled_;
+	bool useFastRunLoop_ = false;
+	bool debugRecording_ = false;
+	bool interruptsEnabled_ = false;
 	bool displayResized_ = false;
 	bool renderResized_ = false;
 	bool configChanged_ = false;
@@ -505,13 +510,12 @@ protected:
 	std::string reportingPrimaryInfo_;
 	std::string reportingFullInfo_;
 
+	GPURecord::Recorder recorder_;
+	GPUBreakpoints breakpoints_;
+
 private:
 	void DoExecuteCall(u32 target);
 	void PopDLQueue();
 	void CheckDrawSync();
 	int  GetNextListIndex();
-
-	// Debug stats.
-	double timeSteppingStarted_;
-	double timeSpentStepping_;
 };

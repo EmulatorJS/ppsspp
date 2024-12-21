@@ -26,10 +26,8 @@
 #include "Core/MemMap.h"
 #include "Core/Reporting.h"
 #include "Core/Font/PGF.h"
-#include "Core/HLE/HLE.h"
 
 #include "GPU/GPUCommon.h"
-#include "GPU/GPUState.h"
 
 // These fonts, created by ttf2pgf, don't have complete glyph info and need to be identified.
 static bool isJPCSPFont(const char *fontName) {

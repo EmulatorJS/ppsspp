@@ -23,20 +23,13 @@
 #include "Common/Log.h"
 #include "Common/File/FileUtil.h"
 #include "Common/GraphicsContext.h"
-#include "Common/Serialize/Serializer.h"
-#include "Common/TimeUtil.h"
-#include "Common/Thread/ThreadUtil.h"
 
 #include "Core/Config.h"
-#include "Core/Debugger/Breakpoints.h"
-#include "Core/MemMapHelpers.h"
 #include "Core/Reporting.h"
 #include "Core/System.h"
 #include "Core/ELF/ParamSFO.h"
 
 #include "GPU/GPUState.h"
-#include "GPU/ge_constants.h"
-#include "GPU/GeDisasm.h"
 #include "GPU/Common/FramebufferManagerCommon.h"
 #include "GPU/Vulkan/ShaderManagerVulkan.h"
 #include "GPU/Vulkan/GPU_Vulkan.h"
@@ -64,6 +57,7 @@ GPU_Vulkan::GPU_Vulkan(GraphicsContext *gfxCtx, Draw::DrawContext *draw)
 	drawEngineCommon_ = &drawEngine_;
 	shaderManager_ = shaderManagerVulkan_;
 
+	drawEngine_.SetGPUCommon(this);
 	drawEngine_.SetTextureCache(textureCacheVulkan_);
 	drawEngine_.SetFramebufferManager(framebufferManagerVulkan_);
 	drawEngine_.SetShaderManager(shaderManagerVulkan_);

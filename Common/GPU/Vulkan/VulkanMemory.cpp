@@ -19,14 +19,10 @@
 // under the public domain.
 
 #include <algorithm>
-#include <set>
-#include <mutex>
-
 #include "Common/Math/math_util.h"
 
 #include "Common/Log.h"
 #include "Common/TimeUtil.h"
-#include "Common/Math/math_util.h"
 #include "Common/GPU/Vulkan/VulkanMemory.h"
 #include "Common/Data/Text/Parsers.h"
 

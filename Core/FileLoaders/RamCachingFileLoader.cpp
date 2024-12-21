@@ -18,13 +18,10 @@
 #include <algorithm>
 #include <thread>
 #include <cstring>
-#include <cstdlib>
 
 #include "Common/Thread/ThreadUtil.h"
 #include "Common/TimeUtil.h"
 #include "Core/FileLoaders/RamCachingFileLoader.h"
-
-#include "Common/Log.h"
 
 // Takes ownership of backend.
 RamCachingFileLoader::RamCachingFileLoader(FileLoader *backend)

@@ -22,11 +22,7 @@
 
 #include "Common/Data/Collections/Hashmaps.h"
 #include "GPU/GPUState.h"
-#include "GPU/Common/GPUDebugInterface.h"
-#include "GPU/Common/IndexGenerator.h"
-#include "GPU/Common/VertexDecoderCommon.h"
 #include "GPU/Common/DrawEngineCommon.h"
-#include "GPU/Common/GPUStateUtils.h"
 #include "GPU/MiscTypes.h"
 
 struct DecVtxFormat;
@@ -65,25 +61,13 @@ public:
 	void InitDeviceObjects();
 	void DestroyDeviceObjects();
 
-	void BeginFrame();
+	void BeginFrame() override;
 
 	// So that this can be inlined
-	void Flush() {
-		if (!numDrawVerts_)
-			return;
-		DoFlush();
-	}
+	void Flush() override;
 
 	void FinishDeferred() {
-		if (!numDrawVerts_)
-			return;
-		DecodeVerts(decoded_);
-	}
-
-	void DispatchFlush() override {
-		if (!numDrawVerts_)
-			return;
-		Flush();
+		DecodeVerts(dec_, decoded_);
 	}
 
 protected:
@@ -92,7 +76,6 @@ protected:
 
 private:
 	void Invalidate(InvalidationCallbackFlags flags);
-	void DoFlush();
 
 	void ApplyDrawState(int prim);
 	void ApplyDrawStateLate();

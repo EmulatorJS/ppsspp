@@ -21,7 +21,6 @@
 #include "Core/Debugger/SymbolMap.h"
 #include "GPU/Common/GPUDebugInterface.h"
 #include "GPU/GPUCommon.h"
-#include "GPU/Debugger/Debugger.h"
 #include "GPU/Debugger/GECommandTable.h"
 #include "GPU/GPUState.h"
 
@@ -703,10 +702,10 @@ uint32_t GEExpressionFunctions::getReferenceValue(uint32_t referenceIndex) {
 		return state.getTransferDstAddress();
 
 	case GEReferenceIndex::PRIMCOUNT:
-		return GPUDebug::PrimsThisFrame();
+		return gpu_->PrimsThisFrame();
 
 	case GEReferenceIndex::LASTPRIMCOUNT:
-		return GPUDebug::PrimsLastFrame();
+		return gpu_->PrimsLastFrame();
 
 	case GEReferenceIndex::TEXADDR0:
 	case GEReferenceIndex::TEXADDR1:

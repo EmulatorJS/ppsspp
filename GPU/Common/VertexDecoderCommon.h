@@ -122,7 +122,7 @@ public:
 // Reads decoded vertex formats in a convenient way. For software transform and debugging.
 class VertexReader {
 public:
-	VertexReader(u8 *base, const DecVtxFormat &decFmt, int vtype) : base_(base), data_(base), decFmt_(decFmt), vtype_(vtype) {}
+	VertexReader(const u8 *base, const DecVtxFormat &decFmt, int vtype) : base_(base), data_(base), decFmt_(decFmt), vtype_(vtype) {}
 
 	void ReadPos(float pos[3]) const {
 		// Only DEC_FLOAT_3 is supported.
@@ -297,8 +297,8 @@ public:
 	}
 
 private:
-	u8 *base_;
-	u8 *data_;
+	const u8 *base_;
+	const u8 *data_;
 	DecVtxFormat decFmt_;
 	int vtype_;
 };
@@ -325,8 +325,21 @@ typedef void (*JittedVertexDecoder)(const u8 *src, u8 *dst, int count, const UVS
 struct VertexDecoderOptions {
 	bool expandAllWeightsToFloat;
 	bool expand8BitNormalsToFloat;
-	bool applySkinInDecode;
 };
+
+inline uint32_t GetVertTypeID(uint32_t vertType, int uvGenMode, bool skinInDecode) {
+	// As the decoder depends on the UVGenMode when we use UV prescale, we simply mash it
+	// into the top of the verttype where there are unused bits.
+	return (vertType & 0xFFFFFF) | (uvGenMode << 24) | (skinInDecode << 26);
+}
+
+inline bool VertTypeIDSkinInDecode(uint32_t vertType) {
+	return ((vertType >> 26) & 1) != 0;
+}
+
+inline GETexMapMode VertTypeIDUVGenMode(uint32_t vertType) {
+	return (GETexMapMode)((vertType >> 24) & 3);
+}
 
 class VertexDecoder {
 public:
@@ -512,7 +525,6 @@ public:
 
 	// Returns a pointer to the code to run.
 	JittedVertexDecoder Compile(const VertexDecoder &dec, int32_t *jittedSize);
-	bool DescribeCodePtr(const u8 *ptr, std::string &name) const;
 	void Clear();
 
 	void Jit_WeightsU8();

@@ -512,7 +512,8 @@ void GPUCommonHW::BeginHostFrame() {
 }
 
 void GPUCommonHW::SetDisplayFramebuffer(u32 framebuf, u32 stride, GEBufferFormat format) {
-	framebufferManager_->SetDisplayFramebuffer(framebuf, stride, format, &recorder_);
+	framebufferManager_->SetDisplayFramebuffer(framebuf, stride, format);
+	NotifyDisplay(framebuf, stride, format);
 }
 
 void GPUCommonHW::CheckFlushOp(int cmd, u32 diff) {
@@ -521,7 +522,7 @@ void GPUCommonHW::CheckFlushOp(int cmd, u32 diff) {
 		if (dumpThisFrame_) {
 			NOTICE_LOG(Log::G3D, "================ FLUSH ================");
 		}
-		drawEngineCommon_->DispatchFlush();
+		drawEngineCommon_->Flush();
 	}
 }
 
@@ -531,7 +532,7 @@ void GPUCommonHW::PreExecuteOp(u32 op, u32 diff) {
 
 void GPUCommonHW::CopyDisplayToOutput(bool reallyDirty) {
 	// Flush anything left over.
-	drawEngineCommon_->DispatchFlush();
+	drawEngineCommon_->Flush();
 
 	shaderManager_->DirtyLastShader();
 
@@ -552,7 +553,6 @@ void GPUCommonHW::DoState(PointerWrap &p) {
 	// None of these are necessary when saving.
 	if (p.mode == p.MODE_READ && !PSP_CoreParameter().frozen) {
 		textureCache_->Clear(true);
-		drawEngineCommon_->ClearTrackedVertexArrays();
 
 		gstate_c.Dirty(DIRTY_TEXTURE_IMAGE);
 		framebufferManager_->DestroyAllFBOs();
@@ -847,7 +847,7 @@ void GPUCommonHW::FastRunLoop(DisplayList &list) {
 		} else {
 			uint64_t flags = info.flags;
 			if (flags & FLAG_FLUSHBEFOREONCHANGE) {
-				drawEngineCommon_->DispatchFlush();
+				drawEngineCommon_->Flush();
 			}
 			gstate.cmdmem[cmd] = op;
 			if (flags & (FLAG_EXECUTE | FLAG_EXECUTEONCHANGE)) {
@@ -996,10 +996,11 @@ void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 	int cullMode = gstate.getCullMode();
 
 	uint32_t vertTypeID = GetVertTypeID(vertexType, gstate.getUVGenMode(), g_Config.bSoftwareSkinning);
+	VertexDecoder *decoder = drawEngineCommon_->GetVertexDecoder(vertTypeID);
 
 	// Through mode early-out for simple float 2D draws, like in Fate Extra CCC (very beneficial there due to avoiding texture loads)
 	if ((vertexType & (GE_VTYPE_THROUGH_MASK | GE_VTYPE_POS_MASK | GE_VTYPE_IDX_MASK)) == (GE_VTYPE_THROUGH_MASK | GE_VTYPE_POS_FLOAT | GE_VTYPE_IDX_NONE)) {
-		if (!drawEngineCommon_->TestBoundingBoxThrough(verts, count, vertexType)) {
+		if (!drawEngineCommon_->TestBoundingBoxThrough(verts, count, decoder, vertexType)) {
 			gpuStats.numCulledDraws++;
 			int cycles = vertexCost_ * count;
 			gpuStats.vertexGPUCycles += cycles;
@@ -1025,7 +1026,7 @@ void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 	bool passCulling = PASSES_CULLING;
 	if (!passCulling) {
 		// Do software culling.
-		if (drawEngineCommon_->TestBoundingBoxFast(verts, count, vertexType)) {
+		if (drawEngineCommon_->TestBoundingBoxFast(verts, count, decoder, vertexType)) {
 			passCulling = true;
 		} else {
 			gpuStats.numCulledDraws++;
@@ -1036,13 +1037,13 @@ void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 	// Cuts down on checking, while not losing that much efficiency.
 	bool onePassed = false;
 	if (passCulling) {
-		if (!drawEngineCommon_->SubmitPrim(verts, inds, prim, count, vertTypeID, true, &bytesRead)) {
+		if (!drawEngineCommon_->SubmitPrim(verts, inds, prim, count, decoder, vertTypeID, true, &bytesRead)) {
 			canExtend = false;
 		}
 		onePassed = true;
 	} else {
 		// Still need to advance bytesRead.
-		drawEngineCommon_->SkipPrim(prim, count, vertTypeID, &bytesRead);
+		drawEngineCommon_->SkipPrim(prim, count, decoder, vertTypeID, &bytesRead);
 		canExtend = false;
 	}
 
@@ -1065,8 +1066,8 @@ void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 
 	uint32_t vtypeCheckMask = g_Config.bSoftwareSkinning ? (~GE_VTYPE_WEIGHTCOUNT_MASK) : 0xFFFFFFFF;
 
-	if (debugRecording_)
-		goto bail;
+	if (!useFastRunLoop_)
+		goto bail;  // we're either recording or stepping.
 
 	while (src != stall) {
 		uint32_t data = *src;
@@ -1084,7 +1085,7 @@ void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 				// Non-indexed draws can be cheaply merged if vertexAddr hasn't changed, that means the vertices
 				// are consecutive in memory. We also ignore culling here.
 				_dbg_assert_((vertexType & GE_VTYPE_IDX_MASK) == GE_VTYPE_IDX_NONE);
-				int commandsExecuted = drawEngineCommon_->ExtendNonIndexedPrim(src, stall, vertTypeID, clockwise, &bytesRead, isTriangle);
+				int commandsExecuted = drawEngineCommon_->ExtendNonIndexedPrim(src, stall, decoder, vertTypeID, clockwise, &bytesRead, isTriangle);
 				if (!commandsExecuted) {
 					goto bail;
 				}
@@ -1107,21 +1108,21 @@ void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 			if (!passCulling) {
 				// Do software culling.
 				_dbg_assert_((vertexType & GE_VTYPE_IDX_MASK) == GE_VTYPE_IDX_NONE);
-				if (drawEngineCommon_->TestBoundingBoxFast(verts, count, vertexType)) {
+				if (drawEngineCommon_->TestBoundingBoxFast(verts, count, decoder, vertexType)) {
 					passCulling = true;
 				} else {
 					gpuStats.numCulledDraws++;
 				}
 			}
 			if (passCulling) {
-				if (!drawEngineCommon_->SubmitPrim(verts, inds, newPrim, count, vertTypeID, clockwise, &bytesRead)) {
+				if (!drawEngineCommon_->SubmitPrim(verts, inds, newPrim, count, decoder, vertTypeID, clockwise, &bytesRead)) {
 					canExtend = false;
 				}
 				// As soon as one passes, assume we don't need to check the rest of this batch.
 				onePassed = true;
 			} else {
 				// Still need to advance bytesRead.
-				drawEngineCommon_->SkipPrim(newPrim, count, vertTypeID, &bytesRead);
+				drawEngineCommon_->SkipPrim(newPrim, count, decoder, vertTypeID, &bytesRead);
 				canExtend = false;
 			}
 			AdvanceVerts(vertexType, count, bytesRead);
@@ -1139,6 +1140,7 @@ void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 				canExtend = false;  // TODO: Might support extending between some vertex types in the future.
 				vertexType = data;
 				vertTypeID = GetVertTypeID(vertexType, gstate.getUVGenMode(), g_Config.bSoftwareSkinning);
+				decoder = drawEngineCommon_->GetVertexDecoder(vertTypeID);
 			}
 			break;
 		}
@@ -1253,7 +1255,7 @@ bail:
 		// flush back cull mode
 		if (cullMode != gstate.getCullMode()) {
 			// We rewrote everything to the old cull mode, so flush first.
-			drawEngineCommon_->DispatchFlush();
+			drawEngineCommon_->Flush();
 
 			// Now update things for next time.
 			gstate.cmdmem[GE_CMD_CULL] ^= 1;
@@ -1300,7 +1302,7 @@ void GPUCommonHW::Execute_Bezier(u32 op, u32 diff) {
 
 	// Can't flush after setting gstate_c.submitType below since it'll be a mess - it must be done already.
 	if (flushOnParams_)
-		drawEngineCommon_->DispatchFlush();
+		drawEngineCommon_->Flush();
 
 	Spline::BezierSurface surface;
 	surface.tess_u = gstate.getPatchDivisionU();
@@ -1372,7 +1374,7 @@ void GPUCommonHW::Execute_Spline(u32 op, u32 diff) {
 
 	// Can't flush after setting gstate_c.submitType below since it'll be a mess - it must be done already.
 	if (flushOnParams_)
-		drawEngineCommon_->DispatchFlush();
+		drawEngineCommon_->Flush();
 
 	Spline::SplineSurface surface;
 	surface.tess_u = gstate.getPatchDivisionU();

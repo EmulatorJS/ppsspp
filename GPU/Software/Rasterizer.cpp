@@ -16,7 +16,6 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include "ppsspp_config.h"
-#include <algorithm>
 #include <cmath>
 
 #include "Common/Common.h"
@@ -37,8 +36,10 @@
 #include "GPU/Software/SoftGpu.h"
 #include "GPU/Software/TransformUnit.h"
 
-#if defined(_M_SSE)
-#include <emmintrin.h>
+#include "Common/Math/SIMDHeaders.h"
+
+// For the SSE4 stuff
+#if PPSSPP_ARCH(SSE2)
 #include <smmintrin.h>
 #endif
 

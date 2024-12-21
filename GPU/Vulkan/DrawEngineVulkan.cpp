@@ -16,22 +16,13 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include "ppsspp_config.h"
-#include <algorithm>
 #include <functional>
 
-#include "Common/Data/Convert/SmallDataConvert.h"
 #include "Common/Profiler/Profiler.h"
 #include "Common/GPU/Vulkan/VulkanRenderManager.h"
 
 #include "Common/Log.h"
-#include "Common/MemoryUtil.h"
-#include "Common/TimeUtil.h"
-#include "Core/MemMap.h"
-#include "Core/System.h"
-#include "Core/Config.h"
-#include "Core/CoreTiming.h"
 
-#include "GPU/Math3D.h"
 #include "GPU/GPUState.h"
 #include "GPU/ge_constants.h"
 
@@ -44,13 +35,11 @@
 #include "GPU/Common/SoftwareTransformCommon.h"
 #include "GPU/Common/DrawEngineCommon.h"
 #include "GPU/Common/ShaderUniforms.h"
-#include "GPU/Debugger/Debugger.h"
 #include "GPU/Vulkan/DrawEngineVulkan.h"
 #include "GPU/Vulkan/TextureCacheVulkan.h"
 #include "GPU/Vulkan/ShaderManagerVulkan.h"
 #include "GPU/Vulkan/PipelineManagerVulkan.h"
 #include "GPU/Vulkan/FramebufferManagerVulkan.h"
-#include "GPU/Vulkan/GPU_Vulkan.h"
 
 using namespace PPSSPP_VK;
 
@@ -164,6 +153,8 @@ void DrawEngineVulkan::DeviceRestore(Draw::DrawContext *draw) {
 }
 
 void DrawEngineVulkan::BeginFrame() {
+	DrawEngineCommon::BeginFrame();
+
 	lastPipeline_ = nullptr;
 
 	// These will be re-bound if needed, let's not let old bindings linger around too long.
@@ -216,7 +207,11 @@ void DrawEngineVulkan::Invalidate(InvalidationCallbackFlags flags) {
 }
 
 // The inline wrapper in the header checks for numDrawCalls_ == 0
-void DrawEngineVulkan::DoFlush() {
+void DrawEngineVulkan::Flush() {
+	if (!numDrawVerts_) {
+		return;
+	}
+
 	VulkanRenderManager *renderManager = (VulkanRenderManager *)draw_->GetNativeObject(Draw::NativeObject::RENDER_MANAGER);
 
 	renderManager->AssertInRenderPass();
@@ -254,9 +249,9 @@ void DrawEngineVulkan::DoFlush() {
 		uint32_t vbOffset;
 
 		VkBuffer vbuf = VK_NULL_HANDLE;
-		if (decOptions_.applySkinInDecode && (lastVType_ & GE_VTYPE_WEIGHT_MASK)) {
+		if (applySkinInDecode_ && (lastVType_ & GE_VTYPE_WEIGHT_MASK)) {
 			// If software skinning, we're predecoding into "decoded". So make sure we're done, then push that content.
-			DecodeVerts(decoded_);
+			DecodeVerts(dec_, decoded_);
 			VkDeviceSize size = numDecodedVerts_ * dec_->GetDecVtxFmt().stride;
 			u8 *dest = (u8 *)pushVertex_->Allocate(size, 4, &vbuf, &vbOffset);
 			memcpy(dest, decoded_, size);
@@ -265,7 +260,7 @@ void DrawEngineVulkan::DoFlush() {
 			int vertsToDecode = ComputeNumVertsToDecode();
 			// Decode directly into the pushbuffer
 			u8 *dest = pushVertex_->Allocate(vertsToDecode * dec_->GetDecVtxFmt().stride, 4, &vbuf, &vbOffset);
-			DecodeVerts(dest);
+			DecodeVerts(dec_, dest);
 		}
 
 		int vertexCount;
@@ -298,7 +293,7 @@ void DrawEngineVulkan::DoFlush() {
 			VulkanFragmentShader *fshader = nullptr;
 			VulkanGeometryShader *gshader = nullptr;
 
-			shaderManager_->GetShaders(prim, dec_, &vshader, &fshader, &gshader, pipelineState_, true, useHWTessellation_, decOptions_.expandAllWeightsToFloat, decOptions_.applySkinInDecode);
+			shaderManager_->GetShaders(prim, dec_, &vshader, &fshader, &gshader, pipelineState_, true, useHWTessellation_, decOptions_.expandAllWeightsToFloat, applySkinInDecode_);
 			_dbg_assert_msg_(vshader->UseHWTransform(), "Bad vshader");
 			VulkanPipeline *pipeline = pipelineManager_->GetOrCreatePipeline(renderManager, pipelineLayout_, pipelineKey_, &dec_->decFmt, vshader, fshader, gshader, true, 0, framebufferManager_->GetMSAALevel(), false);
 			if (!pipeline || !pipeline->pipeline) {
@@ -375,16 +370,21 @@ void DrawEngineVulkan::DoFlush() {
 		} else {
 			renderManager->Draw(descSetIndex, ARRAY_SIZE(dynamicUBOOffsets), dynamicUBOOffsets, vbuf, vbOffset, vertexCount);
 		}
+		if (useDepthRaster_) {
+			DepthRasterTransform(prim, dec_, dec_->VertexType(), vertexCount);
+		}
 	} else {
 		PROFILE_THIS_SCOPE("soft");
-		if (!decOptions_.applySkinInDecode) {
-			decOptions_.applySkinInDecode = true;
-			lastVType_ |= (1 << 26);
-			dec_ = GetVertexDecoder(lastVType_);
+		VertexDecoder *swDec = dec_;
+		if (swDec->nweights != 0) {
+			u32 withSkinning = lastVType_ | (1 << 26);
+			if (withSkinning != lastVType_) {
+				swDec = GetVertexDecoder(withSkinning);
+			}
 		}
 		int prevDecodedVerts = numDecodedVerts_;
 
-		DecodeVerts(decoded_);
+		DecodeVerts(swDec, decoded_);
 		int vertexCount = DecodeInds();
 
 		bool hasColor = (lastVType_ & GE_VTYPE_COL_MASK) != GE_VTYPE_COL_NONE;
@@ -440,7 +440,13 @@ void DrawEngineVulkan::DoFlush() {
 		const Lin::Vec3 scale(gstate_c.vpWidthScale, gstate_c.vpHeightScale, gstate_c.vpDepthScale * 0.5f);
 		swTransform.SetProjMatrix(gstate.projMatrix, gstate_c.vpWidth < 0, gstate_c.vpHeight < 0, trans, scale);
 
-		swTransform.Transform(prim, dec_->VertexType(), dec_->GetDecVtxFmt(), numDecodedVerts_, &result);
+		swTransform.Transform(prim, swDec->VertexType(), swDec->GetDecVtxFmt(), numDecodedVerts_, &result);
+
+		// At this point, rect and line primitives are still preserved as such. So, it's the best time to do software depth raster.
+		if (useDepthRaster_) {
+			DepthRasterPretransformed(prim, transformed_, numDecodedVerts_);
+		}
+
 		// Non-zero depth clears are unusual, but some drivers don't match drawn depth values to cleared values.
 		// Games sometimes expect exact matches (see #12626, for example) for equal comparisons.
 		if (result.action == SW_CLEAR && everUsedEqualDepth_ && gstate.isClearModeDepthMask() && result.depth > 0.0f && result.depth < 1.0f)
@@ -448,7 +454,7 @@ void DrawEngineVulkan::DoFlush() {
 
 		if (result.action == SW_NOT_READY) {
 			// decIndex_ here is always equal to inds currently, but it may not be in the future.
-			swTransform.BuildDrawingParams(prim, vertexCount, dec_->VertexType(), inds, RemainingIndices(inds), numDecodedVerts_, VERTEX_BUFFER_MAX, &result);
+			swTransform.BuildDrawingParams(prim, vertexCount, swDec->VertexType(), inds, RemainingIndices(inds), numDecodedVerts_, VERTEX_BUFFER_MAX, &result);
 		}
 
 		if (result.setSafeSize)
@@ -476,9 +482,9 @@ void DrawEngineVulkan::DoFlush() {
 				VulkanFragmentShader *fshader = nullptr;
 				VulkanGeometryShader *gshader = nullptr;
 
-				shaderManager_->GetShaders(prim, dec_, &vshader, &fshader, &gshader, pipelineState_, false, false, decOptions_.expandAllWeightsToFloat, true);
+				shaderManager_->GetShaders(prim, swDec, &vshader, &fshader, &gshader, pipelineState_, false, false, decOptions_.expandAllWeightsToFloat, true);
 				_dbg_assert_msg_(!vshader->UseHWTransform(), "Bad vshader");
-				VulkanPipeline *pipeline = pipelineManager_->GetOrCreatePipeline(renderManager, pipelineLayout_, pipelineKey_, &dec_->decFmt, vshader, fshader, gshader, false, 0, framebufferManager_->GetMSAALevel(), false);
+				VulkanPipeline *pipeline = pipelineManager_->GetOrCreatePipeline(renderManager, pipelineLayout_, pipelineKey_, &swDec->decFmt, vshader, fshader, gshader, false, 0, framebufferManager_->GetMSAALevel(), false);
 				if (!pipeline || !pipeline->pipeline) {
 					// Already logged, let's bail out.
 					ResetAfterDraw();
@@ -542,18 +548,15 @@ void DrawEngineVulkan::DoFlush() {
 			bool clearColor = gstate.isClearModeColorMask();
 			bool clearAlpha = gstate.isClearModeAlphaMask();  // and stencil
 			bool clearDepth = gstate.isClearModeDepthMask();
-			int mask = 0;
+			Draw::Aspect mask = Draw::Aspect::NO_BIT;
 			// The Clear detection takes care of doing a regular draw instead if separate masking
 			// of color and alpha is needed, so we can just treat them as the same.
-			if (clearColor || clearAlpha) mask |= Draw::FBChannel::FB_COLOR_BIT;
-			if (clearDepth) mask |= Draw::FBChannel::FB_DEPTH_BIT;
-			if (clearAlpha) mask |= Draw::FBChannel::FB_STENCIL_BIT;
+			if (clearColor || clearAlpha) mask |= Draw::Aspect::COLOR_BIT;
+			if (clearDepth) mask |= Draw::Aspect::DEPTH_BIT;
+			if (clearAlpha) mask |= Draw::Aspect::STENCIL_BIT;
 			// Note that since the alpha channel and the stencil channel are shared on the PSP,
 			// when we clear alpha, we also clear stencil to the same value.
 			draw_->Clear(mask, result.color, result.depth, result.color >> 24);
-			if (clearColor || clearAlpha) {
-				framebufferManager_->SetColorUpdated(gstate_c.skipDrawReason);
-			}
 			if (gstate_c.Use(GPU_USE_CLEAR_RAM_HACK) && gstate.isClearModeColorMask() && (gstate.isClearModeAlphaMask() || gstate.FrameBufFormat() == GE_FORMAT_565)) {
 				int scissorX1 = gstate.getScissorX1();
 				int scissorY1 = gstate.getScissorY1();
@@ -562,14 +565,13 @@ void DrawEngineVulkan::DoFlush() {
 				framebufferManager_->ApplyClearToMemory(scissorX1, scissorY1, scissorX2, scissorY2, result.color);
 			}
 		}
-		decOptions_.applySkinInDecode = g_Config.bSoftwareSkinning;
 	}
 
 	ResetAfterDrawInline();
 
 	framebufferManager_->SetColorUpdated(gstate_c.skipDrawReason);
 
-	GPUDebug::NotifyFlush();
+	gpuCommon_->NotifyFlush();
 }
 
 void DrawEngineVulkan::ResetAfterDraw() {
@@ -580,7 +582,6 @@ void DrawEngineVulkan::ResetAfterDraw() {
 	vertexCountInDrawCalls_ = 0;
 	decodeIndsCounter_ = 0;
 	decodeVertsCounter_ = 0;
-	decOptions_.applySkinInDecode = g_Config.bSoftwareSkinning;
 	gstate_c.vertexFullAlpha = true;
 }
 

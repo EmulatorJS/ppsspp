@@ -24,17 +24,7 @@
 #include "GPU/GPU.h"
 #include "GPU/ge_constants.h"
 #include "GPU/Common/ShaderCommon.h"
-
-#if defined(_M_SSE)
-#include <emmintrin.h>
-#endif
-#if PPSSPP_ARCH(ARM_NEON)
-#if defined(_MSC_VER) && PPSSPP_ARCH(ARM64)
-#include <arm64_neon.h>
-#else
-#include <arm_neon.h>
-#endif
-#endif
+#include "Common/Math/SIMDHeaders.h"
 
 class PointerWrap;
 
@@ -237,7 +227,7 @@ struct GPUgstate {
 
 	// Cull
 	bool isCullEnabled() const { return cullfaceEnable & 1; }
-	int getCullMode()   const { return cullmode & 1; }
+	GECullMode getCullMode()   const { return (GECullMode)(cullmode & 1); }
 
 	// Color Mask
 	bool isClearModeColorMask() const { return (clearmode&0x100) != 0; }

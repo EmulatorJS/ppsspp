@@ -19,7 +19,6 @@
 #include "Common/CommonTypes.h"
 #include "Common/Serialize/Serializer.h"
 #include "Common/Serialize/SerializeFuncs.h"
-#include "Common/System/OSD.h"
 #include "Core/ELF/ParamSFO.h"
 #include "Core/MemMapHelpers.h"
 #include "Core/Reporting.h"

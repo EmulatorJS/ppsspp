@@ -22,7 +22,6 @@
 #include <cstring>
 #include <cstdarg>
 #include <cstdint>
-
 #include <algorithm>
 #include <string>
 

@@ -18,31 +18,20 @@
 #include <algorithm>
 
 #include "Common/LogReporting.h"
-#include "Common/MemoryUtil.h"
-#include "Common/TimeUtil.h"
-#include "Core/MemMap.h"
-#include "Core/System.h"
-#include "Core/Config.h"
-#include "Core/CoreTiming.h"
 
 #include "Common/GPU/OpenGL/GLDebugLog.h"
 #include "Common/Profiler/Profiler.h"
 
-#include "GPU/Math3D.h"
 #include "GPU/GPUState.h"
 #include "GPU/ge_constants.h"
 
-#include "GPU/Common/TextureDecoder.h"
 #include "GPU/Common/SplineCommon.h"
 #include "GPU/Common/VertexDecoderCommon.h"
 #include "GPU/Common/SoftwareTransformCommon.h"
-#include "GPU/Debugger/Debugger.h"
-#include "GPU/GLES/FragmentTestCacheGLES.h"
-#include "GPU/GLES/StateMappingGLES.h"
-#include "GPU/GLES/TextureCacheGLES.h"
 #include "GPU/GLES/DrawEngineGLES.h"
 #include "GPU/GLES/ShaderManagerGLES.h"
 #include "GPU/GLES/GPU_GLES.h"
+#include "GPU/GLES/FramebufferManagerGLES.h"
 
 static const GLuint glprim[8] = {
 	// Points, which are expanded to triangles.
@@ -130,8 +119,6 @@ void DrawEngineGLES::DestroyDeviceObjects() {
 		frameData_[i].pushIndex = nullptr;
 	}
 
-	ClearTrackedVertexArrays();
-
 	if (softwareInputLayout_)
 		render_->DeleteInputLayout(softwareInputLayout_);
 	softwareInputLayout_ = nullptr;
@@ -147,6 +134,8 @@ void DrawEngineGLES::ClearInputLayoutMap() {
 }
 
 void DrawEngineGLES::BeginFrame() {
+	DrawEngineCommon::BeginFrame();
+
 	FrameData &frameData = frameData_[render_->GetCurFrame()];
 	frameData.pushIndex->Begin();
 	frameData.pushVertex->Begin();
@@ -230,7 +219,10 @@ void DrawEngineGLES::Invalidate(InvalidationCallbackFlags flags) {
 	}
 }
 
-void DrawEngineGLES::DoFlush() {
+void DrawEngineGLES::Flush() {
+	if (!numDrawVerts_) {
+		return;
+	}
 	PROFILE_THIS_SCOPE("flush");
 	FrameData &frameData = frameData_[render_->GetCurFrame()];
 	VShaderID vsid;
@@ -261,7 +253,7 @@ void DrawEngineGLES::DoFlush() {
 
 	GEPrimitiveType prim = prevPrim_;
 
-	Shader *vshader = shaderManager_->ApplyVertexShader(CanUseHardwareTransform(prim), useHWTessellation_, dec_, decOptions_.expandAllWeightsToFloat, decOptions_.applySkinInDecode || !CanUseHardwareTransform(prim), &vsid);
+	Shader *vshader = shaderManager_->ApplyVertexShader(CanUseHardwareTransform(prim), useHWTessellation_, dec_, decOptions_.expandAllWeightsToFloat, applySkinInDecode_ || !CanUseHardwareTransform(prim), &vsid);
 
 	GLRBuffer *vertexBuffer = nullptr;
 	GLRBuffer *indexBuffer = nullptr;
@@ -269,9 +261,9 @@ void DrawEngineGLES::DoFlush() {
 	uint32_t indexBufferOffset = 0;
 
 	if (vshader->UseHWTransform()) {
-		if (decOptions_.applySkinInDecode && (lastVType_ & GE_VTYPE_WEIGHT_MASK)) {
+		if (applySkinInDecode_ && (lastVType_ & GE_VTYPE_WEIGHT_MASK)) {
 			// If software skinning, we're predecoding into "decoded". So make sure we're done, then push that content.
-			DecodeVerts(decoded_);
+			DecodeVerts(dec_, decoded_);
 			uint32_t size = numDecodedVerts_ * dec_->GetDecVtxFmt().stride;
 			u8 *dest = (u8 *)frameData.pushVertex->Allocate(size, 4, &vertexBuffer, &vertexBufferOffset);
 			memcpy(dest, decoded_, size);
@@ -279,13 +271,13 @@ void DrawEngineGLES::DoFlush() {
 			// Figure out how much pushbuffer space we need to allocate.
 			int vertsToDecode = ComputeNumVertsToDecode();
 			u8 *dest = (u8 *)frameData.pushVertex->Allocate(vertsToDecode * dec_->GetDecVtxFmt().stride, 4, &vertexBuffer, &vertexBufferOffset);
-			DecodeVerts(dest);
+			DecodeVerts(dec_, dest);
 		}
 
 		int vertexCount;
 		int maxIndex;
 		bool useElements;
-		DecodeVerts(decoded_);
+		DecodeVerts(dec_, decoded_);
 		DecodeIndsAndGetData(&prim, &vertexCount, &maxIndex, &useElements, false);
 
 		if (useElements) {
@@ -325,12 +317,14 @@ void DrawEngineGLES::DoFlush() {
 		}
 	} else {
 		PROFILE_THIS_SCOPE("soft");
-		if (!decOptions_.applySkinInDecode) {
-			decOptions_.applySkinInDecode = true;
-			lastVType_ |= (1 << 26);
-			dec_ = GetVertexDecoder(lastVType_);
+		VertexDecoder *swDec = dec_;
+		if (swDec->nweights != 0) {
+			u32 withSkinning = lastVType_ | (1 << 26);
+			if (withSkinning != lastVType_) {
+				swDec = GetVertexDecoder(withSkinning);
+			}
 		}
-		DecodeVerts(decoded_);
+		DecodeVerts(swDec, decoded_);
 		int vertexCount = DecodeInds();
 
 		bool hasColor = (lastVType_ & GE_VTYPE_COL_MASK) != GE_VTYPE_COL_NONE;
@@ -384,7 +378,7 @@ void DrawEngineGLES::DoFlush() {
 		const bool invertedY = gstate_c.vpHeight * (params.flippedY ? 1.0 : -1.0f) < 0;
 		swTransform.SetProjMatrix(gstate.projMatrix, gstate_c.vpWidth < 0, invertedY, trans, scale);
 
-		swTransform.Transform(prim, dec_->VertexType(), dec_->GetDecVtxFmt(), numDecodedVerts_, &result);
+		swTransform.Transform(prim, swDec->VertexType(), swDec->GetDecVtxFmt(), numDecodedVerts_, &result);
 		// Non-zero depth clears are unusual, but some drivers don't match drawn depth values to cleared values.
 		// Games sometimes expect exact matches (see #12626, for example) for equal comparisons.
 		if (result.action == SW_CLEAR && everUsedEqualDepth_ && gstate.isClearModeDepthMask() && result.depth > 0.0f && result.depth < 1.0f)
@@ -400,7 +394,7 @@ void DrawEngineGLES::DoFlush() {
 		ApplyDrawState(prim);
 
 		if (result.action == SW_NOT_READY)
-			swTransform.BuildDrawingParams(prim, vertexCount, dec_->VertexType(), inds, RemainingIndices(inds), numDecodedVerts_, VERTEX_BUFFER_MAX, &result);
+			swTransform.BuildDrawingParams(prim, vertexCount, swDec->VertexType(), inds, RemainingIndices(inds), numDecodedVerts_, VERTEX_BUFFER_MAX, &result);
 		if (result.setSafeSize)
 			framebufferManager_->SetSafeSize(result.safeWidth, result.safeHeight);
 
@@ -434,7 +428,6 @@ void DrawEngineGLES::DoFlush() {
 			if (depthMask) target |= GL_DEPTH_BUFFER_BIT;
 
 			render_->Clear(clearColor, clearDepth, clearColor >> 24, target, rgbaMask, vpAndScissor_.scissorX, vpAndScissor_.scissorY, vpAndScissor_.scissorW, vpAndScissor_.scissorH);
-			framebufferManager_->SetColorUpdated(gstate_c.skipDrawReason);
 
 			if (gstate_c.Use(GPU_USE_CLEAR_RAM_HACK) && colorMask && (alphaMask || gstate_c.framebufFormat == GE_FORMAT_565)) {
 				int scissorX1 = gstate.getScissorX1();
@@ -445,13 +438,12 @@ void DrawEngineGLES::DoFlush() {
 			}
 			gstate_c.Dirty(DIRTY_BLEND_STATE);  // Make sure the color mask gets re-applied.
 		}
-		decOptions_.applySkinInDecode = g_Config.bSoftwareSkinning;
 	}
 
 bail:
 	ResetAfterDrawInline();
 	framebufferManager_->SetColorUpdated(gstate_c.skipDrawReason);
-	GPUDebug::NotifyFlush();
+	gpuCommon_->NotifyFlush();
 }
 
 // TODO: Refactor this to a single USE flag.

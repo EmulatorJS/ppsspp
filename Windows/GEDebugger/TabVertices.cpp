@@ -170,13 +170,13 @@ int CtrlVertexList::GetRowCount() {
 	auto state = gpuDebug->GetGState();
 
 	int rowCount_ = gpuDebug->GetCurrentPrimCount();
-	if (!gpuDebug->GetCurrentSimpleVertices(rowCount_, vertices, indices)) {
+	if (!gpuDebug->GetCurrentDrawAsDebugVertices(rowCount_, vertices, indices)) {
 		rowCount_ = 0;
 	}
 	VertexDecoderOptions options{};
 	// TODO: Maybe an option?
-	options.applySkinInDecode = true;
-	decoder->SetVertexType(state.vertType, options);
+	u32 vertTypeID = GetVertTypeID(state.vertType, state.getUVGenMode(), true);
+	decoder->SetVertexType(vertTypeID, options);
 	return rowCount_;
 }
 

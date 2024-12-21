@@ -25,7 +25,7 @@ struct RegisteredTexture {
 		Draw::Texture *texture;
 		struct {
 			Draw::Framebuffer *framebuffer;
-			Draw::FBChannel aspect;
+			Draw::Aspect aspect;
 		};
 	};
 	ImGuiPipeline pipeline;
@@ -88,12 +88,12 @@ void ImGui_ImplThin3d_RenderDrawData(ImDrawData* draw_data, Draw::DrawContext *d
 	ImTextureID prevTexId = (ImTextureID)-1;
 
 	std::vector<Draw::ClippedDraw> draws;
-	Draw::Texture *boundTexture;
-	Draw::Framebuffer *boundFBAsTexture;
-	void *boundNativeTexture;
+	Draw::Texture *boundTexture = nullptr;
+	Draw::Framebuffer *boundFBAsTexture = nullptr;
+	void *boundNativeTexture = nullptr;
 	Draw::Pipeline *boundPipeline = bd->pipelines[0];
 	Draw::SamplerState *boundSampler = bd->fontSampler;
-	Draw::FBChannel boundAspect = Draw::FB_COLOR_BIT;
+	Draw::Aspect boundAspect = Draw::Aspect::COLOR_BIT;
 
 	// Render command lists
 	for (int n = 0; n < draw_data->CmdListsCount; n++) {
@@ -114,6 +114,10 @@ void ImGui_ImplThin3d_RenderDrawData(ImDrawData* draw_data, Draw::DrawContext *d
 				boundSampler = bd->fontSampler;
 			} else {
 				size_t index = (size_t)pcmd->TextureId - TEX_ID_OFFSET;
+				if (index >= bd->tempTextures.size()) {
+					WARN_LOG(Log::System, "Missing temp texture %d (out of %d)", index, (int)bd->tempTextures.size());
+					continue;
+				}
 				_dbg_assert_(index < bd->tempTextures.size());
 				switch (bd->tempTextures[index].type) {
 				case RegisteredTextureType::Framebuffer:
@@ -126,13 +130,13 @@ void ImGui_ImplThin3d_RenderDrawData(ImDrawData* draw_data, Draw::DrawContext *d
 					boundTexture = bd->tempTextures[index].texture;
 					boundFBAsTexture = nullptr;
 					boundNativeTexture = nullptr;
-					boundAspect = Draw::FB_COLOR_BIT;
+					boundAspect = Draw::Aspect::COLOR_BIT;
 					break;
 				case RegisteredTextureType::NativeTexture:
 					boundTexture = nullptr;
 					boundFBAsTexture = nullptr;
 					boundNativeTexture = bd->tempTextures[index].nativeTexture;
-					boundAspect = Draw::FB_COLOR_BIT;
+					boundAspect = Draw::Aspect::COLOR_BIT;
 					break;
 				}
 				boundPipeline = bd->pipelines[(int)bd->tempTextures[index].pipeline];
@@ -249,12 +253,13 @@ bool ImGui_ImplThin3d_CreateDeviceObjects(Draw::DrawContext *draw) {
 		io.Fonts->GetTexDataAsRGBA32(&pixels, &width, &height);
 		size_t upload_size = width * height * 4 * sizeof(char);
 
-		Draw::TextureDesc desc;
+		Draw::TextureDesc desc{};
 		desc.width = width;
 		desc.height = height;
 		desc.mipLevels = 1;
 		desc.format = Draw::DataFormat::R8G8B8A8_UNORM;
 		desc.type = Draw::TextureType::LINEAR2D;
+		desc.swizzle = Draw::TextureSwizzle::DEFAULT;
 		desc.depth = 1;
 		desc.tag = "imgui-font";
 		desc.initData.push_back((const uint8_t *)pixels);
@@ -364,7 +369,7 @@ ImTextureID ImGui_ImplThin3d_AddTextureTemp(Draw::Texture *texture, ImGuiPipelin
 	return (ImTextureID)(uint64_t)(TEX_ID_OFFSET + bd->tempTextures.size() - 1);
 }
 
-ImTextureID ImGui_ImplThin3d_AddFBAsTextureTemp(Draw::Framebuffer *framebuffer, Draw::FBChannel aspect, ImGuiPipeline pipeline) {
+ImTextureID ImGui_ImplThin3d_AddFBAsTextureTemp(Draw::Framebuffer *framebuffer, Draw::Aspect aspect, ImGuiPipeline pipeline) {
 	BackendData* bd = ImGui_ImplThin3d_GetBackendData();
 
 	RegisteredTexture tex{ RegisteredTextureType::Framebuffer };

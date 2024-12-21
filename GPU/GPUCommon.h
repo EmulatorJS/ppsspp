@@ -305,9 +305,7 @@ public:
 
 	static int EstimatePerVertexCost();
 
-	// Note: Not virtual!
-	void Flush();
-	void DispatchFlush() override;
+	void Flush() override;
 
 #ifdef USE_CRT_DBG
 #undef new
@@ -324,7 +322,7 @@ public:
 
 	// From GPUDebugInterface.
 	bool GetCurrentDisplayList(DisplayList &list) override;
-	bool GetCurrentSimpleVertices(int count, std::vector<GPUDebugVertex> &vertices, std::vector<u16> &indices) override;
+	bool GetCurrentDrawAsDebugVertices(int count, std::vector<GPUDebugVertex> &vertices, std::vector<u16> &indices) override;
 	int GetCurrentPrimCount() override;
 	FramebufferManagerCommon *GetFramebufferManagerCommon() override {
 		return nullptr;
@@ -386,7 +384,36 @@ public:
 		return &breakpoints_;
 	}
 
+	void ClearBreakNext() override;
+	void SetBreakNext(GPUDebug::BreakNext next) override;
+	void SetBreakCount(int c, bool relative = false) override;
+	GPUDebug::BreakNext GetBreakNext() const override {
+		return breakNext_;
+	}
+	int GetBreakCount() const override {
+		return breakAtCount_;
+	}
+	bool SetRestrictPrims(std::string_view rule) override;
+	std::string_view GetRestrictPrims() override {
+		return restrictPrimRule_;
+	}
+
+	int PrimsThisFrame() const override {
+		return primsThisFrame_;
+	}
+	int PrimsLastFrame() const override {
+		return primsLastFrame_;
+	}
+
+	void NotifyFlush();
+
 protected:
+	// While debugging is active, these may block.
+	void NotifyDisplay(u32 framebuf, u32 stride, int format);
+
+	bool NeedsSlowInterpreter() const;
+	GPUDebug::NotifyResult NotifyCommand(u32 pc, GPUBreakpoints *breakpoints);
+
 	virtual void ClearCacheNextFrame() {}
 
 	virtual void CheckRenderResized() {}
@@ -469,7 +496,6 @@ protected:
 	bool dumpNextFrame_ = false;
 	bool dumpThisFrame_ = false;
 	bool useFastRunLoop_ = false;
-	bool debugRecording_ = false;
 	bool interruptsEnabled_ = false;
 	bool displayResized_ = false;
 	bool renderResized_ = false;
@@ -510,8 +536,25 @@ protected:
 	std::string reportingPrimaryInfo_;
 	std::string reportingFullInfo_;
 
+	// Debugging state
+	bool debugRecording_ = false;
+
 	GPURecord::Recorder recorder_;
 	GPUBreakpoints breakpoints_;
+
+	GPUDebug::BreakNext breakNext_ = GPUDebug::BreakNext::NONE;
+	int breakAtCount_ = -1;
+
+	int primsLastFrame_ = 0;
+	int primsThisFrame_ = 0;
+	int thisFlipNum_ = 0;
+
+	bool primAfterDraw_ = false;
+
+	uint32_t skipPcOnce_ = 0;
+
+	std::vector<std::pair<int, int>> restrictPrimRanges_;
+	std::string restrictPrimRule_;
 
 private:
 	void DoExecuteCall(u32 target);

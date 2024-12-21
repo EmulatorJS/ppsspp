@@ -15,10 +15,9 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include <algorithm>
 #include <cstring>
 #include <cstdio>
-#include <ctype.h>
-#include <algorithm>
 
 #include "Common/CommonTypes.h"
 #include "Common/Serialize/Serializer.h"

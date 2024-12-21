@@ -139,10 +139,10 @@ public:
 	void SubmitPrimitive(const void* vertices, const void* indices, GEPrimitiveType prim_type, int vertex_count, u32 vertex_type, int *bytesRead, SoftwareDrawEngine *drawEngine);
 	void SubmitImmVertex(const ClipVertexData &vert, SoftwareDrawEngine *drawEngine);
 
-	static bool GetCurrentSimpleVertices(int count, std::vector<GPUDebugVertex> &vertices, std::vector<u16> &indices);
+	static bool GetCurrentDrawAsDebugVertices(int count, std::vector<GPUDebugVertex> &vertices, std::vector<u16> &indices);
 
-	void Flush(const char *reason);
-	void FlushIfOverlap(const char *reason, bool modifying, uint32_t addr, uint32_t stride, uint32_t w, uint32_t h);
+	void Flush(GPUCommon *common, const char *reason);
+	void FlushIfOverlap(GPUCommon *common, const char *reason, bool modifying, uint32_t addr, uint32_t stride, uint32_t w, uint32_t h);
 	void NotifyClutUpdate(const void *src);
 
 	void GetStats(char *buffer, size_t bufsize);
@@ -177,7 +177,7 @@ public:
 	void DeviceRestore(Draw::DrawContext *draw) override {}
 
 	void NotifyConfigChanged() override;
-	void DispatchFlush() override;
+	void Flush() override;
 	void DispatchSubmitPrim(const void *verts, const void *inds, GEPrimitiveType prim, int vertexCount, u32 vertType, bool clockwise, int *bytesRead) override;
 	void DispatchSubmitImm(GEPrimitiveType prim, TransformedVertex *buffer, int vertexCount, int cullMode, bool continuation) override;
 

@@ -16,13 +16,11 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include <algorithm>
-#include <condition_variable>
-#include <mutex>
-#include <thread>
-
+#include <string>
+#include <vector>
+#include <string_view>
 #include "Common/Serialize/Serializer.h"
 #include "Common/Serialize/SerializeFuncs.h"
-#include "Common/Thread/ThreadUtil.h"
 #include "Common/File/DiskFree.h"
 #include "Common/File/FileUtil.h"
 #include "Common/File/DirListing.h"

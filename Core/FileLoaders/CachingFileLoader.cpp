@@ -15,9 +15,9 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include <algorithm>
 #include <cstring>
 #include <thread>
-#include <algorithm>
 
 #include "Common/Thread/ThreadUtil.h"
 #include "Common/TimeUtil.h"

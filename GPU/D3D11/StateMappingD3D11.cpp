@@ -22,12 +22,9 @@
 
 #include "Common/Data/Convert/SmallDataConvert.h"
 
-#include "GPU/Math3D.h"
 #include "GPU/GPUState.h"
 #include "GPU/ge_constants.h"
 #include "GPU/Common/GPUStateUtils.h"
-#include "Core/System.h"
-#include "Core/Config.h"
 
 #include "GPU/Common/FramebufferManagerCommon.h"
 #include "GPU/D3D11/DrawEngineD3D11.h"

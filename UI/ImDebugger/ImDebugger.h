@@ -110,6 +110,8 @@ struct ImSnapshotState {
 	u32 ll;
 };
 
+class IniFile;
+
 struct ImConfig {
 	// Defaults for saved settings are set in SyncConfig.
 
@@ -137,6 +139,7 @@ struct ImConfig {
 	bool geStateOpen;
 	bool schedulerOpen;
 	bool watchOpen;
+	bool pixelViewerOpen;
 	bool memViewOpen[4];
 
 	// HLE explorer settings
@@ -149,6 +152,9 @@ struct ImConfig {
 	int selectedBreakpoint = -1;
 	int selectedMemCheck = -1;
 	uint64_t selectedTexAddr = 0;
+
+	bool realtimePixelPreview = false;
+	int breakCount = 0;
 
 	bool displayLatched = false;
 
@@ -165,12 +171,14 @@ enum class ImCmd {
 	SHOW_IN_CPU_DISASM,
 	SHOW_IN_GE_DISASM,
 	SHOW_IN_MEMORY_VIEWER,  // param is address, param2 is viewer index
+	SHOW_IN_PIXEL_VIEWER,  // param is address, param2 is stride, |0x80000000 if depth, param3 is w/h
 };
 
 struct ImCommand {
 	ImCmd cmd;
 	uint32_t param;
 	uint32_t param2;
+	uint32_t param3;
 };
 
 struct ImControl {
@@ -182,11 +190,12 @@ public:
 	ImDebugger();
 	~ImDebugger();
 
-	void Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebug);
+	void Frame(MIPSDebugInterface *mipsDebug, GPUDebugInterface *gpuDebug, Draw::DrawContext *draw);
 
 	// Should be called just before starting a step or run, so that things can
 	// save state that they can later compare with, to highlight changes.
 	void Snapshot(MIPSState *mips);
+	void SnapshotGPU(GPUDebugInterface *mips);
 
 private:
 	Path ConfigPath();
@@ -198,6 +207,7 @@ private:
 	ImGeStateWindow geStateWindow_;
 	ImMemWindow mem_[4];  // We support 4 separate instances of the memory viewer.
 	ImStructViewer structViewer_;
+	ImGePixelViewerWindow pixelViewer_;
 
 	ImSnapshotState newSnapshot_;
 	ImSnapshotState snapshot_;

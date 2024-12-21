@@ -15,9 +15,8 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/. 
 
-#include <cstddef>
 #include <algorithm>
-#include <cstdlib>
+#include <cstddef>
 #include <cstring>
 #include <cmath>
 
@@ -26,16 +25,9 @@
 #include "Core/Config.h"
 #include "Common/Common.h"
 #include "Common/Log.h"
-#include "Common/CommonFuncs.h"
+#include "Common/Math/SIMDHeaders.h"
 #include "Common/Thread/ParallelLoop.h"
-#include "Core/ThreadPools.h"
-#include "Common/CPUDetect.h"
 #include "ext/xbrz/xbrz.h"
-
-#if defined(_M_SSE)
-#include <emmintrin.h>
-#include <smmintrin.h>
-#endif
 
 // Report the time and throughput for each larger scaling operation in the log
 //#define SCALING_MEASURE_TIME

@@ -15,33 +15,23 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-#include <algorithm>
 
 #include "Common/Log.h"
-#include "Common/MemoryUtil.h"
-#include "Common/TimeUtil.h"
 #include "Common/Profiler/Profiler.h"
 
-#include "Core/MemMap.h"
-#include "Core/System.h"
 #include "Core/Config.h"
-#include "Core/CoreTiming.h"
 
-#include "GPU/Math3D.h"
 #include "GPU/GPUState.h"
 #include "GPU/ge_constants.h"
 
-#include "GPU/Common/TextureDecoder.h"
 #include "GPU/Common/SplineCommon.h"
 #include "GPU/Common/TransformCommon.h"
 #include "GPU/Common/VertexDecoderCommon.h"
 #include "GPU/Common/SoftwareTransformCommon.h"
-#include "GPU/Debugger/Debugger.h"
 #include "GPU/D3D11/FramebufferManagerD3D11.h"
 #include "GPU/D3D11/TextureCacheD3D11.h"
 #include "GPU/D3D11/DrawEngineD3D11.h"
 #include "GPU/D3D11/ShaderManagerD3D11.h"
-#include "GPU/D3D11/GPU_D3D11.h"
 
 const D3D11_PRIMITIVE_TOPOLOGY d3d11prim[8] = {
 	D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST,  // Points are expanded to triangles.
@@ -115,7 +105,6 @@ void DrawEngineD3D11::DestroyDeviceObjects() {
 		draw_->SetInvalidationCallback(InvalidationCallback());
 	}
 
-	ClearTrackedVertexArrays();
 	ClearInputLayoutMap();
 	delete tessDataTransferD3D11;
 	tessDataTransferD3D11 = nullptr;
@@ -239,6 +228,8 @@ ID3D11InputLayout *DrawEngineD3D11::SetupDecFmtForDraw(D3D11VertexShader *vshade
 }
 
 void DrawEngineD3D11::BeginFrame() {
+	DrawEngineCommon::BeginFrame();
+
 	pushVerts_->Reset();
 	pushInds_->Reset();
 
@@ -252,8 +243,10 @@ void DrawEngineD3D11::Invalidate(InvalidationCallbackFlags flags) {
 	}
 }
 
-// The inline wrapper in the header checks for numDrawCalls_ == 0
-void DrawEngineD3D11::DoFlush() {
+void DrawEngineD3D11::Flush() {
+	if (!numDrawVerts_) {
+		return;
+	}
 	bool textureNeedsApply = false;
 	if (gstate_c.IsDirty(DIRTY_TEXTURE_IMAGE | DIRTY_TEXTURE_PARAMS) && !gstate.isModeClear() && gstate.isTextureMapEnabled()) {
 		textureCache_->SetTexture();
@@ -280,7 +273,7 @@ void DrawEngineD3D11::DoFlush() {
 		int vertexCount;
 		int maxIndex;
 		bool useElements;
-		DecodeVerts(decoded_);
+		DecodeVerts(dec_, decoded_);
 		DecodeIndsAndGetData(&prim, &vertexCount, &maxIndex, &useElements, false);
 		gpuStats.numUncachedVertsDrawn += vertexCount;
 
@@ -301,7 +294,7 @@ void DrawEngineD3D11::DoFlush() {
 
 		D3D11VertexShader *vshader;
 		D3D11FragmentShader *fshader;
-		shaderManager_->GetShaders(prim, dec_, &vshader, &fshader, pipelineState_, useHWTransform, useHWTessellation_, decOptions_.expandAllWeightsToFloat, decOptions_.applySkinInDecode);
+		shaderManager_->GetShaders(prim, dec_, &vshader, &fshader, pipelineState_, useHWTransform, useHWTessellation_, decOptions_.expandAllWeightsToFloat, applySkinInDecode_);
 		ID3D11InputLayout *inputLayout = SetupDecFmtForDraw(vshader, dec_->GetDecVtxFmt(), dec_->VertexType());
 		context_->PSSetShader(fshader->GetShader(), nullptr, 0);
 		context_->VSSetShader(vshader->GetShader(), nullptr, 0);
@@ -344,12 +337,15 @@ void DrawEngineD3D11::DoFlush() {
 		}
 	} else {
 		PROFILE_THIS_SCOPE("soft");
-		if (!decOptions_.applySkinInDecode) {
-			decOptions_.applySkinInDecode = true;
-			lastVType_ |= (1 << 26);
-			dec_ = GetVertexDecoder(lastVType_);
+		VertexDecoder *swDec = dec_;
+		if (swDec->nweights != 0) {
+			u32 withSkinning = lastVType_ | (1 << 26);
+			if (withSkinning != lastVType_) {
+				swDec = GetVertexDecoder(withSkinning);
+			}
 		}
-		DecodeVerts(decoded_);
+
+		DecodeVerts(swDec, decoded_);
 		int vertexCount = DecodeInds();
 
 		bool hasColor = (lastVType_ & GE_VTYPE_COL_MASK) != GE_VTYPE_COL_NONE;
@@ -398,7 +394,7 @@ void DrawEngineD3D11::DoFlush() {
 		const Lin::Vec3 scale(gstate_c.vpWidthScale, -gstate_c.vpHeightScale, gstate_c.vpDepthScale * 0.5f);
 		swTransform.SetProjMatrix(gstate.projMatrix, gstate_c.vpWidth < 0, gstate_c.vpHeight < 0, trans, scale);
 
-		swTransform.Transform(prim, dec_->VertexType(), dec_->GetDecVtxFmt(), numDecodedVerts_, &result);
+		swTransform.Transform(prim, swDec->VertexType(), swDec->GetDecVtxFmt(), numDecodedVerts_, &result);
 		// Non-zero depth clears are unusual, but some drivers don't match drawn depth values to cleared values.
 		// Games sometimes expect exact matches (see #12626, for example) for equal comparisons.
 		if (result.action == SW_CLEAR && everUsedEqualDepth_ && gstate.isClearModeDepthMask() && result.depth > 0.0f && result.depth < 1.0f)
@@ -414,7 +410,7 @@ void DrawEngineD3D11::DoFlush() {
 		ApplyDrawState(prim);
 
 		if (result.action == SW_NOT_READY)
-			swTransform.BuildDrawingParams(prim, vertexCount, dec_->VertexType(), inds, RemainingIndices(inds), numDecodedVerts_, VERTEX_BUFFER_MAX, &result);
+			swTransform.BuildDrawingParams(prim, vertexCount, swDec->VertexType(), inds, RemainingIndices(inds), numDecodedVerts_, VERTEX_BUFFER_MAX, &result);
 		if (result.setSafeSize)
 			framebufferManager_->SetSafeSize(result.safeWidth, result.safeHeight);
 
@@ -423,7 +419,7 @@ void DrawEngineD3D11::DoFlush() {
 		if (result.action == SW_DRAW_INDEXED) {
 			D3D11VertexShader *vshader;
 			D3D11FragmentShader *fshader;
-			shaderManager_->GetShaders(prim, dec_, &vshader, &fshader, pipelineState_, false, false, decOptions_.expandAllWeightsToFloat, true);
+			shaderManager_->GetShaders(prim, swDec, &vshader, &fshader, pipelineState_, false, false, decOptions_.expandAllWeightsToFloat, true);
 			context_->PSSetShader(fshader->GetShader(), nullptr, 0);
 			context_->VSSetShader(vshader->GetShader(), nullptr, 0);
 			shaderManager_->UpdateUniforms(framebufferManager_->UseBufferedRendering());
@@ -459,15 +455,11 @@ void DrawEngineD3D11::DoFlush() {
 			u32 clearColor = result.color;
 			float clearDepth = result.depth;
 
-			uint32_t clearFlag = 0;
+			Draw::Aspect clearFlag = Draw::Aspect::NO_BIT;
 
-			if (gstate.isClearModeColorMask()) clearFlag |= Draw::FBChannel::FB_COLOR_BIT;
-			if (gstate.isClearModeAlphaMask()) clearFlag |= Draw::FBChannel::FB_STENCIL_BIT;
-			if (gstate.isClearModeDepthMask()) clearFlag |= Draw::FBChannel::FB_DEPTH_BIT;
-
-			if (clearFlag & Draw::FBChannel::FB_COLOR_BIT) {
-				framebufferManager_->SetColorUpdated(gstate_c.skipDrawReason);
-			}
+			if (gstate.isClearModeColorMask()) clearFlag |= Draw::Aspect::COLOR_BIT;
+			if (gstate.isClearModeAlphaMask()) clearFlag |= Draw::Aspect::STENCIL_BIT;
+			if (gstate.isClearModeDepthMask()) clearFlag |= Draw::Aspect::DEPTH_BIT;
 
 			uint8_t clearStencil = clearColor >> 24;
 			draw_->Clear(clearFlag, clearColor, clearDepth, clearStencil);
@@ -480,12 +472,11 @@ void DrawEngineD3D11::DoFlush() {
 				framebufferManager_->ApplyClearToMemory(scissorX1, scissorY1, scissorX2, scissorY2, clearColor);
 			}
 		}
-		decOptions_.applySkinInDecode = g_Config.bSoftwareSkinning;
 	}
 
 	ResetAfterDrawInline();
 	framebufferManager_->SetColorUpdated(gstate_c.skipDrawReason);
-	GPUDebug::NotifyFlush();
+	gpuCommon_->NotifyFlush();
 }
 
 TessellationDataTransferD3D11::TessellationDataTransferD3D11(ID3D11DeviceContext *context, ID3D11Device *device)

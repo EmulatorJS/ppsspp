@@ -15,16 +15,17 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
+#include <algorithm>
 #include <map>
+#include <vector>
+#include <string>
 
-#include "Common/Log.h"
 #include "Common/StringUtils.h"
+#include "GPU/GPUState.h"
 #include "Common/GPU/Shader.h"
 #include "Common/GPU/ShaderWriter.h"
 #include "Common/Data/Convert/ColorConv.h"
 #include "GPU/Common/Draw2D.h"
-#include "GPU/Common/DrawEngineCommon.h"
-#include "GPU/Common/TextureCacheCommon.h"
 #include "GPU/Common/TextureShaderCommon.h"
 #include "GPU/Common/DepalettizeShaderCommon.h"
 

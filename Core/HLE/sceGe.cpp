@@ -145,7 +145,8 @@ public:
 
 		// Hm. This might be really tricky to get to behave the same in both modes. Here we are in __KernelReschedule, CoreTiming::Advance, ProcessEvents, GeExecuteInterrupt, ... .... __RunOnePendingInterrupt
 		// But not sure how much it will matter. The test pause2 hits here.
-		gpu->ProcessDLQueue();
+		DLResult result = gpu->ProcessDLQueue();
+		_dbg_assert_(result != DLResult::DebugBreak);
 		return false;
 	}
 
@@ -184,8 +185,16 @@ public:
 
 		// TODO: This is called from __KernelReturnFromInterrupt which does a bunch of stuff afterwards.
 		// Using hleSplitSyscallOverGe here breaks the gpu/signals/suspend.prx test, for that reason.
-		// So we just process inline and sacrifice debuggability a little.
-		gpu->ProcessDLQueue();
+		// However, it's still useful when debugging, and I believe the scheduling difference is quite insignificant -
+		// we are already being extremely inaccurate by blasting the full display list here instead of running
+		// it in the background in parallel with the CPU.
+		// So, when debugging is active, we'll just use hleSplitSyscallOverGe.
+		if (gpu->ShouldSplitOverGe()) {
+			hleSplitSyscallOverGe();
+		} else {
+			DLResult result = gpu->ProcessDLQueue();
+			_dbg_assert_(result != DLResult::DebugBreak);
+		}
 	}
 };
 
@@ -344,7 +353,7 @@ static int __GeSubIntrBase(int callbackId) {
 u32 sceGeListEnQueue(u32 listAddress, u32 stallAddress, int callbackId, u32 optParamAddr) {
 	DEBUG_LOG(Log::sceGe,
 		"sceGeListEnQueue(addr=%08x, stall=%08x, cbid=%08x, param=%08x) ticks=%d",
-		listAddress, stallAddress, callbackId, optParamAddr, CoreTiming::GetTicks());
+		listAddress, stallAddress, callbackId, optParamAddr, (int)CoreTiming::GetTicks());
 	auto optParam = PSPPointer<PspGeListArgs>::Create(optParamAddr);
 
 	bool runList;
@@ -366,7 +375,7 @@ u32 sceGeListEnQueue(u32 listAddress, u32 stallAddress, int callbackId, u32 optP
 u32 sceGeListEnQueueHead(u32 listAddress, u32 stallAddress, int callbackId, u32 optParamAddr) {
 	DEBUG_LOG(Log::sceGe,
 		"sceGeListEnQueueHead(addr=%08x, stall=%08x, cbid=%08x, param=%08x) ticks=%d",
-		listAddress, stallAddress, callbackId, optParamAddr, CoreTiming::GetTicks());
+		listAddress, stallAddress, callbackId, optParamAddr, (int)CoreTiming::GetTicks());
 	auto optParam = PSPPointer<PspGeListArgs>::Create(optParamAddr);
 
 	bool runList;

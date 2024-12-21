@@ -16,32 +16,17 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include "Common/Serialize/SerializeFuncs.h"
-#include "Common/Math/CrossSIMD.h"
-#include "Core/Config.h"
-#include "Core/Core.h"
+#include "Common/Math/SIMDHeaders.h"
+#include "Core/System.h"
 #include "Core/Debugger/MemBlockInfo.h"
 #include "Core/HW/MediaEngine.h"
 #include "Core/MemMap.h"
-#include "Core/MIPS/MIPS.h"
 #include "Core/Reporting.h"
 #include "GPU/GPUState.h"  // Used by TextureDecoder.h when templates get instanced
 #include "GPU/Common/TextureDecoder.h"
-#include "GPU/GPUCommon.h"
 #include "Core/HW/SimpleAudioDec.h"
 
 #include <algorithm>
-
-#ifdef _M_SSE
-#include <emmintrin.h>
-#endif
-
-#if PPSSPP_ARCH(ARM_NEON)
-#if defined(_MSC_VER) && PPSSPP_ARCH(ARM64)
-#include <arm64_neon.h>
-#else
-#include <arm_neon.h>
-#endif
-#endif
 
 #ifdef USE_FFMPEG
 

@@ -19,8 +19,6 @@
 
 #include "Common/GPU/OpenGL/GLFeatures.h"
 #include "Common/LogReporting.h"
-#include "Core/ConfigValues.h"
-#include "GPU/Common/GPUStateUtils.h"
 #include "GPU/Common/DrawEngineCommon.h"
 #include "GPU/Common/TextureCacheCommon.h"
 #include "GPU/GLES/FramebufferManagerGLES.h"
@@ -108,7 +106,7 @@ bool FramebufferManagerGLES::ReadbackStencilbuffer(Draw::Framebuffer *fbo, int x
 
 	const bool useColorPath = gl_extensions.IsGLES;
 	if (!useColorPath) {
-		return draw_->CopyFramebufferToMemory(fbo, FB_STENCIL_BIT, x, y, w, h, DataFormat::S8, pixels, pixelsStride, ReadbackMode::BLOCK, "ReadbackStencilbufferSync");
+		return draw_->CopyFramebufferToMemory(fbo, Aspect::STENCIL_BIT, x, y, w, h, DataFormat::S8, pixels, pixelsStride, ReadbackMode::BLOCK, "ReadbackStencilbufferSync");
 	}
 
 	// Unsupported below GLES 3.1 or without ARB_stencil_texturing.
@@ -135,7 +133,7 @@ bool FramebufferManagerGLES::ReadbackStencilbuffer(Draw::Framebuffer *fbo, int x
 	Draw::Viewport viewport = { 0.0f, 0.0f, (float)fbo->Width(), (float)fbo->Height(), 0.0f, 1.0f };
 	draw_->SetViewport(viewport);
 
-	draw_->BindFramebufferAsTexture(fbo, TEX_SLOT_PSP_TEXTURE, FB_STENCIL_BIT, 0);
+	draw_->BindFramebufferAsTexture(fbo, TEX_SLOT_PSP_TEXTURE, Aspect::STENCIL_BIT, 0);
 	draw_->BindSamplerStates(TEX_SLOT_PSP_TEXTURE, 1, &stencilReadbackSampler_);
 
 	// We must bind the program after starting the render pass.
@@ -150,7 +148,7 @@ bool FramebufferManagerGLES::ReadbackStencilbuffer(Draw::Framebuffer *fbo, int x
 	};
 	draw_->DrawUP(positions, 3);
 
-	draw_->CopyFramebufferToMemory(blitFBO, FB_COLOR_BIT, x, y, w, h, DataFormat::R8G8B8A8_UNORM, convBuf_, w, mode, "ReadbackStencilbufferSync");
+	draw_->CopyFramebufferToMemory(blitFBO, Aspect::COLOR_BIT, x, y, w, h, DataFormat::R8G8B8A8_UNORM, convBuf_, w, mode, "ReadbackStencilbufferSync");
 
 	textureCache_->ForgetLastTexture();
 

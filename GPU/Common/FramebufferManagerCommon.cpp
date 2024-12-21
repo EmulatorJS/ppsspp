@@ -23,15 +23,10 @@
 #include "ext/imgui/imgui_impl_thin3d.h"
 
 #include "Common/GPU/thin3d.h"
-#include "Common/GPU/OpenGL/GLFeatures.h"
 #include "Common/Data/Collections/TinySet.h"
 #include "Common/Data/Convert/ColorConv.h"
-#include "Common/Data/Text/I18n.h"
 #include "Common/LogReporting.h"
-#include "Common/Math/lin/matrix4x4.h"
-#include "Common/Math/math_util.h"
 #include "Common/System/Display.h"
-#include "Common/System/OSD.h"
 #include "Common/VR/PPSSPPVR.h"
 #include "Common/CommonTypes.h"
 #include "Common/StringUtils.h"
@@ -40,16 +35,11 @@
 #include "Core/Core.h"
 #include "Core/CoreParameter.h"
 #include "Core/Debugger/MemBlockInfo.h"
-#include "Core/MIPS/MIPS.h"
 #include "GPU/Common/DrawEngineCommon.h"
 #include "GPU/Common/FramebufferManagerCommon.h"
-#include "GPU/Common/PostShader.h"
 #include "GPU/Common/PresentationCommon.h"
 #include "GPU/Common/TextureCacheCommon.h"
 #include "GPU/Common/ReinterpretFramebuffer.h"
-#include "GPU/Debugger/Debugger.h"
-#include "GPU/Debugger/Record.h"
-#include "GPU/Debugger/Stepping.h"
 #include "GPU/GPUCommon.h"
 #include "GPU/GPUState.h"
 
@@ -140,14 +130,12 @@ bool FramebufferManagerCommon::PresentedThisFrame() const {
 	return presentation_->PresentedThisFrame();
 }
 
-void FramebufferManagerCommon::SetDisplayFramebuffer(u32 framebuf, u32 stride, GEBufferFormat format, GPURecord::Recorder *recorder) {
+void FramebufferManagerCommon::SetDisplayFramebuffer(u32 framebuf, u32 stride, GEBufferFormat format) {
 	displayFramebufPtr_ = framebuf & 0x3FFFFFFF;
 	if (Memory::IsVRAMAddress(displayFramebufPtr_))
 		displayFramebufPtr_ = framebuf & 0x041FFFFF;
 	displayStride_ = stride;
 	displayFormat_ = format;
-	GPUDebug::NotifyDisplay(framebuf, stride, format);
-	recorder->NotifyDisplay(framebuf, stride, format);
 }
 
 VirtualFramebuffer *FramebufferManagerCommon::GetVFBAt(u32 addr) const {
@@ -1020,11 +1008,11 @@ void FramebufferManagerCommon::BlitFramebufferDepth(VirtualFramebuffer *src, Vir
 	if (useRaster) {
 		BlitUsingRaster(src->fbo, 0, 0, w, h, dst->fbo, 0, 0, w, h, false, dst->renderScaleFactor, Get2DPipeline(Draw2DShader::DRAW2D_COPY_DEPTH), "BlitDepthRaster");
 	} else if (useCopy) {
-		draw_->CopyFramebufferImage(src->fbo, 0, 0, 0, 0, dst->fbo, 0, 0, 0, 0, w, h, 1, Draw::FB_DEPTH_BIT, "CopyFramebufferDepth");
+		draw_->CopyFramebufferImage(src->fbo, 0, 0, 0, 0, dst->fbo, 0, 0, 0, 0, w, h, 1, Draw::Aspect::DEPTH_BIT, "CopyFramebufferDepth");
 		RebindFramebuffer("After BlitFramebufferDepth");
 	} else if (useBlit) {
 		// We'll accept whether we get a separate depth blit or not...
-		draw_->BlitFramebuffer(src->fbo, 0, 0, w, h, dst->fbo, 0, 0, w, h, Draw::FB_DEPTH_BIT, Draw::FB_BLIT_NEAREST, "BlitFramebufferDepth");
+		draw_->BlitFramebuffer(src->fbo, 0, 0, w, h, dst->fbo, 0, 0, w, h, Draw::Aspect::DEPTH_BIT, Draw::FB_BLIT_NEAREST, "BlitFramebufferDepth");
 		RebindFramebuffer("After BlitFramebufferDepth");
 	}
 
@@ -1274,7 +1262,7 @@ bool FramebufferManagerCommon::BindFramebufferAsColorTexture(int stage, VirtualF
 		// TODO: Maybe merge with bvfbs_?  Not sure if those could be packing, and they're created at a different size.
 		if (currentFramebufferCopy_ && (flags & BINDFBCOLOR_UNCACHED) == 0) {
 			// We have a copy already that hasn't been invalidated, let's keep using it.
-			draw_->BindFramebufferAsTexture(currentFramebufferCopy_, stage, Draw::FB_COLOR_BIT, layer);
+			draw_->BindFramebufferAsTexture(currentFramebufferCopy_, stage, Draw::Aspect::COLOR_BIT, layer);
 			return true;
 		}
 
@@ -1286,7 +1274,7 @@ bool FramebufferManagerCommon::BindFramebufferAsColorTexture(int stage, VirtualF
 			bool partial = false;
 			CopyFramebufferForColorTexture(&copyInfo, framebuffer, flags, layer, &partial);
 			RebindFramebuffer("After BindFramebufferAsColorTexture");
-			draw_->BindFramebufferAsTexture(renderCopy, stage, Draw::FB_COLOR_BIT, layer);
+			draw_->BindFramebufferAsTexture(renderCopy, stage, Draw::Aspect::COLOR_BIT, layer);
 
 			// Only cache the copy if it wasn't a partial copy.
 			// TODO: Improve on this.
@@ -1296,11 +1284,11 @@ bool FramebufferManagerCommon::BindFramebufferAsColorTexture(int stage, VirtualF
 			gpuStats.numCopiesForSelfTex++;
 		} else {
 			// Failed to get temp FBO? Weird.
-			draw_->BindFramebufferAsTexture(framebuffer->fbo, stage, Draw::FB_COLOR_BIT, layer);
+			draw_->BindFramebufferAsTexture(framebuffer->fbo, stage, Draw::Aspect::COLOR_BIT, layer);
 		}
 		return true;
 	} else if (framebuffer != currentRenderVfb_ || (flags & BINDFBCOLOR_FORCE_SELF) != 0) {
-		draw_->BindFramebufferAsTexture(framebuffer->fbo, stage, Draw::FB_COLOR_BIT, layer);
+		draw_->BindFramebufferAsTexture(framebuffer->fbo, stage, Draw::Aspect::COLOR_BIT, layer);
 		return true;
 	} else {
 		// Here it's an error because for some reason skipCopy is true. That shouldn't really happen.
@@ -3020,7 +3008,7 @@ bool FramebufferManagerCommon::GetFramebuffer(u32 fb_address, int fb_stride, GEB
 	// TODO: Maybe should handle flipY inside CopyFramebufferToMemorySync somehow?
 	bool flipY = (GetGPUBackend() == GPUBackend::OPENGL && !useBufferedRendering_) ? true : false;
 	buffer.Allocate(w, h, GE_FORMAT_8888, flipY);
-	bool retval = draw_->CopyFramebufferToMemory(bound, Draw::FB_COLOR_BIT, 0, 0, w, h, Draw::DataFormat::R8G8B8A8_UNORM, buffer.GetData(), w, Draw::ReadbackMode::BLOCK, "GetFramebuffer");
+	bool retval = draw_->CopyFramebufferToMemory(bound, Draw::Aspect::COLOR_BIT, 0, 0, w, h, Draw::DataFormat::R8G8B8A8_UNORM, buffer.GetData(), w, Draw::ReadbackMode::BLOCK, "GetFramebuffer");
 
 	// Don't need to increment gpu stats for readback count here, this is a debugger-only function.
 
@@ -3062,7 +3050,7 @@ bool FramebufferManagerCommon::GetDepthbuffer(u32 fb_address, int fb_stride, u32
 		buffer.Allocate(w, h, GPU_DBG_FORMAT_FLOAT, flipY);
 	}
 	// No need to free on failure, that's the caller's job (it likely will reuse a buffer.)
-	bool retval = draw_->CopyFramebufferToMemory(vfb->fbo, Draw::FB_DEPTH_BIT, 0, 0, w, h, Draw::DataFormat::D32F, buffer.GetData(), w, Draw::ReadbackMode::BLOCK, "GetDepthBuffer");
+	bool retval = draw_->CopyFramebufferToMemory(vfb->fbo, Draw::Aspect::DEPTH_BIT, 0, 0, w, h, Draw::DataFormat::D32F, buffer.GetData(), w, Draw::ReadbackMode::BLOCK, "GetDepthBuffer");
 	if (!retval) {
 		// Try ReadbackDepthbufferSync, in case GLES.
 		buffer.Allocate(w, h, GPU_DBG_FORMAT_16BIT, flipY);
@@ -3102,7 +3090,7 @@ bool FramebufferManagerCommon::GetStencilbuffer(u32 fb_address, int fb_stride, G
 	bool flipY = (GetGPUBackend() == GPUBackend::OPENGL && !useBufferedRendering_) ? true : false;
 	// No need to free on failure, the caller/destructor will do that.  Usually this is a reused buffer, anyway.
 	buffer.Allocate(w, h, GPU_DBG_FORMAT_8BIT, flipY);
-	bool retval = draw_->CopyFramebufferToMemory(vfb->fbo, Draw::FB_STENCIL_BIT, 0, 0, w,h, Draw::DataFormat::S8, buffer.GetData(), w, Draw::ReadbackMode::BLOCK, "GetStencilbuffer");
+	bool retval = draw_->CopyFramebufferToMemory(vfb->fbo, Draw::Aspect::STENCIL_BIT, 0, 0, w,h, Draw::DataFormat::S8, buffer.GetData(), w, Draw::ReadbackMode::BLOCK, "GetStencilbuffer");
 	if (!retval) {
 		retval = ReadbackStencilbuffer(vfb->fbo, 0, 0, w, h, buffer.GetData(), w, Draw::ReadbackMode::BLOCK);
 	}
@@ -3122,7 +3110,7 @@ bool GetOutputFramebuffer(Draw::DrawContext *draw, GPUDebugBuffer &buffer) {
 	bool flipped = g_Config.iGPUBackend == (int)GPUBackend::OPENGL;
 
 	buffer.Allocate(w, h, fmt == Draw::DataFormat::R8G8B8A8_UNORM ? GPU_DBG_FORMAT_8888 : GPU_DBG_FORMAT_8888_BGRA, flipped);
-	return draw->CopyFramebufferToMemory(nullptr, Draw::FB_COLOR_BIT, 0, 0, w, h, fmt, buffer.GetData(), w, Draw::ReadbackMode::BLOCK, "GetOutputFramebuffer");
+	return draw->CopyFramebufferToMemory(nullptr, Draw::Aspect::COLOR_BIT, 0, 0, w, h, fmt, buffer.GetData(), w, Draw::ReadbackMode::BLOCK, "GetOutputFramebuffer");
 }
 
 bool FramebufferManagerCommon::GetOutputFramebuffer(GPUDebugBuffer &buffer) {
@@ -3184,7 +3172,7 @@ void FramebufferManagerCommon::ReadbackFramebuffer(VirtualFramebuffer *vfb, int 
 			x * vfb->renderScaleFactor, y * vfb->renderScaleFactor,
 			w * vfb->renderScaleFactor, h * vfb->renderScaleFactor, (uint16_t *)destPtr, stride, w, h, mode);
 	} else {
-		draw_->CopyFramebufferToMemory(vfb->fbo, channel == RASTER_COLOR ? Draw::FB_COLOR_BIT : Draw::FB_DEPTH_BIT, x, y, w, h, destFormat, destPtr, stride, mode, "ReadbackFramebufferSync");
+		draw_->CopyFramebufferToMemory(vfb->fbo, channel == RASTER_COLOR ? Draw::Aspect::COLOR_BIT : Draw::Aspect::DEPTH_BIT, x, y, w, h, destFormat, destPtr, stride, mode, "ReadbackFramebufferSync");
 	}
 
 	char tag[128];
@@ -3199,7 +3187,7 @@ void FramebufferManagerCommon::ReadbackFramebuffer(VirtualFramebuffer *vfb, int 
 }
 
 bool FramebufferManagerCommon::ReadbackStencilbuffer(Draw::Framebuffer *fbo, int x, int y, int w, int h, uint8_t *pixels, int pixelsStride, Draw::ReadbackMode mode) {
-	return draw_->CopyFramebufferToMemory(fbo, Draw::FB_DEPTH_BIT, x, y, w, h, Draw::DataFormat::S8, pixels, pixelsStride, mode, "ReadbackStencilbufferSync");
+	return draw_->CopyFramebufferToMemory(fbo, Draw::Aspect::DEPTH_BIT, x, y, w, h, Draw::DataFormat::S8, pixels, pixelsStride, mode, "ReadbackStencilbufferSync");
 }
 
 void FramebufferManagerCommon::ReadFramebufferToMemory(VirtualFramebuffer *vfb, int x, int y, int w, int h, RasterChannel channel, Draw::ReadbackMode mode) {
@@ -3258,7 +3246,7 @@ void FramebufferManagerCommon::FlushBeforeCopy() {
 		// all the irrelevant state checking it'll use to decide what to do. Should
 		// do something more focused here.
 		SetRenderFrameBuffer(gstate_c.IsDirty(DIRTY_FRAMEBUF), gstate_c.skipDrawReason);
-		drawEngine_->DispatchFlush();
+		drawEngine_->Flush();
 	}
 }
 
@@ -3504,14 +3492,14 @@ void FramebufferManagerCommon::BlitFramebuffer(VirtualFramebuffer *dst, int dstX
 		const bool yOverlap = src == dst && srcY2 > dstY1 && srcY1 < dstY2;
 		if (sameSize && srcInsideBounds && dstInsideBounds && !(xOverlap && yOverlap)) {
 			draw_->CopyFramebufferImage(src->fbo, 0, srcX1, srcY1, 0, dst->fbo, 0, dstX1, dstY1, 0, dstX2 - dstX1, dstY2 - dstY1, 1, 
-				channel == RASTER_COLOR ? Draw::FB_COLOR_BIT : Draw::FB_DEPTH_BIT, tag);
+				channel == RASTER_COLOR ? Draw::Aspect::COLOR_BIT : Draw::Aspect::DEPTH_BIT, tag);
 			return;
 		}
 	}
 
 	if (useBlit) {
 		draw_->BlitFramebuffer(src->fbo, srcX1, srcY1, srcX2, srcY2, dst->fbo, dstX1, dstY1, dstX2, dstY2,
-			channel == RASTER_COLOR ? Draw::FB_COLOR_BIT : Draw::FB_DEPTH_BIT, Draw::FB_BLIT_NEAREST, tag);
+			channel == RASTER_COLOR ? Draw::Aspect::COLOR_BIT : Draw::Aspect::DEPTH_BIT, Draw::FB_BLIT_NEAREST, tag);
 	} else {
 		Draw2DPipeline *pipeline = Get2DPipeline(channel == RASTER_COLOR ? DRAW2D_COPY_COLOR : DRAW2D_COPY_DEPTH);
 		Draw::Framebuffer *srcFBO = src->fbo;
@@ -3548,11 +3536,11 @@ void FramebufferManagerCommon::BlitUsingRaster(
 	draw_->BindTexture(0, nullptr);
 	// This will get optimized away in case it's already bound (in VK and GL at least..)
 	draw_->BindFramebufferAsRenderTarget(dest, { Draw::RPAction::KEEP, Draw::RPAction::KEEP, Draw::RPAction::KEEP }, tag ? tag : "BlitUsingRaster");
-	draw_->BindFramebufferAsTexture(src, 0, pipeline->info.readChannel == RASTER_COLOR ? Draw::FB_COLOR_BIT : Draw::FB_DEPTH_BIT, Draw::ALL_LAYERS);
+	draw_->BindFramebufferAsTexture(src, 0, pipeline->info.readChannel == RASTER_COLOR ? Draw::Aspect::COLOR_BIT : Draw::Aspect::DEPTH_BIT, Draw::ALL_LAYERS);
 
 	if (destX1 == 0.0f && destY1 == 0.0f && destX2 >= destW && destY2 >= destH) {
 		// We overwrite the whole channel of the framebuffer, so we can invalidate the current contents.
-		draw_->InvalidateFramebuffer(Draw::FB_INVALIDATION_LOAD, pipeline->info.writeChannel == RASTER_COLOR ? Draw::FB_COLOR_BIT : Draw::FB_DEPTH_BIT);
+		draw_->InvalidateFramebuffer(Draw::FB_INVALIDATION_LOAD, pipeline->info.writeChannel == RASTER_COLOR ? Draw::Aspect::COLOR_BIT : Draw::Aspect::DEPTH_BIT);
 	}
 
 	Draw::Viewport viewport{ 0.0f, 0.0f, (float)dest->Width(), (float)dest->Height(), 0.0f, 1.0f };
@@ -3712,7 +3700,7 @@ void FramebufferManagerCommon::DrawImGuiDebug(int &selected) const {
 	if (selected != -1) {
 		// Now, draw the image of the selected framebuffer.
 		Draw::Framebuffer *fb = vfbs_[selected]->fbo;
-		ImTextureID texId = ImGui_ImplThin3d_AddFBAsTextureTemp(fb, Draw::FB_COLOR_BIT, ImGuiPipeline::TexturedOpaque);
+		ImTextureID texId = ImGui_ImplThin3d_AddFBAsTextureTemp(fb, Draw::Aspect::COLOR_BIT, ImGuiPipeline::TexturedOpaque);
 		ImGui::Image(texId, ImVec2(fb->Width(), fb->Height()));
 	}
 }

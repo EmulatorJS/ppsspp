@@ -186,10 +186,6 @@ static std::map<SystemPermission, PermissionStatus> permissions;
 
 static AndroidGraphicsContext *graphicsContext;
 
-#ifndef LOG_APP_NAME
-#define LOG_APP_NAME "PPSSPP"
-#endif
-
 #define MessageBox(a, b, c, d) __android_log_print(ANDROID_LOG_INFO, APP_NAME, "%s %s", (b), (c));
 
 #if PPSSPP_ARCH(ARMV7)
@@ -202,44 +198,6 @@ int utimensat(int fd, const char *path, const struct timespec times[2]) {
 #endif
 
 static void ProcessFrameCommands(JNIEnv *env);
-
-void AndroidLogger::Log(const LogMessage &message) {
-	int mode;
-	switch (message.level) {
-	case LogLevel::LWARNING:
-		mode = ANDROID_LOG_WARN;
-		break;
-	case LogLevel::LERROR:
-		mode = ANDROID_LOG_ERROR;
-		break;
-	default:
-		mode = ANDROID_LOG_INFO;
-		break;
-	}
-
-	// Long log messages need splitting up.
-	// Not sure what the actual limit is (seems to vary), but let's be conservative.
-	const size_t maxLogLength = 512;
-	if (message.msg.length() < maxLogLength) {
-		// Log with simplified headers as Android already provides timestamp etc.
-		__android_log_print(mode, LOG_APP_NAME, "[%s] %s", message.log, message.msg.c_str());
-	} else {
-		std::string msg = message.msg;
-
-		// Ideally we should split at line breaks, but it's at least fairly usable anyway.
-		std::string first_part = msg.substr(0, maxLogLength);
-		__android_log_print(mode, LOG_APP_NAME, "[%s] %s", message.log, first_part.c_str());
-		msg = msg.substr(maxLogLength);
-
-		while (msg.length() > maxLogLength) {
-			std::string first_part = msg.substr(0, maxLogLength);
-			__android_log_print(mode, LOG_APP_NAME, "%s", first_part.c_str());
-			msg = msg.substr(maxLogLength);
-		}
-		// Print the final part.
-		__android_log_print(mode, LOG_APP_NAME, "%s", msg.c_str());
-	}
-}
 
 JNIEnv* getEnv() {
 	JNIEnv *env;
@@ -1290,6 +1248,8 @@ extern "C" void Java_org_ppsspp_ppsspp_NativeApp_joystickAxis(
 	}
 	NativeAxis(axis, count);
 	delete[] axis;
+	env->ReleaseIntArrayElements(axisIds, axisIdBuffer, JNI_ABORT);  // ABORT just means we don't want changes copied back!
+	env->ReleaseFloatArrayElements(values, valueBuffer, JNI_ABORT);  // ABORT just means we don't want changes copied back!
 }
 
 extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_mouseWheelEvent(

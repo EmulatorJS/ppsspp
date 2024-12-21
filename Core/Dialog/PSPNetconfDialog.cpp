@@ -16,7 +16,6 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include <algorithm>
-#include "Common/CommonWindows.h"
 #include "Common/TimeUtil.h"
 #include "Common/Data/Text/I18n.h"
 #include "Common/Serialize/Serializer.h"

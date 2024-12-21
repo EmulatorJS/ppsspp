@@ -23,7 +23,6 @@
 #include "GPU/Common/FramebufferManagerCommon.h"
 #include "GPU/Common/GPUStateUtils.h"
 #include "GPU/Common/PresentationCommon.h"
-#include "GPU/Common/TextureDecoder.h"
 #include "GPU/Directx9/FramebufferManagerDX9.h"
 
 FramebufferManagerDX9::FramebufferManagerDX9(Draw::DrawContext *draw)
@@ -39,7 +38,7 @@ bool FramebufferManagerDX9::ReadbackDepthbuffer(Draw::Framebuffer *fbo, int x, i
 	}
 
 	// We always read the depth buffer in 24_8 format.
-	LPDIRECT3DTEXTURE9 tex = (LPDIRECT3DTEXTURE9)draw_->GetFramebufferAPITexture(fbo, Draw::FB_DEPTH_BIT, 0);
+	LPDIRECT3DTEXTURE9 tex = (LPDIRECT3DTEXTURE9)draw_->GetFramebufferAPITexture(fbo, Draw::Aspect::DEPTH_BIT, 0);
 	if (!tex)
 		return false;
 

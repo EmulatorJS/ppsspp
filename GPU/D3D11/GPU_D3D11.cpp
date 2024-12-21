@@ -18,20 +18,10 @@
 #include <string>
 
 #include "Common/Log.h"
-#include "Common/Serialize/Serializer.h"
 #include "Common/GraphicsContext.h"
-#include "Common/System/System.h"
 #include "Common/Profiler/Profiler.h"
-#include "Common/Data/Text/I18n.h"
-#include "Core/Debugger/Breakpoints.h"
-#include "Core/MemMapHelpers.h"
-#include "Core/MIPS/MIPS.h"
-#include "Core/Config.h"
-#include "Core/System.h"
 
 #include "GPU/GPUState.h"
-#include "GPU/ge_constants.h"
-#include "GPU/GeDisasm.h"
 
 #include "GPU/Common/FramebufferManagerCommon.h"
 #include "GPU/D3D11/ShaderManagerD3D11.h"
@@ -58,6 +48,7 @@ GPU_D3D11::GPU_D3D11(GraphicsContext *gfxCtx, Draw::DrawContext *draw)
 	textureCache_ = textureCacheD3D11_;
 	drawEngineCommon_ = &drawEngine_;
 	shaderManager_ = shaderManagerD3D11_;
+	drawEngine_.SetGPUCommon(this);
 	drawEngine_.SetShaderManager(shaderManagerD3D11_);
 	drawEngine_.SetTextureCache(textureCacheD3D11_);
 	drawEngine_.SetFramebufferManager(framebufferManagerD3D11_);

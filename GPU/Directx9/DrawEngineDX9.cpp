@@ -19,16 +19,9 @@
 #include <wrl/client.h>
 
 #include "Common/Log.h"
-#include "Common/MemoryUtil.h"
-#include "Common/TimeUtil.h"
-#include "Core/MemMap.h"
-#include "Core/System.h"
-#include "Core/Config.h"
-#include "Core/CoreTiming.h"
 
 #include "Common/GPU/D3D9/D3D9StateCache.h"
 
-#include "GPU/Math3D.h"
 #include "GPU/GPUState.h"
 #include "GPU/ge_constants.h"
 
@@ -36,11 +29,10 @@
 #include "GPU/Common/TransformCommon.h"
 #include "GPU/Common/VertexDecoderCommon.h"
 #include "GPU/Common/SoftwareTransformCommon.h"
-#include "GPU/Debugger/Debugger.h"
 #include "GPU/Directx9/TextureCacheDX9.h"
 #include "GPU/Directx9/DrawEngineDX9.h"
 #include "GPU/Directx9/ShaderManagerDX9.h"
-#include "GPU/Directx9/GPU_DX9.h"
+#include "GPU/Directx9/FramebufferManagerDX9.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -111,7 +103,6 @@ void DrawEngineDX9::DestroyDeviceObjects() {
 	if (draw_) {
 		draw_->SetInvalidationCallback(InvalidationCallback());
 	}
-	ClearTrackedVertexArrays();
 }
 
 struct DeclTypeInfo {
@@ -219,6 +210,7 @@ static uint32_t SwapRB(uint32_t c) {
 }
 
 void DrawEngineDX9::BeginFrame() {
+	DrawEngineCommon::BeginFrame();
 	lastRenderStepId_ = -1;
 }
 
@@ -229,8 +221,10 @@ void DrawEngineDX9::Invalidate(InvalidationCallbackFlags flags) {
 	}
 }
 
-// The inline wrapper in the header checks for numDrawCalls_ == 0
-void DrawEngineDX9::DoFlush() {
+void DrawEngineDX9::Flush() {
+	if (!numDrawVerts_) {
+		return;
+	}
 	bool textureNeedsApply = false;
 	if (gstate_c.IsDirty(DIRTY_TEXTURE_IMAGE | DIRTY_TEXTURE_PARAMS) && !gstate.isModeClear() && gstate.isTextureMapEnabled()) {
 		textureCache_->SetTexture();
@@ -254,7 +248,7 @@ void DrawEngineDX9::DoFlush() {
 		int vertexCount;
 		int maxIndex;
 		bool useElements;
-		DecodeVerts(decoded_);
+		DecodeVerts(dec_, decoded_);
 		DecodeIndsAndGetData(&prim, &vertexCount, &maxIndex, &useElements, false);
 		gpuStats.numUncachedVertsDrawn += vertexCount;
 
@@ -274,7 +268,7 @@ void DrawEngineDX9::DoFlush() {
 		ApplyDrawState(prim);
 		ApplyDrawStateLate();
 
-		VSShader *vshader = shaderManager_->ApplyShader(true, useHWTessellation_, dec_, decOptions_.expandAllWeightsToFloat, decOptions_.applySkinInDecode, pipelineState_);
+		VSShader *vshader = shaderManager_->ApplyShader(true, useHWTessellation_, dec_, decOptions_.expandAllWeightsToFloat, applySkinInDecode_, pipelineState_);
 		ComPtr<IDirect3DVertexDeclaration9> pHardwareVertexDecl;
 		SetupDecFmtForDraw(dec_->GetDecVtxFmt(), dec_->VertexType(), &pHardwareVertexDecl);
 
@@ -299,12 +293,14 @@ void DrawEngineDX9::DoFlush() {
 			}
 		}
 	} else {
-		if (!decOptions_.applySkinInDecode) {
-			decOptions_.applySkinInDecode = true;
-			lastVType_ |= (1 << 26);
-			dec_ = GetVertexDecoder(lastVType_);
+		VertexDecoder *swDec = dec_;
+		if (swDec->nweights != 0) {
+			u32 withSkinning = lastVType_ | (1 << 26);
+			if (withSkinning != lastVType_) {
+				swDec = GetVertexDecoder(withSkinning);
+			}
 		}
-		DecodeVerts(decoded_);
+		DecodeVerts(swDec, decoded_);
 		int vertexCount = DecodeInds();
 
 		bool hasColor = (lastVType_ & GE_VTYPE_COL_MASK) != GE_VTYPE_COL_NONE;
@@ -359,7 +355,7 @@ void DrawEngineDX9::DoFlush() {
 		const Lin::Vec3 scale(gstate_c.vpWidthScale, gstate_c.vpHeightScale, gstate_c.vpDepthScale * 0.5f);
 		swTransform.SetProjMatrix(gstate.projMatrix, gstate_c.vpWidth < 0, gstate_c.vpHeight > 0, trans, scale);
 
-		swTransform.Transform(prim, dec_->VertexType(), dec_->GetDecVtxFmt(), numDecodedVerts_, &result);
+		swTransform.Transform(prim, swDec->VertexType(), swDec->GetDecVtxFmt(), numDecodedVerts_, &result);
 		// Non-zero depth clears are unusual, but some drivers don't match drawn depth values to cleared values.
 		// Games sometimes expect exact matches (see #12626, for example) for equal comparisons.
 		if (result.action == SW_CLEAR && everUsedEqualDepth_ && gstate.isClearModeDepthMask() && result.depth > 0.0f && result.depth < 1.0f)
@@ -374,13 +370,13 @@ void DrawEngineDX9::DoFlush() {
 		ApplyDrawState(prim);
 
 		if (result.action == SW_NOT_READY)
-			swTransform.BuildDrawingParams(prim, vertexCount, dec_->VertexType(), inds, RemainingIndices(inds), numDecodedVerts_, VERTEX_BUFFER_MAX, &result);
+			swTransform.BuildDrawingParams(prim, vertexCount, swDec->VertexType(), inds, RemainingIndices(inds), numDecodedVerts_, VERTEX_BUFFER_MAX, &result);
 		if (result.setSafeSize)
 			framebufferManager_->SetSafeSize(result.safeWidth, result.safeHeight);
 
 		ApplyDrawStateLate();
 
-		VSShader *vshader = shaderManager_->ApplyShader(false, false, dec_, decOptions_.expandAllWeightsToFloat, true, pipelineState_);
+		VSShader *vshader = shaderManager_->ApplyShader(false, false, swDec, decOptions_.expandAllWeightsToFloat, true, pipelineState_);
 
 		if (result.action == SW_DRAW_INDEXED) {
 			if (result.setStencil) {
@@ -402,10 +398,6 @@ void DrawEngineDX9::DoFlush() {
 			if (gstate.isClearModeAlphaMask()) mask |= D3DCLEAR_STENCIL;
 			if (gstate.isClearModeDepthMask()) mask |= D3DCLEAR_ZBUFFER;
 
-			if (mask & D3DCLEAR_TARGET) {
-				framebufferManager_->SetColorUpdated(gstate_c.skipDrawReason);
-			}
-
 			device_->Clear(0, NULL, mask, SwapRB(clearColor), clearDepth, clearColor >> 24);
 
 			if (gstate_c.Use(GPU_USE_CLEAR_RAM_HACK) && gstate.isClearModeColorMask() && (gstate.isClearModeAlphaMask() || gstate_c.framebufFormat == GE_FORMAT_565)) {
@@ -416,12 +408,11 @@ void DrawEngineDX9::DoFlush() {
 				framebufferManager_->ApplyClearToMemory(scissorX1, scissorY1, scissorX2, scissorY2, clearColor);
 			}
 		}
-		decOptions_.applySkinInDecode = g_Config.bSoftwareSkinning;
 	}
 
 	ResetAfterDrawInline();
 	framebufferManager_->SetColorUpdated(gstate_c.skipDrawReason);
-	GPUDebug::NotifyFlush();
+	gpuCommon_->NotifyFlush();
 }
 
 void TessellationDataTransferDX9::SendDataToShader(const SimpleVertex *const *points, int size_u, int size_v, u32 vertType, const Spline::Weight2D &weights) {

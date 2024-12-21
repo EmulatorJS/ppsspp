@@ -79,27 +79,12 @@ public:
 	void DeviceLost() override;
 	void DeviceRestore(Draw::DrawContext *draw) override;
 
-	void ClearTrackedVertexArrays() override {}
-
-	void BeginFrame();
+	void BeginFrame() override;
 	void EndFrame();
 
 	// So that this can be inlined
-	void Flush() {
-		if (!numDrawVerts_)
-			return;
-		DoFlush();
-	}
-
+	void Flush() override;
 	void FinishDeferred() {
-		if (!numDrawVerts_)
-			return;
-		DoFlush();
-	}
-
-	void DispatchFlush() override {
-		if (!numDrawVerts_)
-			return;
 		Flush();
 	}
 
@@ -116,7 +101,6 @@ private:
 	void InitDeviceObjects();
 	void DestroyDeviceObjects();
 
-	void DoFlush();
 	void ApplyDrawState(int prim);
 	void ApplyDrawStateLate(bool setStencil, int stencilValue);
 

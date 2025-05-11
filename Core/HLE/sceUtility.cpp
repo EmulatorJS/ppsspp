@@ -27,6 +27,7 @@
 #include "Core/Config.h"
 #include "Core/CoreTiming.h"
 #include "Core/HLE/HLE.h"
+#include "Core/HLE/ErrorCodes.h"
 #include "Core/HLE/HLEHelperThread.h"
 #include "Core/HLE/FunctionWrappers.h"
 #include "Core/MIPS/MIPS.h"
@@ -40,7 +41,9 @@
 #include "Core/HLE/sceKernelMemory.h"
 #include "Core/HLE/sceKernelThread.h"
 #include "Core/HLE/scePower.h"
+#include "Core/HLE/sceAtrac.h"
 #include "Core/HLE/sceUtility.h"
+#include "Core/HLE/sceNet.h"
 
 #include "Core/Dialog/PSPSaveDialog.h"
 #include "Core/Dialog/PSPMsgDialog.h"
@@ -66,11 +69,6 @@
 #define PSP_USB_MODULE_CAM 4 // Requires PSP_USB_MODULE_ACC loading first
 #define PSP_USB_MODULE_GPS 5 // Requires PSP_USB_MODULE_ACC loading first
 
-const int SCE_ERROR_MODULE_BAD_ID = 0x80111101;
-const int SCE_ERROR_MODULE_ALREADY_LOADED = 0x80111102;
-const int SCE_ERROR_MODULE_NOT_LOADED = 0x80111103;
-const int SCE_ERROR_AV_MODULE_BAD_ID = 0x80110F01;
-
 static const int noDeps[] = {0};
 static const int httpModuleDeps[] = {0x0102, 0x0103, 0x0104, 0};
 static const int sslModuleDeps[] = {0x0102, 0};
@@ -79,55 +77,74 @@ static const int atrac3PlusModuleDeps[] = {0x0300, 0};
 static const int mpegBaseModuleDeps[] = {0x0300, 0};
 static const int mp4ModuleDeps[] = {0x0300, 0};
 
-struct ModuleLoadInfo {
-	ModuleLoadInfo(int m, u32 s, void(*n)(int) = nullptr) : mod(m), size(s), dependencies(noDeps), notify(n) {
-	}
-	ModuleLoadInfo(int m, u32 s, const int *d, void(*n)(int) = nullptr) : mod(m), size(s), dependencies(d), notify(n) {
-	}
-
-	const int mod;
-	const u32 size;
-	const int *const dependencies;
-	void (*notify)(int state);
-};
-
-static void NotifyLoadStatusAvcodec(int state) {
+static void NotifyLoadStatusAvcodec(int state, u32 loadAddr, u32 totalSize) {
 	JpegNotifyLoadStatus(state);
 }
 
+static void NotifyLoadStatusAtrac(int state, u32 loadAddr, u32 totalSize) {
+	if (state == 1) {
+		// If HLE of sceAtrac is disabled, things will break!
+		// For now we do angry logging and a debug assert.
+		if ((DisableHLEFlags)g_Config.iDisableHLE & DisableHLEFlags::sceAtrac) {
+			ERROR_LOG(Log::ME, "sceAtrac HLE is disabled, and the game tries to load sceAtrac from firmware - this won't work!");
+			_dbg_assert_(false);
+
+			// Actually, if the user has an F0 (psardumper) dump, we could go look for the file there.
+		}
+
+		// We try to imitate a recent version of the prx.
+		// Let's just give it a piece of the space.
+		constexpr int version = 0x105;  // latest.
+		constexpr int bssSize = 0x67C;
+		_dbg_assert_(bssSize <= totalSize);
+		__AtracNotifyLoadModule(version, 0, loadAddr, bssSize);
+	} else if (state == -1) {
+		// Unload.
+		__AtracNotifyUnloadModule();
+	}
+}
+
+ModuleLoadInfo::ModuleLoadInfo(int m, u32 s, const char *_name, ModuleLoadCallback n)
+	: name(_name), mod(m), size(s), dependencies(noDeps), notify(n) {}
+ModuleLoadInfo::ModuleLoadInfo(int m, u32 s, const char *_name, const int *d, ModuleLoadCallback n)
+	: name(_name), mod(m), size(s), dependencies(d), notify(n) {}
+
+// Not sure if these have official names, or if there's a mapping exactly to HLE modules.
 static const ModuleLoadInfo moduleLoadInfo[] = {
-	ModuleLoadInfo(0x0100, 0x00014000),
-	ModuleLoadInfo(0x0101, 0x00020000),
-	ModuleLoadInfo(0x0102, 0x00058000),
-	ModuleLoadInfo(0x0103, 0x00006000),
-	ModuleLoadInfo(0x0104, 0x00002000),
-	ModuleLoadInfo(0x0105, 0x00028000, httpModuleDeps),
-	ModuleLoadInfo(0x0106, 0x00044000, sslModuleDeps),
-	ModuleLoadInfo(0x0107, 0x00010000),
-	ModuleLoadInfo(0x0108, 0x00008000, httpStorageModuleDeps),
-	ModuleLoadInfo(0x0200, 0x00000000),
-	ModuleLoadInfo(0x0201, 0x00000000),
-	ModuleLoadInfo(0x0202, 0x00000000),
-	ModuleLoadInfo(0x0203, 0x00000000),
-	ModuleLoadInfo(0x02ff, 0x00000000),
-	ModuleLoadInfo(0x0300, 0x00000000, &NotifyLoadStatusAvcodec),
-	ModuleLoadInfo(0x0301, 0x00000000),
-	ModuleLoadInfo(0x0302, 0x00008000, atrac3PlusModuleDeps),
-	ModuleLoadInfo(0x0303, 0x0000c000, mpegBaseModuleDeps),
-	ModuleLoadInfo(0x0304, 0x00004000),
-	ModuleLoadInfo(0x0305, 0x0000a300),
-	ModuleLoadInfo(0x0306, 0x00004000),
-	ModuleLoadInfo(0x0307, 0x00000000),
-	ModuleLoadInfo(0x0308, 0x0003c000, mp4ModuleDeps),
-	ModuleLoadInfo(0x03fe, 0x00000000),
-	ModuleLoadInfo(0x03ff, 0x00000000),
-	ModuleLoadInfo(0x0400, 0x0000c000),
-	ModuleLoadInfo(0x0401, 0x00018000),
-	ModuleLoadInfo(0x0402, 0x00048000),
-	ModuleLoadInfo(0x0403, 0x0000e000),
-	ModuleLoadInfo(0x0500, 0x00000000),
-	ModuleLoadInfo(0x0600, 0x00000000),
-	ModuleLoadInfo(0x0601, 0x00000000),
+	ModuleLoadInfo(0x100, 0x00014000, "net_common"),
+	ModuleLoadInfo(0x101, 0x00020000, "net_adhoc"),
+	ModuleLoadInfo(0x102, 0x00058000, "net_inet"),
+	ModuleLoadInfo(0x103, 0x00006000, "net_parse_uri"),
+	ModuleLoadInfo(0x104, 0x00002000, "net_parse_http"),
+	ModuleLoadInfo(0x105, 0x00028000, "net_http", httpModuleDeps),
+	ModuleLoadInfo(0x106, 0x00044000, "net_ssl", sslModuleDeps),
+	ModuleLoadInfo(0x107, 0x00010000, "unk_0x107"),
+	ModuleLoadInfo(0x108, 0x00008000, "usb_pspcm", httpStorageModuleDeps),
+	ModuleLoadInfo(0x200, 0x00000000, "usb_mic"),
+	ModuleLoadInfo(0x201, 0x00000000, "usb_cam"),
+	ModuleLoadInfo(0x202, 0x00000000, "usb_gps"),
+	ModuleLoadInfo(0x203, 0x00000000, "usb_unk_0x203"),
+	ModuleLoadInfo(0x2ff, 0x00000000, "unk_0x2ff"),
+	ModuleLoadInfo(0x300, 0x00000000, "av_avcodec", &NotifyLoadStatusAvcodec),  // AudioCodec
+	ModuleLoadInfo(0x301, 0x00000000, "av_sascore"),
+	// The size varies a bit per version, from about 0x3C00 to 0x4500 bytes. We could make a lookup table...
+	// Changing this breaks some bad cheats though..
+	ModuleLoadInfo(0x302, 0x00008000, "av_atrac3plus", atrac3PlusModuleDeps, &NotifyLoadStatusAtrac),
+	ModuleLoadInfo(0x303, 0x0000c000, "av_mpegbase", mpegBaseModuleDeps),
+	ModuleLoadInfo(0x304, 0x00004000, "av_mp3"),
+	ModuleLoadInfo(0x305, 0x0000a300, "av_vaudio"),
+	ModuleLoadInfo(0x306, 0x00004000, "av_aac"),
+	ModuleLoadInfo(0x307, 0x00000000, "av_g729"),
+	ModuleLoadInfo(0x308, 0x0003c000, "av_mp4", mp4ModuleDeps),
+	ModuleLoadInfo(0x3fe, 0x00000000, "me_stuff"),
+	ModuleLoadInfo(0x3ff, 0x00000000, "me_core"),  // ME Core?
+	ModuleLoadInfo(0x400, 0x0000c000, "np_common"),
+	ModuleLoadInfo(0x401, 0x00018000, "np_service"),
+	ModuleLoadInfo(0x402, 0x00048000, "np_matching2"),
+	ModuleLoadInfo(0x403, 0x0000e000, "np_unk_0x403"),
+	ModuleLoadInfo(0x500, 0x00000000, "np_drm"),
+	ModuleLoadInfo(0x600, 0x00000000, "irda"),
+	ModuleLoadInfo(0x601, 0x00000000, "unk_0x601"),
 };
 
 // Only a single dialog is allowed at a time.
@@ -148,6 +165,7 @@ static HLEHelperThread *accessThread = nullptr;
 static bool accessThreadFinished = true;
 static const char *accessThreadState = "initial";
 static int lastSaveStateVersion = -1;
+static int netParamLatestId = 1;
 
 static void CleanupDialogThreads(bool force = false) {
 	if (accessThread) {
@@ -230,6 +248,8 @@ void __UtilityInit() {
 	SavedataParam::Init();
 	currentlyLoadedModules.clear();
 	volatileUnlockEvent = CoreTiming::RegisterEvent("UtilityVolatileUnlock", UtilityVolatileUnlock);
+
+	ResetSecondsSinceLastGameSave();
 }
 
 void __UtilityDoState(PointerWrap &p) {
@@ -390,11 +410,11 @@ static int UtilityWorkUs(int us) {
 	// Simulate this by allowing a reschedule.
 	if (us > 1000) {
 		hleEatMicro(1000);
-		return hleDelayResult(0, "utility work", us - 1000);
+		return hleDelayResult(hleNoLog(0), "utility work", us - 1000);
 	}
 	hleEatMicro(us);
 	hleReSchedule("utility work");
-	return 0;
+	return hleNoLog(0);
 }
 
 static int UtilityInitDialog(int type) {
@@ -402,7 +422,7 @@ static int UtilityInitDialog(int type) {
 	accessThreadFinished = true;
 	accessThreadState = "init finished";
 	if (dialog)
-		return hleLogSuccessI(Log::sceUtility, dialog->FinishInit());
+		return hleLogDebug(Log::sceUtility, dialog->FinishInit());
 	return hleLogError(Log::sceUtility, 0, "invalid dialog type?");
 }
 
@@ -411,7 +431,7 @@ static int UtilityFinishDialog(int type) {
 	accessThreadFinished = true;
 	accessThreadState = "shutdown finished";
 	if (dialog)
-		return hleLogSuccessI(Log::sceUtility, dialog->FinishShutdown());
+		return hleLogDebug(Log::sceUtility, dialog->FinishShutdown());
 	return hleLogError(Log::sceUtility, 0, "invalid dialog type?");
 }
 
@@ -434,7 +454,7 @@ static int sceUtilitySavedataInitStart(u32 paramAddr) {
 	}
 
 	ActivateDialog(UtilityDialogType::SAVEDATA);
-	return hleLogSuccessX(Log::sceUtility, saveDialog->Init(paramAddr));
+	return hleLogDebug(Log::sceUtility, saveDialog->Init(paramAddr));
 }
 
 static int sceUtilitySavedataShutdownStart() {
@@ -444,7 +464,7 @@ static int sceUtilitySavedataShutdownStart() {
 	DeactivateDialog();
 	int ret = saveDialog->Shutdown();
 	hleEatCycles(30000);
-	return hleLogSuccessX(Log::sceUtility, ret);
+	return hleLogDebug(Log::sceUtility, ret);
 }
 
 static int sceUtilitySavedataGetStatus() {
@@ -458,9 +478,9 @@ static int sceUtilitySavedataGetStatus() {
 	CleanupDialogThreads();
 	if (oldStatus != status) {
 		oldStatus = status;
-		return hleLogSuccessI(Log::sceUtility, status);
+		return hleLogDebug(Log::sceUtility, status);
 	}
-	return hleLogSuccessVerboseI(Log::sceUtility, status);
+	return hleLogVerbose(Log::sceUtility, status);
 }
 
 static int sceUtilitySavedataUpdate(int animSpeed) {
@@ -468,35 +488,13 @@ static int sceUtilitySavedataUpdate(int animSpeed) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
 	
-	int result = hleLogSuccessI(Log::sceUtility, saveDialog->Update(animSpeed));
+	int result = hleLogDebug(Log::sceUtility, saveDialog->Update(animSpeed));
 	if (result >= 0)
 		return hleDelayResult(result, "savedata update", 300);
 	return result;
 }
 
-static u32 sceUtilityLoadAvModule(u32 module)
-{
-	if (module > 7)
-	{
-		ERROR_LOG_REPORT(Log::sceUtility, "sceUtilityLoadAvModule(%i): invalid module id", module);
-		return SCE_ERROR_AV_MODULE_BAD_ID;
-	}
-	
-	INFO_LOG(Log::sceUtility, "0=sceUtilityLoadAvModule(%i)", module);
-	if (module == 0)
-		JpegNotifyLoadStatus(1);
-	return hleDelayResult(0, "utility av module loaded", 25000);
-}
-
-static u32 sceUtilityUnloadAvModule(u32 module)
-{
-	INFO_LOG(Log::sceUtility,"0=sceUtilityUnloadAvModule(%i)", module);
-	if (module == 0)
-		JpegNotifyLoadStatus(-1);
-	return hleDelayResult(0, "utility av module unloaded", 800);
-}
-
-static const ModuleLoadInfo *__UtilityModuleInfo(int module) {
+const ModuleLoadInfo *__UtilityModuleInfo(int module) {
 	const ModuleLoadInfo *info = 0;
 	for (size_t i = 0; i < ARRAY_SIZE(moduleLoadInfo); ++i) {
 		if (moduleLoadInfo[i].mod == module) {
@@ -507,64 +505,119 @@ static const ModuleLoadInfo *__UtilityModuleInfo(int module) {
 	return info;
 }
 
+const std::map<int, u32> &__UtilityGetLoadedModules() {
+	return currentlyLoadedModules;
+}
+
+bool __UtilityModuleGetMemoryRange(int moduleID, u32 *startPtr, u32 *sizePtr) {
+	const ModuleLoadInfo *info = __UtilityModuleInfo(moduleID);
+	if (!info) {
+		return false;
+	}
+	*sizePtr = info->size;
+	auto iter = currentlyLoadedModules.find(moduleID);
+	if (iter == currentlyLoadedModules.end()) {
+		return false;
+	}
+	*startPtr = iter->second;
+	return true;
+}
+
+static int LoadModuleInternal(u32 module);
+static int UnloadModuleInternal(u32 module);
+
+// Same as sceUtilityLoadModule, just limited in categories.
+// It seems this just loads module 0x300 + module & 0xFF..
+static u32 sceUtilityLoadAvModule(u32 module) {
+	if (module > 7) {
+		ERROR_LOG_REPORT(Log::sceUtility, "sceUtilityLoadAvModule(%i): invalid module id", module);
+		return hleLogError(Log::sceUtility, SCE_ERROR_AV_MODULE_BAD_ID);
+	}
+
+	int result = LoadModuleInternal(0x300 | module);
+	return hleDelayResult(hleLogDebugOrError(Log::sceUtility, result), "utility av module loaded", 25000);
+}
+
+static u32 sceUtilityUnloadAvModule(u32 module) {
+	if (module > 7) {
+		ERROR_LOG_REPORT(Log::sceUtility, "sceUtilityLoadAvModule(%i): invalid module id", module);
+		return hleLogError(Log::sceUtility, SCE_ERROR_AV_MODULE_BAD_ID);
+	}
+
+	int result = UnloadModuleInternal(0x300 | module);
+	return hleDelayResult(hleLogDebugOrError(Log::sceUtility, result), "utility av module unloaded", 800);
+}
+
 static u32 sceUtilityLoadModule(u32 module) {
+	int result = LoadModuleInternal(module);
+	// TODO: Each module has its own timing, technically, but this is a low-end.
+	if (module == 0x3FF) {
+		return hleDelayResult(hleLogDebugOrError(Log::sceUtility, result), "utility module loaded", 130);
+	} else {
+		return hleDelayResult(hleLogDebugOrError(Log::sceUtility, result), "utility module loaded", 25000);
+	}
+}
+
+static u32 sceUtilityUnloadModule(u32 module) {
+	int result = UnloadModuleInternal(module);
+	// TODO: Each module has its own timing, technically, but this is a low-end.
+	if (module == 0x3FF) {
+		return hleDelayResult(hleLogDebugOrError(Log::sceUtility, result), "utility module unloaded", 110);
+	} else {
+		return hleDelayResult(hleLogDebugOrError(Log::sceUtility, result), "utility module unloaded", 400);
+	}
+}
+
+static int LoadModuleInternal(u32 module) {
 	const ModuleLoadInfo *info = __UtilityModuleInfo(module);
 	if (!info) {
-		return hleReportError(Log::sceUtility, SCE_ERROR_MODULE_BAD_ID, "invalid module id");
+		return SCE_ERROR_MODULE_BAD_ID;
 	}
+
 	if (currentlyLoadedModules.find(module) != currentlyLoadedModules.end()) {
-		return hleLogError(Log::sceUtility, SCE_ERROR_MODULE_ALREADY_LOADED, "already loaded");
+		return SCE_ERROR_MODULE_ALREADY_LOADED;
 	}
 
 	// Some games, like Kamen Rider Climax Heroes OOO, require an error if dependencies aren't loaded yet.
 	for (const int *dep = info->dependencies; *dep != 0; ++dep) {
 		if (currentlyLoadedModules.find(*dep) == currentlyLoadedModules.end()) {
-			u32 result = hleLogError(Log::sceUtility, SCE_KERNEL_ERROR_LIBRARY_NOTFOUND, "dependent module %04x not loaded", *dep);
-			return hleDelayResult(result, "utility module load attempt", 25000);
+			return SCE_KERNEL_ERROR_LIBRARY_NOTFOUND;
 		}
 	}
 
 	u32 allocSize = info->size;
-	char name[64];
-	snprintf(name, sizeof(name), "UtilityModule/%x", module);
+	u32 address = 0;
+	char name[128];
+	snprintf(name, sizeof(name), "UtilityModule/%3x_%s", module, info->name);
 	if (allocSize != 0) {
-		currentlyLoadedModules[module] = userMemory.Alloc(allocSize, false, name);
-	} else {
-		currentlyLoadedModules[module] = 0;
+		address = userMemory.Alloc(allocSize, false, name);
 	}
-
-	if (info->notify)
-		info->notify(1);
-
-	// TODO: Each module has its own timing, technically, but this is a low-end.
-	if (module == 0x3FF)
-		return hleDelayResult(hleLogSuccessInfoI(Log::sceUtility, 0), "utility module loaded", 130);
-	else
-		return hleDelayResult(hleLogSuccessInfoI(Log::sceUtility, 0), "utility module loaded", 25000);
+	currentlyLoadedModules[module] = address;
+	if (info->notify) {
+		info->notify(1, address, allocSize);
+	}
+	return 0;
 }
 
-static u32 sceUtilityUnloadModule(u32 module) {
+static int UnloadModuleInternal(u32 module) {
 	const ModuleLoadInfo *info = __UtilityModuleInfo(module);
 	if (!info) {
-		return hleReportError(Log::sceUtility, SCE_ERROR_MODULE_BAD_ID, "invalid module id");
+		return SCE_ERROR_MODULE_BAD_ID;
 	}
 
-	if (currentlyLoadedModules.find(module) == currentlyLoadedModules.end()) {
-		return hleLogWarning(Log::sceUtility, SCE_ERROR_MODULE_NOT_LOADED, "not yet loaded");
+	auto iter = currentlyLoadedModules.find(module);
+	if (iter == currentlyLoadedModules.end()) {
+		return SCE_ERROR_MODULE_NOT_LOADED;
 	}
-	if (currentlyLoadedModules[module] != 0) {
-		userMemory.Free(currentlyLoadedModules[module]);
+	if (iter->second != 0) {
+		userMemory.Free(iter->second);
 	}
 	currentlyLoadedModules.erase(module);
 
-	if (info->notify)
-		info->notify(-1);
-
-	// TODO: Each module has its own timing, technically, but this is a low-end.
-	if (module == 0x3FF)
-		return hleDelayResult(hleLogSuccessInfoI(Log::sceUtility, 0), "utility module unloaded", 110);
-	else
-		return hleDelayResult(hleLogSuccessInfoI(Log::sceUtility, 0), "utility module unloaded", 400);
+	if (info->notify) {
+		info->notify(-1, 0, 0);
+	}
+	return 0;
 }
 
 static int sceUtilityMsgDialogInitStart(u32 paramAddr) {
@@ -573,7 +626,7 @@ static int sceUtilityMsgDialogInitStart(u32 paramAddr) {
 	}
 	
 	ActivateDialog(UtilityDialogType::MSG);
-	return hleLogSuccessInfoX(Log::sceUtility, msgDialog->Init(paramAddr));
+	return hleLogInfo(Log::sceUtility, msgDialog->Init(paramAddr));
 }
 
 static int sceUtilityMsgDialogShutdownStart() {
@@ -582,7 +635,7 @@ static int sceUtilityMsgDialogShutdownStart() {
 	}
 	
 	DeactivateDialog();
-	return hleLogSuccessX(Log::sceUtility, msgDialog->Shutdown());
+	return hleLogDebug(Log::sceUtility, msgDialog->Shutdown());
 }
 
 static int sceUtilityMsgDialogUpdate(int animSpeed) {
@@ -590,10 +643,11 @@ static int sceUtilityMsgDialogUpdate(int animSpeed) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
 	
-	int ret = hleLogSuccessX(Log::sceUtility, msgDialog->Update(animSpeed));
+	int ret = msgDialog->Update(animSpeed);
 	if (ret >= 0)
-		return hleDelayResult(ret, "msgdialog update", 800);
-	return ret;
+		return hleDelayResult(hleLogDebug(Log::sceUtility, ret), "msgdialog update", 800);
+	else
+		return hleLogDebug(Log::sceUtility, ret);
 }
 
 static int sceUtilityMsgDialogGetStatus() {
@@ -605,9 +659,9 @@ static int sceUtilityMsgDialogGetStatus() {
 	CleanupDialogThreads();
 	if (oldStatus != status) {
 		oldStatus = status;
-		return hleLogSuccessI(Log::sceUtility, status);
+		return hleLogDebug(Log::sceUtility, status);
 	}
-	return hleLogSuccessVerboseI(Log::sceUtility, status);
+	return hleLogVerbose(Log::sceUtility, status);
 }
 
 static int sceUtilityMsgDialogAbort() {
@@ -615,7 +669,7 @@ static int sceUtilityMsgDialogAbort() {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
 	
-	return hleLogSuccessX(Log::sceUtility, msgDialog->Abort());
+	return hleLogDebug(Log::sceUtility, msgDialog->Abort());
 }
 
 
@@ -626,7 +680,7 @@ static int sceUtilityOskInitStart(u32 oskPtr) {
 	}
 	
 	ActivateDialog(UtilityDialogType::OSK);
-	return hleLogSuccessInfoX(Log::sceUtility, oskDialog->Init(oskPtr));
+	return hleLogInfo(Log::sceUtility, oskDialog->Init(oskPtr));
 }
 
 static int sceUtilityOskShutdownStart() {
@@ -635,7 +689,7 @@ static int sceUtilityOskShutdownStart() {
 	}
 	
 	DeactivateDialog();
-	return hleLogSuccessX(Log::sceUtility, oskDialog->Shutdown());
+	return hleLogDebug(Log::sceUtility, oskDialog->Shutdown());
 }
 
 static int sceUtilityOskUpdate(int animSpeed) {
@@ -646,7 +700,7 @@ static int sceUtilityOskUpdate(int animSpeed) {
 	// This is the vblank period, plus a little slack. Needed to fix timing bug in Ghost Recon: Predator.
 	// See issue #12044.
 	hleEatCycles(msToCycles(0.7315 + 0.1));
-	return hleLogSuccessX(Log::sceUtility, oskDialog->Update(animSpeed));
+	return hleLogDebug(Log::sceUtility, oskDialog->Update(animSpeed));
 }
 
 static int sceUtilityOskGetStatus() {
@@ -658,9 +712,9 @@ static int sceUtilityOskGetStatus() {
 	CleanupDialogThreads();
 	if (oldStatus != status) {
 		oldStatus = status;
-		return hleLogSuccessI(Log::sceUtility, status);
+		return hleLogDebug(Log::sceUtility, status);
 	}
-	return hleLogSuccessVerboseI(Log::sceUtility, status);
+	return hleLogVerbose(Log::sceUtility, status);
 }
 
 
@@ -670,7 +724,7 @@ static int sceUtilityNetconfInitStart(u32 paramsAddr) {
 	}
 	
 	ActivateDialog(UtilityDialogType::NET);
-	return hleLogSuccessInfoI(Log::sceUtility, netDialog->Init(paramsAddr));
+	return hleLogInfo(Log::sceUtility, netDialog->Init(paramsAddr));
 }
 
 static int sceUtilityNetconfShutdownStart() {
@@ -679,7 +733,7 @@ static int sceUtilityNetconfShutdownStart() {
 	}
 	
 	DeactivateDialog();
-	return hleLogSuccessI(Log::sceUtility, netDialog->Shutdown());
+	return hleLogDebug(Log::sceUtility, netDialog->Shutdown());
 }
 
 static int sceUtilityNetconfUpdate(int animSpeed) {
@@ -687,7 +741,7 @@ static int sceUtilityNetconfUpdate(int animSpeed) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
 
-	return hleLogSuccessI(Log::sceUtility, netDialog->Update(animSpeed));
+	return hleLogDebug(Log::sceUtility, netDialog->Update(animSpeed));
 }
 
 static int sceUtilityNetconfGetStatus() {
@@ -700,17 +754,259 @@ static int sceUtilityNetconfGetStatus() {
 	CleanupDialogThreads();
 	if (oldStatus != status) {
 		oldStatus = status;
-		return hleLogSuccessI(Log::sceUtility, status);
+		return hleLogDebug(Log::sceUtility, status);
 	}
-	return hleLogSuccessVerboseI(Log::sceUtility, status);
+	return hleLogVerbose(Log::sceUtility, status);
 }
 
+/**
+* Check existence of a Net Configuration
+*
+* @param id - id of net Configuration (1 to n)
+* @return 0 on success
+* 
+* Note: some homebrew may only support a limited number of entries (ie. 10 entries)
+*/
 static int sceUtilityCheckNetParam(int id)
 {
 	bool available = (id >= 0 && id <= 24);
-	int ret = available ? 0 : 0X80110601;
-	DEBUG_LOG(Log::sceUtility, "%08x=sceUtilityCheckNetParam(%d)", ret, id);
-	return ret;
+	// We only have 1 faked net config entry
+	if (id > PSP_NETPARAM_MAX_NUMBER_DUMMY_ENTRIES) {
+		available = false;
+	}
+	int ret = available ? 0 : SCE_ERROR_NETPARAM_BAD_NETCONF;
+	return hleLogDebugOrError(Log::sceUtility, ret);
+}
+
+/**
+* Get Net Configuration Parameter
+*
+* @param conf - Net Configuration number (1 to n) (0 returns valid but seems to be a copy of the last config requested)
+* @param param - which parameter to get
+* @param data - parameter data
+* @return 0 on success
+*/
+// Let's figure out what games use this.
+static int sceUtilityGetNetParam(int id, int param, u32 dataAddr) {
+	if (id < 0 || id > 24) {
+		return hleLogWarning(Log::sceUtility, SCE_ERROR_NETPARAM_BAD_NETCONF, "invalid id=%d", id);
+	}
+
+	if (!g_netApctlInited) {
+		// Is this allowed?
+		WARN_LOG_REPORT_ONCE(getnetparam_early, Log::sceNet, "sceUtilityGetNetParam called before initializing netApctl!");
+	}
+
+	// TODO: Replace the temporary netApctlInfo with netConfInfo, since some of netApctlInfo contents supposed to be taken from netConfInfo during ApctlInit, while sceUtilityGetNetParam can be used before Apctl Initialized
+	char name[APCTL_PROFILENAME_MAXLEN];
+	truncate_cpy(name, sizeof(name), defaultNetConfigName + std::to_string(id == 0 ? netParamLatestId:id));
+	char dummyWEPKey[6] = "XXXXX"; // WEP 64-bit = 10 hex digits key or 5-digit ASCII equivalent
+	char dummyUserPass[256] = "PPSSPP"; // FIXME: Username / Password max length = 255 chars?
+	char dummyWPAKey[64] = "XXXXXXXX"; // FIXME: WPA 256-bit = 64 hex digits key or 8 to 63-chars ASCII passphrases?
+	switch (param) {
+	case PSP_NETPARAM_NAME:
+		if (!Memory::IsValidRange(dataAddr, APCTL_PROFILENAME_MAXLEN))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::MemcpyUnchecked(dataAddr, name, APCTL_PROFILENAME_MAXLEN);
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, APCTL_PROFILENAME_MAXLEN, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_SSID:
+		if (!Memory::IsValidRange(dataAddr, APCTL_SSID_MAXLEN))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::MemcpyUnchecked(dataAddr, netApctlInfo.ssid, APCTL_SSID_MAXLEN);
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, APCTL_SSID_MAXLEN, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_SECURE:
+		// 0 is no security.
+		// 1 is WEP (64-bit).
+		// 2 is WEP (128-bit).
+		// 3 is WPA (256-bit ?).
+		if (!Memory::IsValidRange(dataAddr, 4))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::WriteUnchecked_U32(1, dataAddr); // WEP 64-bit
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, 4, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_WEPKEY:
+		// WEP 64-bit = 10 hex digits key or 5-digit ASCII equivalent
+		// WEP 128-bit = 26 hex digits key or 13-digit ASCII equivalent
+		// WEP 256-bit = 58 hex digits key or 29-digit ASCII equivalent
+		// WPA 256-bit = 64 hex digits key or 8 to 63-chars ASCII passphrases?
+		if (!Memory::IsValidRange(dataAddr, 5))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::MemcpyUnchecked(dataAddr, dummyWEPKey, 5);
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, 5, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_IS_STATIC_IP:
+		// 0 is DHCP.
+		// 1 is static.
+		// 2 is PPPOE.
+		if (!Memory::IsValidRange(dataAddr, 4))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::WriteUnchecked_U32(1, dataAddr);  // static IP
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, 4, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_IP:
+		if (!Memory::IsValidRange(dataAddr, APCTL_IPADDR_MAXLEN))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::MemcpyUnchecked(dataAddr, netApctlInfo.ip, APCTL_IPADDR_MAXLEN);
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, APCTL_IPADDR_MAXLEN, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_NETMASK:
+		if (!Memory::IsValidRange(dataAddr, APCTL_IPADDR_MAXLEN))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::MemcpyUnchecked(dataAddr, netApctlInfo.subNetMask, APCTL_IPADDR_MAXLEN);
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, APCTL_IPADDR_MAXLEN, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_ROUTE:
+		if (!Memory::IsValidRange(dataAddr, APCTL_IPADDR_MAXLEN))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::MemcpyUnchecked(dataAddr, netApctlInfo.gateway, APCTL_IPADDR_MAXLEN);
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, APCTL_IPADDR_MAXLEN, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_MANUAL_DNS:
+		// 0 is auto.
+		// 1 is manual. We always use manual.
+		if (!Memory::IsValidRange(dataAddr, 4))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::WriteUnchecked_U32(1, dataAddr);  // manual
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, 4, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_PRIMARYDNS:
+		if (!Memory::IsValidRange(dataAddr, APCTL_IPADDR_MAXLEN))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::MemcpyUnchecked(dataAddr, netApctlInfo.primaryDns, APCTL_IPADDR_MAXLEN);
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, APCTL_IPADDR_MAXLEN, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_SECONDARYDNS:
+		if (!Memory::IsValidRange(dataAddr, APCTL_IPADDR_MAXLEN))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::MemcpyUnchecked(dataAddr, netApctlInfo.secondaryDns, APCTL_IPADDR_MAXLEN);
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, APCTL_IPADDR_MAXLEN, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_PROXY_USER:
+		// FIXME: Proxy's Username max length = 255 chars?
+		if (!Memory::IsValidRange(dataAddr, 255))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::MemcpyUnchecked(dataAddr, dummyUserPass, 255);
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, 255, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_PROXY_PASS:
+		// FIXME: Proxy's Password max length = 255 chars?
+		if (!Memory::IsValidRange(dataAddr, 255))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::MemcpyUnchecked(dataAddr, dummyUserPass, 255);
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, 255, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_USE_PROXY:
+		// 0 is to not use proxy.
+		// 1 is to use proxy.
+		if (!Memory::IsValidRange(dataAddr, 4))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::WriteUnchecked_U32(netApctlInfo.useProxy, dataAddr);
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, 4, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_PROXY_SERVER:
+		if (!Memory::IsValidRange(dataAddr, APCTL_URL_MAXLEN))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::MemcpyUnchecked(dataAddr, netApctlInfo.proxyUrl, APCTL_URL_MAXLEN);
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, APCTL_URL_MAXLEN, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_PROXY_PORT:
+		if (!Memory::IsValidRange(dataAddr, 2))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::WriteUnchecked_U16(netApctlInfo.proxyPort, dataAddr);
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, 2, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_VERSION:
+		// 0 is not used.
+		// 1 is old version.
+		// 2 is new version.
+		if (!Memory::IsValidRange(dataAddr, 4))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::WriteUnchecked_U32(2, dataAddr);  // new version
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, 4, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_UNKNOWN:
+		if (!Memory::IsValidRange(dataAddr, 4))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::WriteUnchecked_U32(0, dataAddr);  // reserved?
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, 4, "UtilityGetNetParam");
+		DEBUG_LOG(Log::sceUtility, "sceUtilityGetNetParam - Unknown Param(%d)", param);
+		break;
+	case PSP_NETPARAM_8021X_AUTH_TYPE:
+		// 0 is none.
+		// 1 is EAP (MD5).
+		if (!Memory::IsValidRange(dataAddr, 4))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::WriteUnchecked_U32(netApctlInfo.eapType, dataAddr);
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, 4, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_8021X_USER:
+		// FIXME: 8021X's Username max length = 255 chars?
+		if (!Memory::IsValidRange(dataAddr, 255))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::MemcpyUnchecked(dataAddr, dummyUserPass, 255);
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, 255, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_8021X_PASS:
+		// FIXME: 8021X's Password max length = 255 chars?
+		if (!Memory::IsValidRange(dataAddr, 255))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::MemcpyUnchecked(dataAddr, dummyUserPass, 255);
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, 255, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_WPA_TYPE:
+		// 0 is key in hexadecimal format.
+		// 1 is key in ASCII format.
+		if (!Memory::IsValidRange(dataAddr, 4))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::WriteUnchecked_U32(1, dataAddr);  // ASCII format
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, 4, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_WPA_KEY:
+		// FIXME: WPA 256-bit = 64 hex digits key or 8 to 63-chars ASCII passphrases?
+		if (!Memory::IsValidRange(dataAddr, 63))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::MemcpyUnchecked(dataAddr, dummyWPAKey, 63);
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, 63, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_BROWSER:
+		// 0 is to not start the native browser.
+		// 1 is to start the native browser.
+		if (!Memory::IsValidRange(dataAddr, 4))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::WriteUnchecked_U32(netApctlInfo.startBrowser, dataAddr);
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, 4, "UtilityGetNetParam");
+		break;
+	case PSP_NETPARAM_WIFI_CONFIG:
+		// 0 is no config.
+		// 1 is unknown. (WISP ?)
+		// 2 is Playstation Spot.
+		// 3 is unknown.
+		if (!Memory::IsValidRange(dataAddr, 4))
+			return hleLogError(Log::sceNet, -1, "invalid arg");
+		Memory::WriteUnchecked_U32(0, dataAddr);  // no config / netApctlInfo.wifisp ?
+		NotifyMemInfo(MemBlockFlags::WRITE, dataAddr, 4, "UtilityGetNetParam");
+		break;
+	default:
+		return hleLogWarning(Log::sceUtility, SCE_ERROR_NETPARAM_BAD_PARAM, "invalid param=%d", param);
+	}
+
+	return hleLogDebug(Log::sceUtility, 0);
+}
+
+/**
+* Get Current Net Configuration ID
+*
+* @param idAddr - Address to store the current net ID (ie. The actual Net Config ID when using ID=0 on sceUtilityGetNetParam ?)
+* @return 0 on success
+*/
+static int sceUtilityGetNetParamLatestID(u32 idAddr) {
+	DEBUG_LOG(Log::sceUtility, "sceUtilityGetNetParamLatestID(%08x)", idAddr);
+	// This function is saving the last net param ID (non-zero ID?) and not the number of net configurations.
+	Memory::Write_U32(netParamLatestId, idAddr);
+
+	return 0;
 }
 
 
@@ -753,7 +1049,7 @@ static int sceUtilityScreenshotGetStatus() {
 		oldStatus = status;
 		return hleLogWarning(Log::sceUtility, status);
 	}
-	return hleLogSuccessVerboseI(Log::sceUtility, status);
+	return hleLogVerbose(Log::sceUtility, status);
 }
 
 static int sceUtilityScreenshotContStart(u32 paramAddr) {
@@ -773,7 +1069,7 @@ static int sceUtilityGamedataInstallInitStart(u32 paramsAddr) {
 	int result = gamedataInstallDialog->Init(paramsAddr);
 	if (result < 0)
 		DeactivateDialog();
-	return hleLogSuccessInfoX(Log::sceUtility, result);
+	return hleLogInfo(Log::sceUtility, result);
 }
 
 static int sceUtilityGamedataInstallShutdownStart() {
@@ -782,7 +1078,7 @@ static int sceUtilityGamedataInstallShutdownStart() {
 	}
 	
 	DeactivateDialog();
-	return hleLogSuccessX(Log::sceUtility, gamedataInstallDialog->Shutdown());
+	return hleLogDebug(Log::sceUtility, gamedataInstallDialog->Shutdown());
 }
 
 static int sceUtilityGamedataInstallUpdate(int animSpeed) {
@@ -790,7 +1086,7 @@ static int sceUtilityGamedataInstallUpdate(int animSpeed) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
 	
-	return hleLogSuccessX(Log::sceUtility, gamedataInstallDialog->Update(animSpeed));
+	return hleLogDebug(Log::sceUtility, gamedataInstallDialog->Update(animSpeed));
 }
 
 static int sceUtilityGamedataInstallGetStatus() {
@@ -802,7 +1098,7 @@ static int sceUtilityGamedataInstallGetStatus() {
 
 	int status = gamedataInstallDialog->GetStatus();
 	CleanupDialogThreads();
-	return hleLogSuccessI(Log::sceUtility, status);
+	return hleLogDebug(Log::sceUtility, status);
 }
 
 static int sceUtilityGamedataInstallAbort() {
@@ -811,7 +1107,7 @@ static int sceUtilityGamedataInstallAbort() {
 	}
 	
 	DeactivateDialog();
-	return hleLogSuccessX(Log::sceUtility, gamedataInstallDialog->Abort());
+	return hleLogDebug(Log::sceUtility, gamedataInstallDialog->Abort());
 }
 
 //TODO: should save to config file
@@ -821,11 +1117,10 @@ static u32 sceUtilitySetSystemParamString(u32 id, u32 strPtr)
 	return 0;
 }
 
-static u32 sceUtilityGetSystemParamString(u32 id, u32 destAddr, int destSize)
-{
+static u32 sceUtilityGetSystemParamString(u32 id, u32 destAddr, int destSize) {
 	if (!Memory::IsValidRange(destAddr, destSize)) {
 		// TODO: What error code?
-		return -1;
+		return hleLogError(Log::sceUtility, -1);
 	}
 	DEBUG_LOG(Log::sceUtility, "sceUtilityGetSystemParamString(%i, %08x, %i)", id, destAddr, destSize);
 	char *buf = (char *)Memory::GetPointerWriteUnchecked(destAddr);
@@ -833,39 +1128,36 @@ static u32 sceUtilityGetSystemParamString(u32 id, u32 destAddr, int destSize)
 	case PSP_SYSTEMPARAM_ID_STRING_NICKNAME:
 		// If there's not enough space for the string and null terminator, fail.
 		if (destSize <= (int)g_Config.sNickName.length())
-			return PSP_SYSTEMPARAM_RETVAL_STRING_TOO_LONG;
+			return SCE_ERROR_UTILITY_STRING_TOO_LONG;
 		// TODO: should we zero-pad the output as strncpy does? And what are the semantics for the terminating null if destSize == length?
 		strncpy(buf, g_Config.sNickName.c_str(), destSize);
 		break;
 
 	default:
-		return PSP_SYSTEMPARAM_RETVAL_FAIL;
+		return hleLogError(Log::sceUtility, SCE_ERROR_UTILITY_INVALID_SYSTEM_PARAM_ID);
 	}
 
-	return 0;
+	return hleLogDebug(Log::sceUtility, 0);
 }
 
-static u32 sceUtilitySetSystemParamInt(u32 id, u32 value)
-{
+static u32 sceUtilitySetSystemParamInt(u32 id, u32 value) {
 	switch (id) {
 	case PSP_SYSTEMPARAM_ID_INT_ADHOC_CHANNEL:
 		if (value != 0 && value != 1 && value != 6 && value != 11) {
-			return ERROR_UTILITY_INVALID_ADHOC_CHANNEL;
+			return hleLogError(Log::sceUtility, SCE_ERROR_UTILITY_INVALID_ADHOC_CHANNEL);
 		}
-		//Settings.getInstance().writeInt(SYSTEMPARAM_SETTINGS_OPTION_ADHOC_CHANNEL, value);
+		// Save the setting? We don't really care about this one.
 		break;
 	case PSP_SYSTEMPARAM_ID_INT_WLAN_POWERSAVE:
-		// Settings.getInstance().writeInt(SYSTEMPARAM_SETTINGS_OPTION_WLAN_POWER_SAVE, value);
 		break;
 	default:
 		// PSP can only set above int parameters
-		return ERROR_UTILITY_INVALID_SYSTEM_PARAM_ID;
+		return hleLogError(Log::sceUtility, SCE_ERROR_UTILITY_INVALID_SYSTEM_PARAM_ID);
 	}
-	return 0;
+	return hleLogDebug(Log::sceUtility, 0);
 }
 
-static u32 sceUtilityGetSystemParamInt(u32 id, u32 destaddr)
-{
+static u32 sceUtilityGetSystemParamInt(u32 id, u32 destaddr) {
 	u32 param = 0;
 	switch (id) {
 	case PSP_SYSTEMPARAM_ID_INT_ADHOC_CHANNEL:
@@ -913,24 +1205,19 @@ static u32 sceUtilityGetSystemParamInt(u32 id, u32 destaddr)
 		param = g_Config.iLockParentalLevel;
 		break;
 	default:
-		return PSP_SYSTEMPARAM_RETVAL_FAIL;
+		return hleLogError(Log::sceUtility, SCE_ERROR_UTILITY_INVALID_SYSTEM_PARAM_ID);
 	}
 
-	INFO_LOG(Log::sceUtility, "sceUtilityGetSystemParamInt(%i, %08x <- %08x)", id, destaddr, param);
 	Memory::Write_U32(param, destaddr);
-	return 0;
+	return hleLogInfo(Log::sceUtility, 0, "param: %08x", param);
 }
 
-static u32 sceUtilityLoadNetModule(u32 module)
-{
-	DEBUG_LOG(Log::sceUtility,"FAKE: sceUtilityLoadNetModule(%i)", module);
-	return 0;
+static u32 sceUtilityLoadNetModule(u32 module) {
+	return hleLogInfo(Log::sceUtility, 0, "FAKE");
 }
 
-static u32 sceUtilityUnloadNetModule(u32 module)
-{
-	DEBUG_LOG(Log::sceUtility,"FAKE: sceUtilityUnloadNetModule(%i)", module);
-	return 0;
+static u32 sceUtilityUnloadNetModule(u32 module) {
+	return hleLogInfo(Log::sceUtility, 0, "FAKE");
 }
 
 static int sceUtilityNpSigninInitStart(u32 paramsPtr) {
@@ -939,7 +1226,7 @@ static int sceUtilityNpSigninInitStart(u32 paramsPtr) {
 	}
 
 	ActivateDialog(UtilityDialogType::NPSIGNIN);
-	return hleLogSuccessInfoI(Log::sceUtility, npSigninDialog->Init(paramsPtr));
+	return hleLogInfo(Log::sceUtility, npSigninDialog->Init(paramsPtr));
 }
 
 static int sceUtilityNpSigninShutdownStart() {
@@ -948,7 +1235,7 @@ static int sceUtilityNpSigninShutdownStart() {
 	}
 
 	DeactivateDialog();
-	return hleLogSuccessI(Log::sceUtility, npSigninDialog->Shutdown());
+	return hleLogDebug(Log::sceUtility, npSigninDialog->Shutdown());
 }
 
 static int sceUtilityNpSigninUpdate(int animSpeed) {
@@ -956,7 +1243,7 @@ static int sceUtilityNpSigninUpdate(int animSpeed) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
 
-	return hleLogSuccessI(Log::sceUtility, npSigninDialog->Update(animSpeed));
+	return hleLogDebug(Log::sceUtility, npSigninDialog->Update(animSpeed));
 }
 
 static int sceUtilityNpSigninGetStatus() {
@@ -968,81 +1255,66 @@ static int sceUtilityNpSigninGetStatus() {
 	CleanupDialogThreads();
 	if (oldStatus != status) {
 		oldStatus = status;
-		return hleLogSuccessI(Log::sceUtility, status);
+		return hleLogDebug(Log::sceUtility, status);
 	}
-	return hleLogSuccessVerboseI(Log::sceUtility, status);
+	return hleLogVerbose(Log::sceUtility, status);
 }
 
-static void sceUtilityInstallInitStart(u32 unknown)
-{
+static void sceUtilityInstallInitStart(u32 unknown) {
 	WARN_LOG_REPORT(Log::sceUtility, "UNIMPL sceUtilityInstallInitStart()");
+	return hleNoLogVoid();
 }
 
-static int sceUtilityStoreCheckoutShutdownStart()
-{
-	ERROR_LOG(Log::sceUtility,"UNIMPL sceUtilityStoreCheckoutShutdownStart()");
-	return 0;
+static int sceUtilityStoreCheckoutShutdownStart() {
+	return hleLogError(Log::sceUtility, 0, "UNIMPL");
 }
 
-static int sceUtilityStoreCheckoutInitStart(u32 paramsPtr)
-{
-	ERROR_LOG_REPORT(Log::sceUtility,"UNIMPL sceUtilityStoreCheckoutInitStart(%d)", paramsPtr);
-	return 0;
+static int sceUtilityStoreCheckoutInitStart(u32 paramsPtr) {
+	return hleLogError(Log::sceUtility, 0, "UNIMPL");
 }
 
-static int sceUtilityStoreCheckoutUpdate(int drawSpeed)
-{
-	ERROR_LOG(Log::sceUtility,"UNIMPL sceUtilityStoreCheckoutUpdate(%d)", drawSpeed);
-	return 0;
+static int sceUtilityStoreCheckoutUpdate(int drawSpeed) {
+	return hleLogError(Log::sceUtility, 0, "UNIMPL");
 }
 
-static int sceUtilityStoreCheckoutGetStatus()
-{
-	ERROR_LOG(Log::sceUtility,"UNIMPL sceUtilityStoreCheckoutGetStatus()");
-	return 0;
+static int sceUtilityStoreCheckoutGetStatus() {
+	return hleLogError(Log::sceUtility, 0, "UNIMPL");
 }
 
 static int sceUtilityGameSharingShutdownStart() {
 	if (currentDialogType != UtilityDialogType::GAMESHARING) {
-		WARN_LOG(Log::sceUtility, "sceUtilityGameSharingShutdownStart(): wrong dialog type");
-		return SCE_ERROR_UTILITY_WRONG_TYPE;
+		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
 	
 	DeactivateDialog();
-	ERROR_LOG(Log::sceUtility, "UNIMPL sceUtilityGameSharingShutdownStart()");
-	return 0;
+	return hleLogError(Log::sceUtility, 0, "UNIMPL");
 }
 
 static int sceUtilityGameSharingInitStart(u32 paramsPtr) {
 	if (currentDialogActive && currentDialogType != UtilityDialogType::GAMESHARING) {
-		WARN_LOG(Log::sceUtility, "sceUtilityGameSharingInitStart(%08x)", paramsPtr);
-		return SCE_ERROR_UTILITY_WRONG_TYPE;
+		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE);
 	}
-	
+
 	ActivateDialog(UtilityDialogType::GAMESHARING);
 	ERROR_LOG_REPORT(Log::sceUtility, "UNIMPL sceUtilityGameSharingInitStart(%08x)", paramsPtr);
-	return 0;
+	return hleNoLog(0);
 }
 
 static int sceUtilityGameSharingUpdate(int animSpeed) {
 	if (currentDialogType != UtilityDialogType::GAMESHARING) {
-		WARN_LOG(Log::sceUtility, "sceUtilityGameSharingUpdate(%i): wrong dialog type", animSpeed);
-		return SCE_ERROR_UTILITY_WRONG_TYPE;
+		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
 
-	ERROR_LOG(Log::sceUtility, "UNIMPL sceUtilityGameSharingUpdate(%i)", animSpeed);
-	return 0;
+	return hleLogError(Log::sceUtility, 0, "UNIMPL sceUtilityGameSharingUpdate(%i)", animSpeed);
 }
 
 static int sceUtilityGameSharingGetStatus() {
 	if (currentDialogType != UtilityDialogType::GAMESHARING) {
-		DEBUG_LOG(Log::sceUtility, "sceUtilityGameSharingGetStatus(): wrong dialog type");
-		return SCE_ERROR_UTILITY_WRONG_TYPE;
+		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
 
-	ERROR_LOG(Log::sceUtility, "UNIMPL sceUtilityGameSharingGetStatus()");
 	CleanupDialogThreads();
-	return 0;
+	return hleLogError(Log::sceUtility, 0, "UNIMPL");
 }
 
 static u32 sceUtilityLoadUsbModule(u32 module)
@@ -1053,7 +1325,7 @@ static u32 sceUtilityLoadUsbModule(u32 module)
 	}
 
 	ERROR_LOG_REPORT(Log::sceUtility, "UNIMPL sceUtilityLoadUsbModule(%i)", module);
-	return 0;
+	return hleNoLog(0);
 }
 
 static u32 sceUtilityUnloadUsbModule(u32 module)
@@ -1064,7 +1336,7 @@ static u32 sceUtilityUnloadUsbModule(u32 module)
 	}
 
 	ERROR_LOG_REPORT(Log::sceUtility, "UNIMPL sceUtilityUnloadUsbModule(%i)", module);
-	return 0;
+	return hleNoLog(0);
 }
 
 const HLEFunction sceUtility[] = 
@@ -1077,8 +1349,8 @@ const HLEFunction sceUtility[] =
 	{0X91E70E35, &WrapI_I<sceUtilityNetconfUpdate>,                "sceUtilityNetconfUpdate",                'i', "i"  },
 	{0X6332AA39, &WrapI_V<sceUtilityNetconfGetStatus>,             "sceUtilityNetconfGetStatus",             'i', ""   },
 	{0X5EEE6548, &WrapI_I<sceUtilityCheckNetParam>,                "sceUtilityCheckNetParam",                'i', "i"  },
-	{0X434D4B3A, nullptr,                                          "sceUtilityGetNetParam",                  '?', ""   },
-	{0X4FED24D8, nullptr,                                          "sceUtilityGetNetParamLatestID",          '?', ""   },
+	{0X434D4B3A, &WrapI_IIU<sceUtilityGetNetParam>,                "sceUtilityGetNetParam",                  'i', "iix"},
+	{0X4FED24D8, &WrapI_U<sceUtilityGetNetParamLatestID>,          "sceUtilityGetNetParamLatestID",          'i', "x"  },
 
 	{0X67AF3428, &WrapI_V<sceUtilityMsgDialogShutdownStart>,       "sceUtilityMsgDialogShutdownStart",       'i', ""   },
 	{0X2AD8E239, &WrapI_U<sceUtilityMsgDialogInitStart>,           "sceUtilityMsgDialogInitStart",           'i', "x"  },
@@ -1213,5 +1485,5 @@ const HLEFunction sceUtility[] =
 
 void Register_sceUtility()
 {
-	RegisterModule("sceUtility", ARRAY_SIZE(sceUtility), sceUtility);
+	RegisterHLEModule("sceUtility", ARRAY_SIZE(sceUtility), sceUtility);
 }

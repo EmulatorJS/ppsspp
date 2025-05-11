@@ -371,6 +371,7 @@ SOURCES_CXX += \
 	$(EXTDIR)/imgui/imgui.cpp \
 	$(EXTDIR)/imgui/imgui_demo.cpp \
 	$(EXTDIR)/imgui/imgui_draw.cpp \
+	$(EXTDIR)/imgui/imgui_extras.cpp \
 	$(EXTDIR)/imgui/imgui_impl_thin3d.cpp \
 	$(EXTDIR)/imgui/imgui_impl_platform.cpp \
 	$(EXTDIR)/imgui/imgui_tables.cpp \
@@ -656,12 +657,14 @@ SOURCES_CXX += \
 	       $(COREDIR)/WaveFile.cpp \
 	       $(COREDIR)/KeyMap.cpp \
 	       $(COREDIR)/KeyMapDefaults.cpp \
+	       $(COREDIR)/LuaContext.cpp \
 	       $(COREDIR)/FileLoaders/HTTPFileLoader.cpp \
 	       $(COREDIR)/FileLoaders/CachingFileLoader.cpp \
 	       $(COREDIR)/FileLoaders/DiskCachingFileLoader.cpp \
 	       $(COREDIR)/FileLoaders/RetryingFileLoader.cpp \
 	       $(COREDIR)/FileLoaders/RamCachingFileLoader.cpp \
 	       $(COREDIR)/FileLoaders/LocalFileLoader.cpp \
+	       $(COREDIR)/FileLoaders/ZipFileLoader.cpp \
 	       $(COREDIR)/CoreTiming.cpp \
 	       $(COREDIR)/CwCheat.cpp \
 	       $(COREDIR)/HDRemaster.cpp \
@@ -675,6 +678,7 @@ SOURCES_CXX += \
 	       $(COREDIR)/Dialog/PSPNetconfDialog.cpp \
 	       $(COREDIR)/Dialog/PSPNpSigninDialog.cpp \
 	       $(COREDIR)/Dialog/PSPOskDialog.cpp \
+	       $(COREDIR)/Dialog/PSPOskConstants.cpp \
 	       $(COREDIR)/Dialog/PSPSaveDialog.cpp \
 	       $(COREDIR)/Dialog/PSPScreenshotDialog.cpp \
 	       $(COREDIR)/Dialog/SavedataParam.cpp \
@@ -693,6 +697,8 @@ SOURCES_CXX += \
 	       $(COREDIR)/Font/PGF.cpp \
 	       $(COREDIR)/HLE/HLE.cpp \
 	       $(COREDIR)/HLE/KUBridge.cpp \
+	       $(COREDIR)/HLE/NetInetConstants.cpp \
+	       $(COREDIR)/HLE/SocketManager.cpp \
 	       $(COREDIR)/HLE/Plugins.cpp \
 	       $(COREDIR)/HLE/sceSha256.cpp \
 	       $(COREDIR)/HLE/sceSircs.cpp \
@@ -740,19 +746,26 @@ SOURCES_CXX += \
 	       $(COREDIR)/HLE/sceKernelVTimer.cpp \
 	       $(COREDIR)/HLE/sceMpeg.cpp \
 	       $(COREDIR)/HLE/sceNet.cpp \
+	       $(COREDIR)/HLE/sceNet_lib.cpp \
 	       $(COREDIR)/HLE/sceNetAdhoc.cpp \
+	       $(COREDIR)/HLE/sceNetAdhocMatching.cpp \
+	       $(COREDIR)/HLE/sceNetApctl.cpp \
+	       $(COREDIR)/HLE/sceNetInet.cpp \
+	       $(COREDIR)/HLE/sceNetResolver.cpp \
 	       $(COREDIR)/HLE/proAdhocServer.cpp \
 	       $(COREDIR)/HLE/proAdhoc.cpp \
 	       $(COREDIR)/HLE/sceOpenPSID.cpp \
 	       $(COREDIR)/HLE/sceP3da.cpp \
 	       $(COREDIR)/HLE/sceMt19937.cpp \
 	       $(COREDIR)/HLE/sceMd5.cpp \
+	       $(COREDIR)/HLE/sceAac.cpp \
 	       $(COREDIR)/HLE/sceMp4.cpp \
 	       $(COREDIR)/HLE/sceMp3.cpp \
 	       $(COREDIR)/HLE/sceParseHttp.cpp \
 	       $(COREDIR)/HLE/sceParseUri.cpp \
 	       $(COREDIR)/HLE/scePower.cpp \
 	       $(COREDIR)/HLE/scePsmf.cpp \
+	       $(COREDIR)/HLE/sceReg.cpp \
 	       $(COREDIR)/HLE/sceRtc.cpp \
 	       $(COREDIR)/HLE/sceSas.cpp \
 	       $(COREDIR)/HLE/sceSsl.cpp \
@@ -820,10 +833,11 @@ SOURCES_CXX += \
 	       $(COREDIR)/SaveState.cpp \
 	       $(COREDIR)/Screenshot.cpp \
 	       $(COREDIR)/System.cpp \
-	       $(COREDIR)/ThreadPools.cpp \
+	       $(COREDIR)/Util/AtracTrack.cpp \
 	       $(COREDIR)/Util/BlockAllocator.cpp \
 	       $(COREDIR)/Util/MemStick.cpp \
 	       $(COREDIR)/Util/PPGeDraw.cpp \
+	       $(COREDIR)/Util/RecentFiles.cpp \
 	       $(COREDIR)/Util/AudioFormat.cpp \
 	       $(COREDIR)/Util/PortManager.cpp \
 	       $(CORE_DIR)/UI/GameInfoCache.cpp

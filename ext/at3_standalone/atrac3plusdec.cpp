@@ -323,13 +323,14 @@ int atrac3p_decode_frame(ATRAC3PContext *ctx, float *out_data[2], int *nb_sample
     while (get_bits_left(&ctx->gb) >= 2 &&
            (ch_unit_id = get_bits(&ctx->gb, 2)) != CH_UNIT_TERMINATOR) {
         if (ch_unit_id == CH_UNIT_EXTENSION) {
-            avpriv_report_missing_feature("Channel unit extension");
+            av_log(AV_LOG_ERROR, "Missing atrac3p feature: Channel unit extension");
             return AVERROR_PATCHWELCOME;
         }
         if (ch_block >= ctx->num_channel_blocks ||
             ctx->channel_blocks[ch_block] != ch_unit_id) {
-            av_log(AV_LOG_ERROR,
-                   "Frame data doesn't match channel configuration!");
+            av_log(AV_LOG_WARNING, "Frame data doesn't match channel configuration! ch_block %d >= num_channel_blocks %d", ch_block, ctx->num_channel_blocks);
+            // We used to have trouble in Code Lyoko and other games here. It's usually because data is corrupted
+            // or the wrong channel configuration is used..
             return AVERROR_INVALIDDATA;
         }
 

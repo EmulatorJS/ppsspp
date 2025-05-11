@@ -1,3 +1,4 @@
+
 // Copyright (c) 2013- PPSSPP Project.
 
 // This program is free software: you can redistribute it and/or modify
@@ -25,9 +26,11 @@
 #include "Common/GPU/thin3d.h"
 #include "Common/Thread/ThreadManager.h"
 #include "Common/File/VFS/VFS.h"
+#include "Common/File/VFS/ZipFileReader.h"
 #include "Common/File/FileUtil.h"
 #include "Common/File/Path.h"
 #include "Common/Render/ManagedTexture.h"
+#include "Common/System/Request.h"
 #include "Common/StringUtils.h"
 #include "Common/TimeUtil.h"
 #include "Core/FileSystems/ISOFileSystem.h"
@@ -39,6 +42,7 @@
 #include "Core/System.h"
 #include "Core/Loaders.h"
 #include "Core/Util/GameManager.h"
+#include "Core/Util/RecentFiles.h"
 #include "Core/Config.h"
 #include "UI/GameInfoCache.h"
 
@@ -70,6 +74,39 @@ GameInfo::~GameInfo() {
 	fileLoader.reset();
 }
 
+bool IsReasonableEbootDirectory(Path path) {
+	// First some sanity checks.
+	if (path == Path("/")) {
+		return false;
+	}
+	for (int i = 0; i < (int)PSPDirectories::COUNT; i++) {
+		if (path == GetSysDirectory((PSPDirectories)i)) {
+			return false;
+		}
+	}
+	return true;
+}
+
+static bool MoveFileToTrashOrDelete(const Path &path) {
+	if (System_GetPropertyBool(SYSPROP_HAS_TRASH_BIN)) {
+		// TODO: Way to see if it succeeded
+		System_MoveToTrash(path);
+		return true;
+	} else {
+		return File::Delete(path);
+	}
+}
+
+static bool MoveDirectoryTreeToTrashOrDelete(const Path &path) {
+	if (System_GetPropertyBool(SYSPROP_HAS_TRASH_BIN)) {
+		// TODO: Way to see if it succeeded
+		System_MoveToTrash(path);
+		return true;
+	} else {
+		return File::DeleteDirRecursively(path);
+	}
+}
+
 bool GameInfo::Delete() {
 	switch (fileType) {
 	case IdentifiedFileType::PSP_ISO:
@@ -78,8 +115,8 @@ bool GameInfo::Delete() {
 			// Just delete the one file (TODO: handle two-disk games as well somehow).
 			Path fileToRemove = filePath_;
 			INFO_LOG(Log::System, "Deleting file %s", fileToRemove.c_str());
-			File::Delete(fileToRemove);
-			g_Config.RemoveRecent(filePath_.ToString());
+			MoveFileToTrashOrDelete(fileToRemove);
+			g_recentFiles.Remove(filePath_.ToString());
 			return true;
 		}
 	case IdentifiedFileType::PSP_PBP_DIRECTORY:
@@ -87,12 +124,23 @@ bool GameInfo::Delete() {
 		{
 			// TODO: This could be handled by Core/Util/GameManager too somehow.
 			Path directoryToRemove = ResolvePBPDirectory(filePath_);
+
+			// Check that the directory isn't the base of the GAME folder, or something similarly stupid.
+			// This can happen if the PBP is misplaced, see issue #20187
+			if (!IsReasonableEbootDirectory(directoryToRemove)) {
+				// Just delete the eboot.
+				MoveFileToTrashOrDelete(filePath_);
+				g_recentFiles.Remove(filePath_.ToString());
+				return true;
+			}
+
+			// Delete the whole tree. We better be sure, see IsReasonableEbootDirectory.
 			INFO_LOG(Log::System, "Deleting directory %s", directoryToRemove.c_str());
-			if (!File::DeleteDirRecursively(directoryToRemove)) {
+			if (!MoveDirectoryTreeToTrashOrDelete(directoryToRemove)) {
 				ERROR_LOG(Log::System, "Failed to delete file");
 				return false;
 			}
-			g_Config.CleanRecent();
+			g_recentFiles.Clean();
 			return true;
 		}
 	case IdentifiedFileType::PSP_ELF:
@@ -106,8 +154,8 @@ bool GameInfo::Delete() {
 		{
 			const Path &fileToRemove = filePath_;
 			INFO_LOG(Log::System, "Deleting file %s", fileToRemove.c_str());
-			File::Delete(fileToRemove);
-			g_Config.RemoveRecent(filePath_.ToString());
+			MoveFileToTrashOrDelete(fileToRemove);
+			g_recentFiles.Remove(filePath_.ToString());
 			return true;
 		}
 
@@ -115,10 +163,10 @@ bool GameInfo::Delete() {
 		{
 			const Path &ppstPath = filePath_;
 			INFO_LOG(Log::System, "Deleting file %s", ppstPath.c_str());
-			File::Delete(ppstPath);
+			MoveFileToTrashOrDelete(ppstPath);
 			const Path screenshotPath = filePath_.WithReplacedExtension(".ppst", ".jpg");
 			if (File::Exists(screenshotPath)) {
-				File::Delete(screenshotPath);
+				MoveFileToTrashOrDelete(screenshotPath);
 			}
 			return true;
 		}
@@ -304,7 +352,9 @@ bool GameInfo::DeleteAllSaveData() {
 	std::vector<Path> saveDataDir = GetSaveDataDirectories();
 	for (size_t j = 0; j < saveDataDir.size(); j++) {
 		INFO_LOG(Log::System, "Deleting savedata from %s", saveDataDir[j].c_str());
-		File::DeleteDirRecursively(saveDataDir[j]);
+		if (!MoveDirectoryTreeToTrashOrDelete(saveDataDir[j])) {
+			ERROR_LOG(Log::System, "Failed to delete savedata %s", saveDataDir[j].c_str());
+		}
 	}
 	return true;
 }
@@ -439,18 +489,35 @@ static bool ReadLocalFileToString(const Path &path, std::string *contents, std::
 static bool ReadVFSToString(const char *filename, std::string *contents, std::mutex *mtx) {
 	size_t sz;
 	uint8_t *data = g_VFS.ReadFile(filename, &sz);
-	if (data) {
-		if (mtx) {
-			std::lock_guard<std::mutex> lock(*mtx);
-			*contents = std::string((const char *)data, sz);
-		} else {
-			*contents = std::string((const char *)data, sz);
-		}
-	} else {
+	if (!data) {
 		return false;
+	}
+	if (mtx) {
+		std::lock_guard<std::mutex> lock(*mtx);
+		*contents = std::string((const char *)data, sz);
+	} else {
+		*contents = std::string((const char *)data, sz);
 	}
 	delete [] data;
 	return true;
+}
+
+static bool LoadReplacementImage(GameInfo *info, GameInfoTex *tex, const char *filename) {
+	if (!g_Config.bReplaceTextures) {
+		return false;
+	}
+
+	const Path customIconFilename = GetSysDirectory(DIRECTORY_TEXTURES) / info->id / filename;
+	const Path zipFilename = GetSysDirectory(DIRECTORY_TEXTURES) / info->id / "textures.zip";
+	if (ReadLocalFileToString(customIconFilename, &tex->data, &info->lock)) {
+		tex->dataLoaded = true;
+		return true;
+	} else if (ReadSingleFileFromZip(zipFilename, filename, &tex->data, &info->lock)) {
+		tex->dataLoaded = true;
+		return true;
+	} else {
+		return false;
+	}
 }
 
 class GameInfoWorkItem : public Task {
@@ -534,7 +601,7 @@ public:
 							&& info_->fileType == IdentifiedFileType::PSP_PBP_DIRECTORY) {
 							info_->id = g_paramSFO.GenerateFakeID(gamePath_);
 							info_->id_version = info_->id + "_1.00";
-							info_->region = GAMEREGION_MAX + 1; // Homebrew
+							info_->region = GAMEREGION_COUNT + 1; // Homebrew
 						}
 						info_->MarkReadyNoLock(GameInfoFlags::PARAM_SFO);
 					}
@@ -542,20 +609,23 @@ public:
 
 				// Then, ICON0.PNG.
 				if (flags_ & GameInfoFlags::ICON) {
-					if (pbp.GetSubFileSize(PBP_ICON0_PNG) > 0) {
+					if (LoadReplacementImage(info_.get(), &info_->icon, "icon.png")) {
+						// Nothing more to do
+					} else if (pbp.GetSubFileSize(PBP_ICON0_PNG) > 0) {
 						std::lock_guard<std::mutex> lock(info_->lock);
 						pbp.GetSubFileAsString(PBP_ICON0_PNG, &info_->icon.data);
 					} else {
 						Path screenshot_jpg = GetSysDirectory(DIRECTORY_SCREENSHOT) / (info_->id + "_00000.jpg");
 						Path screenshot_png = GetSysDirectory(DIRECTORY_SCREENSHOT) / (info_->id + "_00000.png");
 						// Try using png/jpg screenshots first
-						if (File::Exists(screenshot_png))
+						if (File::Exists(screenshot_png)) {
 							ReadLocalFileToString(screenshot_png, &info_->icon.data, &info_->lock);
-						else if (File::Exists(screenshot_jpg))
+						} else if (File::Exists(screenshot_jpg)) {
 							ReadLocalFileToString(screenshot_jpg, &info_->icon.data, &info_->lock);
-						else
+						} else {
 							// Read standard icon
 							ReadVFSToString("unknown.png", &info_->icon.data, &info_->lock);
+						}
 					}
 					info_->icon.dataLoaded = true;
 				}
@@ -594,7 +664,7 @@ handleELF:
 			if (flags_ & GameInfoFlags::PARAM_SFO) {
 				info_->id = g_paramSFO.GenerateFakeID(gamePath_);
 				info_->id_version = info_->id + "_1.00";
-				info_->region = GAMEREGION_MAX + 1; // Homebrew
+				info_->region = GAMEREGION_COUNT + 1; // Homebrew
 			}
 
 			if (flags_ & GameInfoFlags::ICON) {
@@ -655,8 +725,6 @@ handleELF:
 				Path screenshotPath = gamePath_.WithReplacedExtension(".ppst", ".jpg");
 				if (ReadLocalFileToString(screenshotPath, &info_->icon.data, &info_->lock)) {
 					info_->icon.dataLoaded = true;
-				} else {
-					ERROR_LOG(Log::G3D, "Error loading screenshot data: '%s'", screenshotPath.c_str());
 				}
 			}
 			break;
@@ -755,8 +823,13 @@ handleELF:
 				}
 
 				// Fall back to unknown icon if ISO is broken/is a homebrew ISO, override is allowed though
+				// First, do try to get an icon from the replacement texture pack, if available.
 				if (flags_ & GameInfoFlags::ICON) {
-					if (!ReadFileToString(&umd, "/PSP_GAME/ICON0.PNG", &info_->icon.data, &info_->lock)) {
+					if (LoadReplacementImage(info_.get(), &info_->icon, "icon.png")) {
+						// Nothing more to do
+					} else if (ReadFileToString(&umd, "/PSP_GAME/ICON0.PNG", &info_->icon.data, &info_->lock)) {
+						info_->icon.dataLoaded = true;
+					} else {
 						Path screenshot_jpg = GetSysDirectory(DIRECTORY_SCREENSHOT) / (info_->id + "_00000.jpg");
 						Path screenshot_png = GetSysDirectory(DIRECTORY_SCREENSHOT) / (info_->id + "_00000.png");
 						// Try using png/jpg screenshots first
@@ -768,8 +841,6 @@ handleELF:
 							DEBUG_LOG(Log::Loader, "Loading unknown.png because no icon was found");
 							info_->icon.dataLoaded = ReadVFSToString("unknown.png", &info_->icon.data, &info_->lock);
 						}
-					} else {
-						info_->icon.dataLoaded = true;
 					}
 				}
 				break;

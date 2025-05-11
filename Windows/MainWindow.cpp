@@ -37,6 +37,7 @@
 #include "Common/TimeUtil.h"
 #include "Common/StringUtils.h"
 #include "Common/Data/Text/I18n.h"
+#include "Common/Data/Text/Parsers.h"
 #include "Common/Input/InputState.h"
 #include "Common/Input/KeyCodes.h"
 #include "Common/Thread/ThreadUtil.h"
@@ -85,6 +86,8 @@
 #include "GPU/GPUCommon.h"
 #include "UI/OnScreenDisplay.h"
 #include "UI/GameSettingsScreen.h"
+#include "UI/PauseScreen.h"
+#include "Core/SaveState.h"
 
 #define MOUSEEVENTF_FROMTOUCH_NOPEN 0xFF515780 //http://msdn.microsoft.com/en-us/library/windows/desktop/ms703320(v=vs.85).aspx
 #define MOUSEEVENTF_MASK_PLUS_PENTOUCH 0xFFFFFF80
@@ -110,7 +113,8 @@ struct VerySleepy_AddrInfo {
 	wchar_t name[256];
 };
 
-static std::wstring windowTitle;
+static std::mutex g_windowTitleLock;
+static std::wstring g_windowTitle;
 
 #define TIMER_CURSORUPDATE 1
 #define TIMER_CURSORMOVEUPDATE 2
@@ -295,7 +299,7 @@ namespace MainWindow
 
 		DEBUG_LOG(Log::System, "Pixel width/height: %dx%d", PSP_CoreParameter().pixelWidth, PSP_CoreParameter().pixelHeight);
 
-		if (Native_UpdateScreenScale(width, height)) {
+		if (Native_UpdateScreenScale(width, height, UIScaleFactorToMultiplier(g_Config.iUIScaleFactor))) {
 			System_PostUIMessage(UIMessage::GPU_DISPLAY_RESIZED);
 			System_PostUIMessage(UIMessage::GPU_RENDER_RESIZED);
 		}
@@ -466,7 +470,11 @@ namespace MainWindow
 	}
 
 	void UpdateWindowTitle() {
-		std::wstring title = windowTitle;
+		std::wstring title;
+		{
+			std::lock_guard<std::mutex> lock(g_windowTitleLock);
+			title = g_windowTitle;
+		}
 		if (PPSSPP_ID >= 1 && GetInstancePeerCount() > 1) {
 			title.append(ConvertUTF8ToWString(StringFromFormat(" (instance: %d)", (int)PPSSPP_ID)));
 		}
@@ -474,7 +482,11 @@ namespace MainWindow
 	}
 
 	void SetWindowTitle(const wchar_t *title) {
-		windowTitle = title;
+		{
+			std::lock_guard<std::mutex> lock(g_windowTitleLock);
+			g_windowTitle = title;
+		}
+		PostMessage(MainWindow::GetHWND(), MainWindow::WM_USER_WINDOW_TITLE_CHANGED, 0, 0);
 	}
 
 	BOOL Show(HINSTANCE hInstance) {
@@ -615,16 +627,18 @@ namespace MainWindow
 		case WM_SETCURSOR:
 			if ((lParam & 0xFFFF) == HTCLIENT && g_Config.bShowImDebugger) {
 				LPTSTR win32_cursor = 0;
-				switch (ImGui_ImplPlatform_GetCursor()) {
-				case ImGuiMouseCursor_Arrow:        win32_cursor = IDC_ARROW; break;
-				case ImGuiMouseCursor_TextInput:    win32_cursor = IDC_IBEAM; break;
-				case ImGuiMouseCursor_ResizeAll:    win32_cursor = IDC_SIZEALL; break;
-				case ImGuiMouseCursor_ResizeEW:     win32_cursor = IDC_SIZEWE; break;
-				case ImGuiMouseCursor_ResizeNS:     win32_cursor = IDC_SIZENS; break;
-				case ImGuiMouseCursor_ResizeNESW:   win32_cursor = IDC_SIZENESW; break;
-				case ImGuiMouseCursor_ResizeNWSE:   win32_cursor = IDC_SIZENWSE; break;
-				case ImGuiMouseCursor_Hand:         win32_cursor = IDC_HAND; break;
-				case ImGuiMouseCursor_NotAllowed:   win32_cursor = IDC_NO; break;
+				if (g_Config.bShowImDebugger) {
+					switch (ImGui_ImplPlatform_GetCursor()) {
+					case ImGuiMouseCursor_Arrow:        win32_cursor = IDC_ARROW; break;
+					case ImGuiMouseCursor_TextInput:    win32_cursor = IDC_IBEAM; break;
+					case ImGuiMouseCursor_ResizeAll:    win32_cursor = IDC_SIZEALL; break;
+					case ImGuiMouseCursor_ResizeEW:     win32_cursor = IDC_SIZEWE; break;
+					case ImGuiMouseCursor_ResizeNS:     win32_cursor = IDC_SIZENS; break;
+					case ImGuiMouseCursor_ResizeNESW:   win32_cursor = IDC_SIZENESW; break;
+					case ImGuiMouseCursor_ResizeNWSE:   win32_cursor = IDC_SIZENWSE; break;
+					case ImGuiMouseCursor_Hand:         win32_cursor = IDC_HAND; break;
+					case ImGuiMouseCursor_NotAllowed:   win32_cursor = IDC_NO; break;
+					}
 				}
 				if (win32_cursor) {
 					SetCursor(::LoadCursor(nullptr, win32_cursor));
@@ -654,8 +668,8 @@ namespace MainWindow
 				// Hack: Take the opportunity to show the cursor.
 				mouseButtonDown = true;
 
-				float x = GET_X_LPARAM(lParam) * g_display.dpi_scale_x;
-				float y = GET_Y_LPARAM(lParam) * g_display.dpi_scale_y;
+				float x = GET_X_LPARAM(lParam) * g_display.dpi_scale;
+				float y = GET_Y_LPARAM(lParam) * g_display.dpi_scale;
 				WindowsRawInput::SetMousePos(x, y);
 
 				TouchInput touch{};
@@ -702,8 +716,8 @@ namespace MainWindow
 				prevCursorX = cursorX;
 				prevCursorY = cursorY;
 
-				float x = (float)cursorX * g_display.dpi_scale_x;
-				float y = (float)cursorY * g_display.dpi_scale_y;
+				float x = (float)cursorX * g_display.dpi_scale;
+				float y = (float)cursorY * g_display.dpi_scale;
 				WindowsRawInput::SetMousePos(x, y);
 
 				// Mouse moves now happen also when no button is pressed.
@@ -728,8 +742,8 @@ namespace MainWindow
 				// Hack: Take the opportunity to hide the cursor.
 				mouseButtonDown = false;
 
-				float x = (float)GET_X_LPARAM(lParam) * g_display.dpi_scale_x;
-				float y = (float)GET_Y_LPARAM(lParam) * g_display.dpi_scale_y;
+				float x = (float)GET_X_LPARAM(lParam) * g_display.dpi_scale;
+				float y = (float)GET_Y_LPARAM(lParam) * g_display.dpi_scale;
 				WindowsRawInput::SetMousePos(x, y);
 
 				TouchInput touch{};
@@ -748,8 +762,8 @@ namespace MainWindow
 
 		case WM_RBUTTONDOWN:
 		{
-			float x = GET_X_LPARAM(lParam) * g_display.dpi_scale_x;
-			float y = GET_Y_LPARAM(lParam) * g_display.dpi_scale_y;
+			float x = GET_X_LPARAM(lParam) * g_display.dpi_scale;
+			float y = GET_Y_LPARAM(lParam) * g_display.dpi_scale;
 
 			TouchInput touch{};
 			touch.buttons = 2;
@@ -762,8 +776,8 @@ namespace MainWindow
 
 		case WM_RBUTTONUP:
 		{
-			float x = GET_X_LPARAM(lParam) * g_display.dpi_scale_x;
-			float y = GET_Y_LPARAM(lParam) * g_display.dpi_scale_y;
+			float x = GET_X_LPARAM(lParam) * g_display.dpi_scale;
+			float y = GET_Y_LPARAM(lParam) * g_display.dpi_scale;
 
 			TouchInput touch{};
 			touch.buttons = 2;
@@ -811,6 +825,27 @@ namespace MainWindow
 		};
 	}
 
+	bool ConfirmAction(HWND hWnd, bool actionIsReset) {
+		const GlobalUIState state = GetUIState();
+		if (state == UISTATE_MENU || state == UISTATE_EXIT) {
+			return true;
+		}
+
+		std::string confirmExitMessage = GetConfirmExitMessage();
+		if (confirmExitMessage.empty()) {
+			return true;
+		}
+		auto di = GetI18NCategory(I18NCat::DIALOG);
+		auto mm = GetI18NCategory(I18NCat::MAINMENU);
+		if (!actionIsReset) {
+			confirmExitMessage += '\n';
+			confirmExitMessage += di->T("Are you sure you want to exit?");
+		} else {
+			// Reset is bit rarer, let's just omit the extra message for now.
+		}
+		return IDYES == MessageBox(hWnd, ConvertUTF8ToWString(confirmExitMessage).c_str(), ConvertUTF8ToWString(mm->T("Exit")).c_str(), MB_YESNO | MB_ICONQUESTION);
+	}
+
 	LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)	{
 		LRESULT darkResult = 0;
 		if (UAHDarkModeWndProc(hWnd, message, wParam, lParam, &darkResult)) {
@@ -826,6 +861,7 @@ namespace MainWindow
 			if (g_darkModeSupported) {
 				SendMessageW(hWnd, WM_THEMECHANGED, 0, 0);
 			}
+			SetAssertDialogParent(hWnd);
 			break;
 
 		case WM_USER_RUN_CALLBACK:
@@ -897,14 +933,15 @@ namespace MainWindow
 				} else {
 					g_activeWindow = WINDOW_OTHER;
 				}
+
 				if (!noFocusPause && g_Config.bPauseOnLostFocus && GetUIState() == UISTATE_INGAME) {
 					if (pause != Core_IsStepping()) {
 						if (disasmWindow) {
 							SendMessage(disasmWindow->GetDlgHandle(), WM_COMMAND, IDC_STOPGO, 0);
 						} else {
 							if (pause) {
-								Core_Break("ui.lost_focus", 0);
-							} else {
+								Core_Break(BreakReason::UIFocus, 0);
+							} else if (Core_BreakReason() == BreakReason::UIFocus) {
 								Core_Resume();
 							}
 						}
@@ -1088,12 +1125,17 @@ namespace MainWindow
 			break;
 
 		case WM_CLOSE:
+		{
+			if (ConfirmAction(hWnd, false)) {
+				DestroyWindow(hWnd);
+			}
+			return 0;
+		}
+
+		case WM_DESTROY:
 			InputDevice::StopPolling();
 			MainThread_Stop();
 			WindowsRawInput::Shutdown();
-			return DefWindowProc(hWnd,message,wParam,lParam);
-
-		case WM_DESTROY:
 			KillTimer(hWnd, TIMER_CURSORUPDATE);
 			KillTimer(hWnd, TIMER_CURSORMOVEUPDATE);
 			// Main window is gone, this tells the message loop to exit.
@@ -1124,7 +1166,6 @@ namespace MainWindow
 			NativeSetRestarting();
 			InputDevice::StopPolling();
 			MainThread_Stop();
-			coreState = CORE_POWERUP;
 			UpdateUIState(UISTATE_MENU);
 			MainThread_Start(g_Config.iGPUBackend == (int)GPUBackend::OPENGL);
 			InputDevice::BeginPolling();
@@ -1132,6 +1173,10 @@ namespace MainWindow
 
 		case WM_USER_SWITCHUMD_UPDATED:
 			UpdateSwitchUMD();
+			break;
+
+		case WM_USER_DESTROY:
+			DestroyWindow(hWnd);
 			break;
 
 		case WM_MENUSELECT:

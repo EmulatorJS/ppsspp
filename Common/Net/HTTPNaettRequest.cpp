@@ -12,8 +12,9 @@
 
 namespace http {
 
-HTTPSRequest::HTTPSRequest(RequestMethod method, const std::string &url, const std::string &postData, const std::string &postMime, const Path &outfile, ProgressBarMode progressBarMode, std::string_view name)
-	: Request(method, url, name, &cancelled_, progressBarMode), method_(method), postData_(postData), postMime_(postMime), outfile_(outfile) {
+HTTPSRequest::HTTPSRequest(RequestMethod method, std::string_view url, std::string_view postData, std::string_view postMime, const Path &outfile, RequestFlags flags, std::string_view name)
+	: Request(method, url, name, &cancelled_, flags), method_(method), postData_(postData), postMime_(postMime) {
+	outfile_ = outfile;
 }
 
 HTTPSRequest::~HTTPSRequest() {
@@ -68,6 +69,8 @@ bool HTTPSRequest::Done() {
 	if (completed_)
 		return true;
 
+	_dbg_assert_(res_ != nullptr);
+
 	if (!naettComplete(res_)) {
 		int total = 0;
 		int size = naettGetTotalBytesRead(res_, &total);
@@ -106,7 +109,8 @@ bool HTTPSRequest::Done() {
 		failed_ = true;
 		progress_.Update(bodyLength, bodyLength, true);
 	} else if (resultCode_ == 200) {
-		if (!outfile_.empty() && !buffer_.FlushToFile(outfile_)) {
+		bool clear = !(flags_ & RequestFlags::KeepInMemory);
+		if (!outfile_.empty() && !buffer_.FlushToFile(outfile_, clear)) {
 			ERROR_LOG(Log::IO, "Failed writing download to '%s'", outfile_.c_str());
 		}
 		progress_.Update(bodyLength, bodyLength, true);

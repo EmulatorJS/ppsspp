@@ -17,8 +17,7 @@ static View *focusedView;
 static bool focusMovementEnabled;
 bool focusForced;
 
-static std::function<void(UISound, float)> soundCallback;
-static bool soundEnabled = true;
+static std::function<void(UISound)> soundCallback;
 
 struct DispatchQueueItem {
 	Event *e;
@@ -97,9 +96,6 @@ bool IsFocusMovementEnabled() {
 }
 
 void LayoutViewHierarchy(const UIContext &dc, ViewGroup *root, bool ignoreInsets) {
-	_assert_(root);
-	_assert_(&dc);
-
 	Bounds rootBounds = ignoreInsets ? dc.GetBounds() : dc.GetLayoutBounds();
 
 	MeasureSpec horiz(EXACTLY, rootBounds.w);
@@ -129,17 +125,13 @@ static void MoveFocus(ViewGroup *root, FocusDirection direction) {
 	}
 }
 
-void SetSoundEnabled(bool enabled) {
-	soundEnabled = enabled;
-}
-
-void SetSoundCallback(std::function<void(UISound, float)> func) {
+void SetSoundCallback(std::function<void(UISound)> func) {
 	soundCallback = func;
 }
 
-void PlayUISound(UISound sound, float volume) {
-	if (soundEnabled && soundCallback) {
-		soundCallback(sound, volume);
+void PlayUISound(UISound sound) {
+	if (soundCallback) {
+		soundCallback(sound);
 	}
 }
 
@@ -376,7 +368,7 @@ void UpdateViewHierarchy(ViewGroup *root) {
 	frameCount++;
 
 	if (!root) {
-		ERROR_LOG(Log::System, "Tried to update a view hierarchy from a zero pointer root");
+		ERROR_LOG(Log::UI, "Tried to update a view hierarchy from a zero pointer root");
 		return;
 	}
 

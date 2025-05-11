@@ -14,23 +14,26 @@ enum class RequestMethod {
 	POST,
 };
 
-enum class ProgressBarMode {
-	NONE,
-	VISIBLE,
-	DELAYED,
+enum class RequestFlags {
+	Default = 0,
+	ProgressBar = 1,
+	ProgressBarDelayed = 2,
+	Cached24H = 4,
+	KeepInMemory = 8,
 };
+ENUM_CLASS_BITOPS(RequestFlags);
 
 // Abstract request.
 class Request {
 public:
-	Request(RequestMethod method, const std::string &url, std::string_view name, bool *cancelled, ProgressBarMode mode);
+	Request(RequestMethod method, std::string_view url, std::string_view name, bool *cancelled, RequestFlags mode);
 	virtual ~Request() {}
 
 	void SetAccept(const char *mime) {
 		acceptMime_ = mime;
 	}
 
-	void SetUserAgent(const std::string &userAgent) {
+	void SetUserAgent(std::string_view userAgent) {
 		userAgent_ = userAgent;
 	}
 
@@ -51,31 +54,46 @@ public:
 	virtual bool Done() = 0;
 	virtual bool Failed() const = 0;
 
-	virtual int ResultCode() const = 0;
-
 	// Returns 1.0 when done. That one value can be compared exactly - or just use Done().
 	float Progress() const { return progress_.progress; }
 	float SpeedKBps() const { return progress_.kBps; }
 	std::string url() const { return url_; }
-	virtual const Path &outfile() const = 0;
 
-	virtual void Cancel() = 0;
-	virtual bool IsCancelled() const = 0;
+	const Path &OutFile() const { return outfile_; }
+	void OverrideOutFile(const Path &path) {
+		outfile_ = path;
+	}
+	void AddFlag(RequestFlags flag) {
+		flags_ |= flag;
+	}
 
-	// Response
-	virtual Buffer &buffer() = 0;
-	virtual const Buffer &buffer() const = 0;
+	void Cancel() { cancelled_ = true; }
+	bool IsCancelled() const { return cancelled_; }
+
+	// If not downloading to a file, access this to get the result.
+	Buffer &buffer() { return buffer_; }
+	const Buffer &buffer() const { return buffer_; }
+
+	// NOTE! The value of ResultCode is INVALID until Done() returns true.
+	int ResultCode() const { return resultCode_; }
 
 protected:
-	std::function<void(Request &)> callback_;
 	RequestMethod method_;
 	std::string url_;
 	std::string name_;
 	const char *acceptMime_ = "*/*";
 	std::string userAgent_;
+	Path outfile_;
+	Buffer buffer_;
+	bool cancelled_ = false;
+	int resultCode_ = 0;
+	std::vector<std::string> responseHeaders_;
 
 	net::RequestProgress progress_;
-	ProgressBarMode progressBarMode_;
+	RequestFlags flags_;
+
+private:
+	std::function<void(Request &)> callback_;
 };
 
 using std::shared_ptr;
@@ -86,21 +104,22 @@ public:
 		CancelAll();
 	}
 
-	std::shared_ptr<Request> StartDownload(const std::string &url, const Path &outfile, ProgressBarMode mode, const char *acceptMime = nullptr);
+	// NOTE: This is the only version that supports the cache flag (for now).
+	std::shared_ptr<Request> StartDownload(std::string_view url, const Path &outfile, RequestFlags flags, const char *acceptMime = nullptr);
 
 	std::shared_ptr<Request> StartDownloadWithCallback(
-		const std::string &url,
+		std::string_view url,
 		const Path &outfile,
-		ProgressBarMode mode,
+		RequestFlags flags,
 		std::function<void(Request &)> callback,
 		std::string_view name = "",
 		const char *acceptMime = nullptr);
 
 	std::shared_ptr<Request> AsyncPostWithCallback(
-		const std::string &url,
-		const std::string &postData,
-		const std::string &postMime, // Use postMime = "application/x-www-form-urlencoded" for standard form-style posts, such as used by retroachievements. For encoding form data manually we have MultipartFormDataEncoder.
-		ProgressBarMode mode,
+		std::string_view url,
+		std::string_view postData,
+		std::string_view postMime, // Use postMime = "application/x-www-form-urlencoded" for standard form-style posts, such as used by retroachievements. For encoding form data manually we have MultipartFormDataEncoder.
+		RequestFlags flags,
 		std::function<void(Request &)> callback,
 		std::string_view name = "");
 
@@ -108,19 +127,24 @@ public:
 	void Update();
 	void CancelAll();
 
-	void SetUserAgent(const std::string &userAgent) {
+	void SetUserAgent(std::string_view userAgent) {
 		userAgent_ = userAgent;
 	}
 
-private:
-	static bool IsHttpsUrl(const std::string &url);
+	void SetCacheDir(const Path &path) {
+		cacheDir_ = path;
+	}
 
+	Path UrlToCachePath(const std::string_view url);
+
+private:
 	std::vector<std::shared_ptr<Request>> downloads_;
 	// These get copied to downloads_ in Update(). It's so that callbacks can add new downloads
 	// while running.
 	std::vector<std::shared_ptr<Request>> newDownloads_;
 
 	std::string userAgent_;
+	Path cacheDir_;
 };
 
 inline const char *RequestMethodToString(RequestMethod method) {

@@ -15,9 +15,6 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-#ifdef __MINGW32__
-#include <unistd.h>
-#endif
 #include <ctime>
 
 #include "Common/System/System.h"
@@ -55,5 +52,5 @@ const HLEFunction sceSircs[] =
 
 void Register_sceSircs()
 {
-	RegisterModule("sceSircs", ARRAY_SIZE(sceSircs), sceSircs);
+	RegisterHLEModule("sceSircs", ARRAY_SIZE(sceSircs), sceSircs);
 }

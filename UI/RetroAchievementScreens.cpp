@@ -36,7 +36,7 @@ AudioFileChooser::AudioFileChooser(RequesterToken token, std::string *value, std
 		layoutParams_->height = ITEM_HEIGHT;
 	}
 	Add(new Choice(ImageID("I_PLAY"), new LinearLayoutParams(ITEM_HEIGHT, ITEM_HEIGHT)))->OnClick.Add([=](UI::EventParams &) {
-		float achievementVolume = g_Config.iAchievementSoundVolume * 0.1f;
+		float achievementVolume = Volume100ToMultiplier(g_Config.iAchievementVolume);
 		g_BackgroundAudio.SFX().Play(sound_, achievementVolume);
 		return UI::EVENT_DONE;
 	});
@@ -62,16 +62,21 @@ AudioFileChooser::AudioFileChooser(RequesterToken token, std::string *value, std
 void RetroAchievementsListScreen::CreateTabs() {
 	auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
 
-	UI::LinearLayout *achievements = AddTab("Achievements", ac->T("Achievements"));
-	achievements->SetSpacing(5.0f);
-	CreateAchievementsTab(achievements);
+	AddTab("Achievements", ac->T("Achievements"), [this](UI::LinearLayout *parent) {
+		parent->SetSpacing(5.0f);
+		CreateAchievementsTab(parent);
+	});
 
-	UI::LinearLayout *leaderboards = AddTab("Leaderboards", ac->T("Leaderboards"));
-	leaderboards->SetSpacing(5.0f);
-	CreateLeaderboardsTab(leaderboards);
+	AddTab("Leaderboards", ac->T("Leaderboards"), [this](UI::LinearLayout *parent) {
+		parent->SetSpacing(5.0f);
+		CreateLeaderboardsTab(parent);
+	});
 
 #ifdef _DEBUG
-	CreateStatisticsTab(AddTab("AchievementsStatistics", ac->T("Statistics")));
+	AddTab("AchievementsStatistics", ac->T("Statistics"), [this](UI::LinearLayout *parent) {
+		parent->SetSpacing(5.0f);
+		CreateStatisticsTab(parent);
+	});
 #endif
 }
 
@@ -133,7 +138,7 @@ void RetroAchievementsListScreen::CreateLeaderboardsTab(UI::ViewGroup *viewGroup
 
 	viewGroup->Add(new ItemHeader(ac->T("Leaderboards")));
 
-	std::vector<rc_client_leaderboard_t *> leaderboards;
+	std::vector<const rc_client_leaderboard_t *> leaderboards;
 	rc_client_leaderboard_list_t *list = rc_client_create_leaderboard_list(Achievements::GetClient(), RC_CLIENT_LEADERBOARD_LIST_GROUPING_NONE);
 	for (uint32_t i = 0; i < list->num_buckets; i++) {
 		const rc_client_leaderboard_bucket_t &bucket = list->buckets[i];
@@ -200,7 +205,15 @@ void RetroAchievementsLeaderboardScreen::CreateTabs() {
 	const rc_client_leaderboard_t *leaderboard = rc_client_get_leaderboard_info(Achievements::GetClient(), leaderboardID_);
 
 	using namespace UI;
-	UI::LinearLayout *layout = AddTab("AchievementsLeaderboard", leaderboard->title);
+	AddTab("AchievementsLeaderboard", leaderboard->title, [this, leaderboard](UI::LinearLayout *parent) {
+		CreateLeaderboardTab(parent, leaderboard);
+	});
+}
+
+void RetroAchievementsLeaderboardScreen::CreateLeaderboardTab(UI::LinearLayout *layout, const rc_client_leaderboard_t *leaderboard) {
+	using namespace UI;
+	auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
+
 	layout->Add(new TextView(leaderboard->description));
 	layout->Add(new ItemHeader(ac->T("Leaderboard")));
 
@@ -254,10 +267,16 @@ void RetroAchievementsSettingsScreen::CreateTabs() {
 
 	using namespace UI;
 
-	CreateAccountTab(AddTab("AchievementsAccount", ac->T("Account")));
+	AddTab("AchievementsAccount", ac->T("Account"), [this](UI::LinearLayout *layout) {
+		CreateAccountTab(layout);
+	});
 	// Don't bother creating this tab if we don't have a file browser.
-	CreateCustomizeTab(AddTab("AchievementsCustomize", ac->T("Customize")));
-	CreateDeveloperToolsTab(AddTab("AchievementsDeveloperTools", sy->T("Developer Tools")));
+	AddTab("AchievementsCustomize", ac->T("Customize"), [this](UI::LinearLayout *layout) {
+		CreateCustomizeTab(layout);
+	});
+	AddTab("AchievementsDeveloperTools", sy->T("Developer Tools"), [this](UI::LinearLayout *layout) {
+		CreateDeveloperToolsTab(layout);
+	});
 }
 
 void RetroAchievementsSettingsScreen::sendMessage(UIMessage message, const char *value) {
@@ -340,7 +359,7 @@ void RetroAchievementsSettingsScreen::CreateAccountTab(UI::ViewGroup *viewGroup)
 		return UI::EVENT_DONE;
 	});
 	viewGroup->Add(new CheckBox(&g_Config.bAchievementsHardcoreMode, ac->T("Hardcore Mode (no savestates)")))->SetEnabledPtr(&g_Config.bAchievementsEnable);
-	viewGroup->Add(new CheckBox(&g_Config.bAchievementsSoundEffects, ac->T("Sound Effects")))->SetEnabledPtr(&g_Config.bAchievementsEnable);  // not yet implemented
+	viewGroup->Add(new CheckBox(&g_Config.bAchievementsSoundEffects, ac->T("Sound Effects")))->SetEnabledPtr(&g_Config.bAchievementsEnable);
 
 	viewGroup->Add(new ItemHeader(di->T("Links")));
 	viewGroup->Add(new Choice(ac->T("RetroAchievements website")))->OnClick.Add([&](UI::EventParams &) -> UI::EventReturn {
@@ -363,9 +382,10 @@ void RetroAchievementsSettingsScreen::CreateCustomizeTab(UI::ViewGroup *viewGrou
 		viewGroup->Add(new AudioFileChooser(GetRequesterToken(), &g_Config.sAchievementsUnlockAudioFile, ac->T("Achievement unlocked"), UISound::ACHIEVEMENT_UNLOCKED));
 		viewGroup->Add(new AudioFileChooser(GetRequesterToken(), &g_Config.sAchievementsLeaderboardSubmitAudioFile, ac->T("Leaderboard score submission"), UISound::LEADERBOARD_SUBMITTED));
 	}
-	PopupSliderChoice *volume = viewGroup->Add(new PopupSliderChoice(&g_Config.iAchievementSoundVolume, VOLUME_OFF, VOLUME_FULL, VOLUME_FULL, ac->T("Achievement sound volume"), screenManager()));
-	volume->SetEnabledPtr(&g_Config.bEnableSound);
-	volume->SetZeroLabel(a->T("Mute"));
+	PopupSliderChoice *achievementVolume = viewGroup->Add(new PopupSliderChoice(&g_Config.iAchievementVolume, VOLUME_OFF, VOLUMEHI_FULL, MultiplierToVolume100(0.6f), ac->T("Achievement sound volume"), screenManager()));
+	achievementVolume->SetFormat("%d%%");
+	achievementVolume->SetEnabledPtr(&g_Config.bEnableSound);
+	achievementVolume->SetZeroLabel(a->T("Mute"));
 
 	static const char *positions[] = { "None", "Bottom Left", "Bottom Center", "Bottom Right", "Top Left", "Top Center", "Top Right", "Center Left", "Center Right" };
 
@@ -490,7 +510,24 @@ void RenderAchievement(UIContext &dc, const rc_client_achievement_t *achievement
 	case AchievementRenderStyle::UNLOCKED:
 	{
 		dc.SetFontScale(1.0f, 1.0f);
-		dc.DrawTextRect(achievement->title, bounds.Inset(iconSpace + 12.0f, 2.0f, padding, padding), fgColor, ALIGN_TOPLEFT);
+		std::string title = achievement->title;
+
+		// Add simple display of the achievement types.
+		// Needs refinement, but works.
+		// See issue #19632
+		switch (achievement->type) {
+		case RC_CLIENT_ACHIEVEMENT_TYPE_MISSABLE:
+			title += " [m]";
+			break;
+		case RC_CLIENT_ACHIEVEMENT_TYPE_PROGRESSION:
+			title += " [p]";
+			break;
+		case RC_CLIENT_ACHIEVEMENT_TYPE_WIN:
+			title += " [win]";
+			break;
+		}
+
+		dc.DrawTextRect(title, bounds.Inset(iconSpace + 12.0f, 2.0f, padding, padding), fgColor, ALIGN_TOPLEFT);
 
 		dc.SetFontScale(0.66f, 0.66f);
 		dc.DrawTextRectSqueeze(DeNull(achievement->description), bounds.Inset(iconSpace + 12.0f, 39.0f, padding, padding), fgColor, ALIGN_TOPLEFT);
@@ -539,7 +576,7 @@ void RenderAchievement(UIContext &dc, const rc_client_achievement_t *achievement
 	dc.PopScissor();
 }
 
-static void RenderGameAchievementSummary(UIContext &dc, const Bounds &bounds, float alpha) {
+static void RenderGameAchievementSummary(UIContext &dc, const Bounds &bounds, float alpha, const rc_client_game_t *gameInfo) {
 	using namespace UI;
 	UI::Drawable background = dc.theme->itemStyle.background;
 
@@ -553,8 +590,6 @@ static void RenderGameAchievementSummary(UIContext &dc, const Bounds &bounds, fl
 	dc.FillRect(background, bounds);
 
 	dc.SetFontStyle(dc.theme->uiFont);
-
-	const rc_client_game_t *gameInfo = rc_client_get_game_info(Achievements::GetClient());
 
 	dc.SetFontScale(1.0f, 1.0f);
 	dc.DrawTextRect(gameInfo->title, bounds.Inset(iconSpace + 5.0f, 2.0f, 5.0f, 5.0f), fgColor, ALIGN_TOPLEFT);
@@ -706,7 +741,10 @@ void AchievementView::Click() {
 }
 
 void GameAchievementSummaryView::Draw(UIContext &dc) {
-	RenderGameAchievementSummary(dc, bounds_, 1.0f);
+	const rc_client_game_t *client_game = rc_client_get_game_info(Achievements::GetClient());
+	if (client_game) {
+		RenderGameAchievementSummary(dc, bounds_, 1.0f, client_game);
+	}
 }
 
 void GameAchievementSummaryView::GetContentDimensions(const UIContext &dc, float &w, float &h) const {

@@ -26,6 +26,7 @@
 #include "Common/System/OSD.h"
 #include "Common/File/VFS/VFS.h"
 #include "Common/VR/PPSSPPVR.h"
+#include "Common/Math/geom2d.h"
 #include "Common/Log.h"
 #include "Common/TimeUtil.h"
 #include "Core/Config.h"
@@ -43,6 +44,16 @@ struct Vertex {
 	uint32_t rgba;
 };
 
+static bool g_overrideScreenBounds;
+static Bounds g_screenBounds;
+
+void SetOverrideScreenFrame(const Bounds *bounds) {
+	g_overrideScreenBounds = bounds != nullptr;
+	if (bounds) {
+		g_screenBounds = *bounds;
+	}
+}
+
 FRect GetScreenFrame(float pixelWidth, float pixelHeight) {
 	FRect rc = FRect{
 		0.0f,
@@ -55,10 +66,10 @@ FRect GetScreenFrame(float pixelWidth, float pixelHeight) {
 
 	if (applyInset) {
 		// Remove the DPI scale to get back to pixels.
-		float left = System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_LEFT) / g_display.dpi_scale_x;
-		float right = System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_RIGHT) / g_display.dpi_scale_x;
-		float top = System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_TOP) / g_display.dpi_scale_y;
-		float bottom = System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_BOTTOM) / g_display.dpi_scale_y;
+		float left = System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_LEFT) / g_display.dpi_scale;
+		float right = System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_RIGHT) / g_display.dpi_scale;
+		float top = System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_TOP) / g_display.dpi_scale;
+		float bottom = System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_BOTTOM) / g_display.dpi_scale;
 
 		// Adjust left edge to compensate for cutouts (notches) if any.
 		rc.x += left;
@@ -66,6 +77,15 @@ FRect GetScreenFrame(float pixelWidth, float pixelHeight) {
 		rc.y += top;
 		rc.h -= (top + bottom);
 	}
+
+	if (g_overrideScreenBounds) {
+		// Set rectangle to match central node. Here we ignore bIgnoreScreenInsets.
+		rc.x = g_screenBounds.x;
+		rc.y = g_screenBounds.y;
+		rc.w = g_screenBounds.w;
+		rc.h = g_screenBounds.h;
+	}
+
 	return rc;
 }
 

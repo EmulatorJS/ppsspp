@@ -531,6 +531,7 @@ void GPUCommonHW::PreExecuteOp(u32 op, u32 diff) {
 }
 
 void GPUCommonHW::CopyDisplayToOutput(bool reallyDirty) {
+	drawEngineCommon_->FlushQueuedDepth();
 	// Flush anything left over.
 	drawEngineCommon_->Flush();
 
@@ -617,6 +618,11 @@ u32 GPUCommonHW::CheckGPUFeatures() const {
 
 	if (draw_->GetDeviceCaps().framebufferFetchSupported) {
 		features |= GPU_USE_FRAMEBUFFER_FETCH;
+		features |= GPU_USE_SHADER_BLENDING;   // doesn't matter if we are buffered or not here.
+	} else {
+		if (!g_Config.bSkipBufferEffects) {
+			features |= GPU_USE_SHADER_BLENDING;
+		}
 	}
 
 	if (draw_->GetShaderLanguageDesc().bitwiseOps && g_Config.bUberShaderVertex) {
@@ -949,9 +955,14 @@ void GPUCommonHW::Execute_Prim(u32 op, u32 diff) {
 	}
 
 	// This also makes skipping drawing very effective.
-	VirtualFramebuffer *vfb = framebufferManager_->SetRenderFrameBuffer(gstate_c.IsDirty(DIRTY_FRAMEBUF), gstate_c.skipDrawReason);
+	bool changed;
+	VirtualFramebuffer *vfb = framebufferManager_->SetRenderFrameBuffer(gstate_c.IsDirty(DIRTY_FRAMEBUF), gstate_c.skipDrawReason, &changed);
 	if (blueToAlpha) {
 		vfb->usageFlags |= FB_USAGE_BLUE_TO_ALPHA;
+	}
+
+	if (changed) {
+		drawEngineCommon_->FlushQueuedDepth();
 	}
 
 	if (gstate_c.dirty & DIRTY_VERTEXSHADER_STATE) {
@@ -1273,7 +1284,11 @@ void GPUCommonHW::Execute_Bezier(u32 op, u32 diff) {
 	gstate_c.framebufFormat = gstate.FrameBufFormat();
 
 	// This also make skipping drawing very effective.
-	VirtualFramebuffer *vfb = framebufferManager_->SetRenderFrameBuffer(gstate_c.IsDirty(DIRTY_FRAMEBUF), gstate_c.skipDrawReason);
+	bool changed;
+	VirtualFramebuffer *vfb = framebufferManager_->SetRenderFrameBuffer(gstate_c.IsDirty(DIRTY_FRAMEBUF), gstate_c.skipDrawReason, &changed);
+	if (changed) {
+		drawEngineCommon_->FlushQueuedDepth();
+	}
 	if (gstate_c.skipDrawReason & (SKIPDRAW_SKIPFRAME | SKIPDRAW_NON_DISPLAYED_FB)) {
 		// TODO: Should this eat some cycles?  Probably yes.  Not sure if important.
 		return;
@@ -1282,7 +1297,7 @@ void GPUCommonHW::Execute_Bezier(u32 op, u32 diff) {
 	CheckDepthUsage(vfb);
 
 	if (!Memory::IsValidAddress(gstate_c.vertexAddr)) {
-		ERROR_LOG_REPORT(Log::G3D, "Bad vertex address %08x!", gstate_c.vertexAddr);
+		ERROR_LOG(Log::G3D, "Bad vertex address %08x!", gstate_c.vertexAddr);
 		return;
 	}
 
@@ -1290,7 +1305,7 @@ void GPUCommonHW::Execute_Bezier(u32 op, u32 diff) {
 	const void *indices = NULL;
 	if ((gstate.vertType & GE_VTYPE_IDX_MASK) != GE_VTYPE_IDX_NONE) {
 		if (!Memory::IsValidAddress(gstate_c.indexAddr)) {
-			ERROR_LOG_REPORT(Log::G3D, "Bad index address %08x!", gstate_c.indexAddr);
+			ERROR_LOG(Log::G3D, "Bad index address %08x!", gstate_c.indexAddr);
 			return;
 		}
 		indices = Memory::GetPointerUnchecked(gstate_c.indexAddr);
@@ -1345,7 +1360,11 @@ void GPUCommonHW::Execute_Spline(u32 op, u32 diff) {
 	gstate_c.framebufFormat = gstate.FrameBufFormat();
 
 	// This also make skipping drawing very effective.
-	VirtualFramebuffer *vfb = framebufferManager_->SetRenderFrameBuffer(gstate_c.IsDirty(DIRTY_FRAMEBUF), gstate_c.skipDrawReason);
+	bool changed;
+	VirtualFramebuffer *vfb = framebufferManager_->SetRenderFrameBuffer(gstate_c.IsDirty(DIRTY_FRAMEBUF), gstate_c.skipDrawReason, &changed);
+	if (changed) {
+		drawEngineCommon_->FlushQueuedDepth();
+	}
 	if (gstate_c.skipDrawReason & (SKIPDRAW_SKIPFRAME | SKIPDRAW_NON_DISPLAYED_FB)) {
 		// TODO: Should this eat some cycles?  Probably yes.  Not sure if important.
 		return;
@@ -1354,7 +1373,7 @@ void GPUCommonHW::Execute_Spline(u32 op, u32 diff) {
 	CheckDepthUsage(vfb);
 
 	if (!Memory::IsValidAddress(gstate_c.vertexAddr)) {
-		ERROR_LOG_REPORT(Log::G3D, "Bad vertex address %08x!", gstate_c.vertexAddr);
+		ERROR_LOG(Log::G3D, "Bad vertex address %08x!", gstate_c.vertexAddr);
 		return;
 	}
 
@@ -1362,14 +1381,14 @@ void GPUCommonHW::Execute_Spline(u32 op, u32 diff) {
 	const void *indices = NULL;
 	if ((gstate.vertType & GE_VTYPE_IDX_MASK) != GE_VTYPE_IDX_NONE) {
 		if (!Memory::IsValidAddress(gstate_c.indexAddr)) {
-			ERROR_LOG_REPORT(Log::G3D, "Bad index address %08x!", gstate_c.indexAddr);
+			ERROR_LOG(Log::G3D, "Bad index address %08x!", gstate_c.indexAddr);
 			return;
 		}
 		indices = Memory::GetPointerUnchecked(gstate_c.indexAddr);
 	}
 
 	if (vertTypeIsSkinningEnabled(gstate.vertType)) {
-		DEBUG_LOG_REPORT(Log::G3D, "Unusual bezier/spline vtype: %08x, morph: %d, bones: %d", gstate.vertType, (gstate.vertType & GE_VTYPE_MORPHCOUNT_MASK) >> GE_VTYPE_MORPHCOUNT_SHIFT, vertTypeGetNumBoneWeights(gstate.vertType));
+		WARN_LOG_ONCE(unusualcurve, Log::G3D, "Unusual bezier/spline vtype: %08x, morph: %d, bones: %d", gstate.vertType, (gstate.vertType & GE_VTYPE_MORPHCOUNT_MASK) >> GE_VTYPE_MORPHCOUNT_SHIFT, vertTypeGetNumBoneWeights(gstate.vertType));
 	}
 
 	// Can't flush after setting gstate_c.submitType below since it'll be a mess - it must be done already.
@@ -1415,6 +1434,7 @@ void GPUCommonHW::Execute_Spline(u32 op, u32 diff) {
 }
 
 void GPUCommonHW::Execute_BlockTransferStart(u32 op, u32 diff) {
+	drawEngineCommon_->FlushQueuedDepth();
 	Flush();
 
 	PROFILE_THIS_SCOPE("block");  // don't include the flush in the profile, would be misleading.
@@ -1748,7 +1768,7 @@ void GPUCommonHW::Execute_BoneMtxData(u32 op, u32 diff) {
 			gstate_c.Dirty(DIRTY_BONEMATRIX0 << (num / 12));
 		} else {
 			gstate_c.deferredVertTypeDirty |= DIRTY_BONEMATRIX0 << (num / 12);
-		}
+		} 
 		((u32 *)gstate.boneMatrix)[num] = newVal;
 	}
 	num++;
@@ -1763,19 +1783,31 @@ void GPUCommonHW::Execute_TexFlush(u32 op, u32 diff) {
 	framebufferManager_->DiscardFramebufferCopy();
 }
 
+u32 GPUCommonHW::DrawSync(int mode) {
+	drawEngineCommon_->FlushQueuedDepth();
+	return GPUCommon::DrawSync(mode);
+}
+
+int GPUCommonHW::ListSync(int listid, int mode) {
+	drawEngineCommon_->FlushQueuedDepth();
+	return GPUCommon::ListSync(listid, mode);
+}
+
 size_t GPUCommonHW::FormatGPUStatsCommon(char *buffer, size_t size) {
 	float vertexAverageCycles = gpuStats.numVertsSubmitted > 0 ? (float)gpuStats.vertexGPUCycles / (float)gpuStats.numVertsSubmitted : 0.0f;
 	return snprintf(buffer, size,
 		"DL processing time: %0.2f ms, %d drawsync, %d listsync\n"
 		"Draw: %d (%d dec, %d culled), flushes %d, clears %d, bbox jumps %d (%d updates)\n"
 		"Vertices: %d dec: %d drawn: %d\n"
-		"FBOs active: %d (evaluations: %d)\n"
+		"FBOs active: %d (evaluations: %d, created %d)\n"
 		"Textures: %d, dec: %d, invalidated: %d, hashed: %d kB, clut %d\n"
 		"readbacks %d (%d non-block), upload %d (cached %d), depal %d\n"
 		"block transfers: %d\n"
 		"replacer: tracks %d references, %d unique textures\n"
 		"Cpy: depth %d, color %d, reint %d, blend %d, self %d\n"
-		"GPU cycles: %d (%0.1f per vertex)\n%s",
+		"GPU cycles: %d (%0.1f per vertex)\n"
+		"Z-rast: %0.2f+%0.2f+%0.2f (total %0.2f/%0.2f) ms\n"
+		"Z-rast: %d prim, %d nopix, %d small, %d earlysize, %d zcull, %d box\n%s",
 		gpuStats.msProcessingDisplayLists * 1000.0f,
 		gpuStats.numDrawSyncs,
 		gpuStats.numListSyncs,
@@ -1791,6 +1823,7 @@ size_t GPUCommonHW::FormatGPUStatsCommon(char *buffer, size_t size) {
 		gpuStats.numUncachedVertsDrawn,
 		(int)framebufferManager_->NumVFBs(),
 		gpuStats.numFramebufferEvaluations,
+		gpuStats.numFBOsCreated,
 		(int)textureCache_->NumLoadedTextures(),
 		gpuStats.numTexturesDecoded,
 		gpuStats.numTextureInvalidations,
@@ -1811,6 +1844,17 @@ size_t GPUCommonHW::FormatGPUStatsCommon(char *buffer, size_t size) {
 		gpuStats.numCopiesForSelfTex,
 		gpuStats.vertexGPUCycles + gpuStats.otherGPUCycles,
 		vertexAverageCycles,
+		gpuStats.msPrepareDepth * 1000.0,
+		gpuStats.msCullDepth * 1000.0,
+		gpuStats.msRasterizeDepth * 1000.0,
+		(gpuStats.msPrepareDepth + gpuStats.msCullDepth + gpuStats.msRasterizeDepth) * 1000.0,
+		gpuStats.msRasterTimeAvailable * 1000.0,
+		gpuStats.numDepthRasterPrims,
+		gpuStats.numDepthRasterNoPixels,
+		gpuStats.numDepthRasterTooSmall,
+		gpuStats.numDepthRasterEarlySize,
+		gpuStats.numDepthRasterZCulled,
+		gpuStats.numDepthEarlyBoxCulled,
 		debugRecording_ ? "(debug-recording)" : ""
 	);
 }

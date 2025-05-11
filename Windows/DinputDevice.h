@@ -19,10 +19,11 @@
 
 #include <vector>
 #include <InitGuid.h>
+#include <wrl/client.h>
 #define DIRECTINPUT_VERSION 0x0800
 #define DIRECTINPUT_RGBBUTTONS_MAX 128
 #include "InputDevice.h"
-#include "dinput.h"
+#include <dinput.h>
 
 class DinputDevice final :
 	public InputDevice
@@ -54,10 +55,10 @@ private:
 	            );
 	static unsigned int     pInstances;
 	static std::vector<DIDEVICEINSTANCE> devices;
-	static LPDIRECTINPUT8   pDI;
+	static Microsoft::WRL::ComPtr<IDirectInput8>   pDI;
 	static bool needsCheck_;
 	int                     pDevNum;
-	LPDIRECTINPUTDEVICE8    pJoystick;
+	Microsoft::WRL::ComPtr<IDirectInputDevice8>    pJoystick;
 	DIJOYSTATE2             pPrevState;
 	bool                    analog;
 	BYTE                    lastButtons_[128];

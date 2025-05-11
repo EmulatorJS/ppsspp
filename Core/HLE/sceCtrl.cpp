@@ -23,6 +23,7 @@
 #include "Common/Math/math_util.h"
 #include "Core/CoreTiming.h"
 #include "Core/HLE/HLE.h"
+#include "Core/HLE/ErrorCodes.h"
 #include "Core/HLE/FunctionWrappers.h"
 #include "Core/HLE/sceCtrl.h"
 #include "Core/HLE/sceKernel.h"
@@ -238,8 +239,7 @@ void __CtrlSetAnalogY(int stick, float y) {
 	ctrlCurrent.analog[stick][CTRL_ANALOG_Y] = scaledY;
 }
 
-void __CtrlSetRapidFire(bool state, int interval)
-{
+void __CtrlSetRapidFire(bool state, int interval) {
 	emuRapidFire = state;
 	emuRapidFireToggle = true;
 	emuRapidFireInterval = interval;
@@ -430,12 +430,8 @@ void __CtrlShutdown()
 
 static u32 sceCtrlSetSamplingCycle(u32 cycle)
 {
-	DEBUG_LOG(Log::sceCtrl, "sceCtrlSetSamplingCycle(%u)", cycle);
-
-	if ((cycle > 0 && cycle < 5555) || cycle > 20000)
-	{
-		WARN_LOG(Log::sceCtrl, "SCE_KERNEL_ERROR_INVALID_VALUE=sceCtrlSetSamplingCycle(%u)", cycle);
-		return SCE_KERNEL_ERROR_INVALID_VALUE;
+	if ((cycle > 0 && cycle < 5555) || cycle > 20000) {
+		return hleLogWarning(Log::sceCtrl, SCE_KERNEL_ERROR_INVALID_VALUE);
 	}
 
 	u32 prev = ctrlCycle;
@@ -446,120 +442,104 @@ static u32 sceCtrlSetSamplingCycle(u32 cycle)
 	if (cycle > 0)
 		CoreTiming::ScheduleEvent(usToCycles(ctrlCycle), ctrlTimer, 0);
 
-	return prev;
+	return hleLogDebug(Log::sceCtrl, prev);
 }
 
 static int sceCtrlGetSamplingCycle(u32 cyclePtr)
 {
-	DEBUG_LOG(Log::sceCtrl, "sceCtrlGetSamplingCycle(%08x)", cyclePtr);
 	if (Memory::IsValidAddress(cyclePtr))
-		Memory::Write_U32(ctrlCycle, cyclePtr);
-	return 0;
+		Memory::WriteUnchecked_U32(ctrlCycle, cyclePtr);
+	return hleLogDebug(Log::sceCtrl, 0);
 }
 
 static u32 sceCtrlSetSamplingMode(u32 mode)
 {
 	u32 retVal = 0;
-
-	DEBUG_LOG(Log::sceCtrl, "sceCtrlSetSamplingMode(%i)", mode);
 	if (mode > 1)
-		return SCE_KERNEL_ERROR_INVALID_MODE;
+		return hleLogError(Log::sceCtrl, SCE_KERNEL_ERROR_INVALID_MODE);
 
 	retVal = analogEnabled == true ? CTRL_MODE_ANALOG : CTRL_MODE_DIGITAL;
 	analogEnabled = mode == CTRL_MODE_ANALOG ? true : false;
-	return retVal;
+	return hleLogDebug(Log::sceCtrl, retVal);
 }
 
 static int sceCtrlGetSamplingMode(u32 modePtr)
 {
 	u32 retVal = analogEnabled == true ? CTRL_MODE_ANALOG : CTRL_MODE_DIGITAL;
-	DEBUG_LOG(Log::sceCtrl, "%d=sceCtrlGetSamplingMode(%08x)", retVal, modePtr);
 
 	if (Memory::IsValidAddress(modePtr))
-		Memory::Write_U32(retVal, modePtr);
+		Memory::WriteUnchecked_U32(retVal, modePtr);
 
-	return 0;
+	return hleLogDebug(Log::sceCtrl, 0);
 }
 
 static int sceCtrlSetIdleCancelThreshold(int idleReset, int idleBack)
 {
-	DEBUG_LOG(Log::sceCtrl, "FAKE sceCtrlSetIdleCancelThreshold(%d, %d)", idleReset, idleBack);
-
 	if (idleReset < -1 || idleBack < -1 || idleReset > 128 || idleBack > 128)
-		return SCE_KERNEL_ERROR_INVALID_VALUE;
+		return hleLogError(Log::sceCtrl, SCE_KERNEL_ERROR_INVALID_VALUE);
 
 	ctrlIdleReset = idleReset;
 	ctrlIdleBack = idleBack;
-	return 0;
+	return hleLogDebug(Log::sceCtrl, 0);
 }
 
 static int sceCtrlGetIdleCancelThreshold(u32 idleResetPtr, u32 idleBackPtr)
 {
-	DEBUG_LOG(Log::sceCtrl, "sceCtrlSetIdleCancelThreshold(%08x, %08x)", idleResetPtr, idleBackPtr);
-
 	if (idleResetPtr && !Memory::IsValidAddress(idleResetPtr))
-		return SCE_KERNEL_ERROR_PRIV_REQUIRED;
+		return hleLogError(Log::sceCtrl, SCE_KERNEL_ERROR_PRIV_REQUIRED);
 	if (idleBackPtr && !Memory::IsValidAddress(idleBackPtr))
-		return SCE_KERNEL_ERROR_PRIV_REQUIRED;
+		return hleLogError(Log::sceCtrl, SCE_KERNEL_ERROR_PRIV_REQUIRED);
 
 	if (idleResetPtr)
 		Memory::Write_U32(ctrlIdleReset, idleResetPtr);
 	if (idleBackPtr)
 		Memory::Write_U32(ctrlIdleBack, idleBackPtr);
 
-	return 0;
+	return hleLogDebug(Log::sceCtrl, 0);
 }
 
 static int sceCtrlReadBufferPositive(u32 ctrlDataPtr, u32 nBufs)
 {
 	int done = __CtrlReadBuffer(ctrlDataPtr, nBufs, false, false);
 	hleEatCycles(330);
-	if (done != 0)
-	{
-		DEBUG_LOG(Log::sceCtrl, "%d=sceCtrlReadBufferPositive(%08x, %i)", done, ctrlDataPtr, nBufs);
-	}
-	else
-	{
+	if (done != 0) {
+		return hleLogDebug(Log::sceCtrl, done);
+	} else {
 		waitingThreads.push_back(__KernelGetCurThread());
 		__KernelWaitCurThread(WAITTYPE_CTRL, CTRL_WAIT_POSITIVE, ctrlDataPtr, 0, false, "ctrl buffer waited");
-		DEBUG_LOG(Log::sceCtrl, "sceCtrlReadBufferPositive(%08x, %i) - waiting", ctrlDataPtr, nBufs);
+		return hleLogDebug(Log::sceCtrl, done, "waiting");
 	}
-	return done;
 }
 
 static int sceCtrlReadBufferNegative(u32 ctrlDataPtr, u32 nBufs)
 {
 	int done = __CtrlReadBuffer(ctrlDataPtr, nBufs, true, false);
 	hleEatCycles(330);
-	if (done != 0)
-	{
-		DEBUG_LOG(Log::sceCtrl, "%d=sceCtrlReadBufferNegative(%08x, %i)", done, ctrlDataPtr, nBufs);
+	if (done != 0) {
+		return hleLogDebug(Log::sceCtrl, done);
 	}
 	else
 	{
 		waitingThreads.push_back(__KernelGetCurThread());
 		__KernelWaitCurThread(WAITTYPE_CTRL, CTRL_WAIT_NEGATIVE, ctrlDataPtr, 0, false, "ctrl buffer waited");
-		DEBUG_LOG(Log::sceCtrl, "sceCtrlReadBufferNegative(%08x, %i) - waiting", ctrlDataPtr, nBufs);
+		return hleLogDebug(Log::sceCtrl, done, "waiting");
 	}
-	return done;
 }
 
 static int sceCtrlPeekBufferPositive(u32 ctrlDataPtr, u32 nBufs)
 {
 	int done = __CtrlReadBuffer(ctrlDataPtr, nBufs, false, true);
 	// Some homebrew call this in a tight loop - so VERBOSE it is.
-	VERBOSE_LOG(Log::sceCtrl, "%d=sceCtrlPeekBufferPositive(%08x, %i)", done, ctrlDataPtr, nBufs);
 	hleEatCycles(330);
-	return done;
+	return hleLogVerbose(Log::sceCtrl, done);
 }
 
 static int sceCtrlPeekBufferNegative(u32 ctrlDataPtr, u32 nBufs)
 {
 	int done = __CtrlReadBuffer(ctrlDataPtr, nBufs, true, true);
 	// Some homebrew call this in a tight loop - so VERBOSE it is.
-	VERBOSE_LOG(Log::sceCtrl, "%d=sceCtrlPeekBufferNegative(%08x, %i)", done, ctrlDataPtr, nBufs);
 	hleEatCycles(330);
-	return done;
+	return hleLogVerbose(Log::sceCtrl, done);
 }
 
 static void __CtrlWriteUserLatch(CtrlLatch *userLatch, int bufs) {
@@ -577,7 +557,7 @@ static u32 sceCtrlPeekLatch(u32 latchDataPtr) {
 	if (userLatch.IsValid()) {
 		__CtrlWriteUserLatch(userLatch, ctrlLatchBufs);
 	}
-	return hleLogSuccessI(Log::sceCtrl, ctrlLatchBufs);
+	return hleLogDebug(Log::sceCtrl, ctrlLatchBufs);
 }
 
 static u32 sceCtrlReadLatch(u32 latchDataPtr) {
@@ -585,7 +565,7 @@ static u32 sceCtrlReadLatch(u32 latchDataPtr) {
 	if (userLatch.IsValid()) {
 		__CtrlWriteUserLatch(userLatch, ctrlLatchBufs);
 	}
-	return hleLogSuccessI(Log::sceCtrl, __CtrlResetLatch());
+	return hleLogDebug(Log::sceCtrl, __CtrlResetLatch());
 }
 
 static const HLEFunction sceCtrl[] =
@@ -611,20 +591,20 @@ static const HLEFunction sceCtrl[] =
 
 void Register_sceCtrl()
 {
-	RegisterModule("sceCtrl", ARRAY_SIZE(sceCtrl), sceCtrl);
+	RegisterHLEModule("sceCtrl", ARRAY_SIZE(sceCtrl), sceCtrl);
 }
 
 void Register_sceCtrl_driver()
 {
-	RegisterModule("sceCtrl_driver", ARRAY_SIZE(sceCtrl), sceCtrl);
+	RegisterHLEModule("sceCtrl_driver", ARRAY_SIZE(sceCtrl), sceCtrl);
 }
 
 u16 sceCtrlGetRightVibration() {
-	return rightVibration;
+	return hleNoLog(rightVibration);
 }
 
 u16 sceCtrlGetLeftVibration() {
-	return leftVibration;
+	return hleNoLog(leftVibration);
 }
 
 namespace SceCtrl {

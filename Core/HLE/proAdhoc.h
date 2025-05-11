@@ -17,22 +17,7 @@
 
 #pragma once
 
-// Net stuff
-#if defined(_WIN32)
-#include "Common/CommonWindows.h"
-
-#include <WS2tcpip.h>
-#else
-#include <unistd.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/select.h>
-#include <netinet/in.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <errno.h>
-#endif
+#include "Common/Net/SocketCompat.h"
 
 #ifdef _MSC_VER
 #define PACK  // on MSVC we use #pragma pack() instead so let's kill this.
@@ -52,70 +37,6 @@
 #include "Core/HLE/sceKernel.h"
 #include "Core/HLE/sceKernelMutex.h"
 #include "Core/HLE/sceUtility.h"
-
-#ifdef _WIN32
-#undef errno
-#undef ESHUTDOWN
-#undef ECONNABORTED
-#undef ECONNRESET
-#undef ECONNREFUSED
-#undef ENETUNREACH
-#undef ENOTCONN
-#undef EBADF
-#undef EAGAIN
-#undef EINPROGRESS
-#undef EISCONN
-#undef EALREADY
-#undef ETIMEDOUT
-#undef EOPNOTSUPP
-#define errno WSAGetLastError()
-#define ESHUTDOWN WSAESHUTDOWN
-#define ECONNABORTED WSAECONNABORTED
-#define ECONNRESET WSAECONNRESET
-#define ECONNREFUSED WSAECONNREFUSED
-#define ENETUNREACH WSAENETUNREACH
-#define ENOTCONN WSAENOTCONN
-#define EBADF WSAEBADF
-#define EAGAIN WSAEWOULDBLOCK
-#define EINPROGRESS WSAEWOULDBLOCK
-#define EISCONN WSAEISCONN
-#define EALREADY WSAEALREADY
-#define ETIMEDOUT WSAETIMEDOUT
-#define EOPNOTSUPP WSAEOPNOTSUPP
-inline bool connectInProgress(int errcode){ return (errcode == WSAEWOULDBLOCK || errcode == WSAEINPROGRESS || errcode == WSAEALREADY || errcode == WSAEINVAL); } // WSAEINVAL should be treated as WSAEALREADY during connect for backward-compatibility with Winsock 1.1 
-inline bool isDisconnected(int errcode) { return (errcode == WSAECONNRESET || errcode == WSAECONNABORTED || errcode == WSAESHUTDOWN); }
-#else
-#define INVALID_SOCKET -1
-#define SOCKET_ERROR -1
-#define closesocket close
-#ifndef ESHUTDOWN
-#define ESHUTDOWN ENETDOWN
-#endif
-inline bool connectInProgress(int errcode){ return (errcode == EAGAIN || errcode == EWOULDBLOCK || errcode == EINPROGRESS || errcode == EALREADY); }
-inline bool isDisconnected(int errcode) { return (errcode == EPIPE || errcode == ECONNRESET || errcode == ECONNABORTED || errcode == ESHUTDOWN); }
-#endif
-
-#ifndef POLL_ERR
-#define POLL_ERR 0x008 /* Error condition. */
-#endif
-#ifndef POLLERR
-#define POLLERR POLL_ERR
-#endif
-
-#ifndef POLL_PRI
-#define POLL_PRI 0x002 /* There is urgent data to read. */
-#endif
-#ifndef POLLPRI
-#define POLLPRI POLL_PRI
-#endif
-
-#ifndef SD_RECEIVE
-#define SD_RECEIVE SHUT_RD //0x00
-#endif
-
-#ifndef SD_BOTH
-#define SD_BOTH SHUT_RDWR //0x02
-#endif
 
 #define IsMatch(buf1, buf2)	(memcmp(&buf1, &buf2, sizeof(buf1)) == 0)
 
@@ -1131,10 +1052,6 @@ int findFreeMatchingID();
 */
 SceNetAdhocMatchingContext * findMatchingContext(int id);
 
-/*
-* Notify Matching Event Handler
-*/
-void notifyMatchingHandler(SceNetAdhocMatchingContext * context, ThreadMessage * msg, void * opt, u32_le &bufAddr, u32_le &bufLen, u32_le * args);
 // Notifiy Adhocctl Handlers
 void notifyAdhocctlHandlers(u32 flag, u32 error);
 
@@ -1306,12 +1223,28 @@ uint32_t getLocalIp(int sock);
 /*
  * Check if an IP (big-endian/network order) is Private or Public IP
  */
+bool isMulticastIP(uint32_t ip);
+
+/*
+ * Check if an IP (big-endian/network order) is Private or Public IP
+ */
 bool isPrivateIP(uint32_t ip);
+
+/*
+ * Check if an IP (big-endian/network order) is APIPA(169.254.x.x) IP
+ */
+bool isAPIPA(uint32_t ip);
 
 /*
  * Check if an IP (big-endian/network order) is Loopback IP
  */
 bool isLoopbackIP(uint32_t ip);
+
+/*
+ * Check if an IP (big-endian/network order) is a Broadcast IP
+ * Default subnet mask is 255.255.255.0
+ */
+bool isBroadcastIP(uint32_t ip, const uint32_t subnetmask = 0x00ffffff);
 
 /*
  * Get Number of bytes available in buffer to be Received
@@ -1472,10 +1405,13 @@ bool resolveMAC(SceNetEtherAddr* mac, uint32_t* ip, u16* port_offset = nullptr);
  * @param group_name To-be-checked Network Name
  * @return 1 if valid or... 0
  */
-bool validNetworkName(const SceNetAdhocctlGroupName * groupname);
+bool validNetworkName(const char *data);
 
 // Convert Matching Event Code to String
 const char* getMatchingEventStr(int code);
 
 // Convert Matching Opcode ID to String
 const char* getMatchingOpcodeStr(int code);
+
+// Convert adhoc ctl state to string
+const char *AdhocCtlStateToString(int state);

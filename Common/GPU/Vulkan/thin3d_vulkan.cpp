@@ -271,7 +271,7 @@ public:
 	}
 
 	void SetDynamicUniformData(const void *data, size_t size) {
-		_dbg_assert_(size <= uboSize_);
+		_dbg_assert_((int)size <= uboSize_);
 		memcpy(ubo_, data, size);
 	}
 
@@ -802,13 +802,15 @@ bool VKTexture::Create(VkCommandBuffer cmd, VulkanBarrierBatch *postBarriers, Vu
 		usageBits |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
 	}
 
-	VkComponentMapping r8AsAlpha[4] = { VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_R };
-	VkComponentMapping r8AsColor[4] = { VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_ONE };
+	VkComponentMapping r8AsAlpha[4] = { {VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_ONE, VK_COMPONENT_SWIZZLE_R} };
+	VkComponentMapping r8AsColor[4] = { {VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_R, VK_COMPONENT_SWIZZLE_ONE} };
 
 	VkComponentMapping *swizzle = nullptr;
 	switch (desc.swizzle) {
 	case TextureSwizzle::R8_AS_ALPHA: swizzle = r8AsAlpha; break;
 	case TextureSwizzle::R8_AS_GRAYSCALE: swizzle = r8AsColor; break;
+	case TextureSwizzle::DEFAULT:
+		break;
 	}
 	VulkanBarrierBatch barrier;
 	if (!vkTex_->CreateDirect(width_, height_, 1, mipLevels_, vulkanFormat, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, usageBits, &barrier, swizzle)) {
@@ -820,7 +822,7 @@ bool VKTexture::Create(VkCommandBuffer cmd, VulkanBarrierBatch *postBarriers, Vu
 	if (desc.initData.size()) {
 		UpdateInternal(cmd, pushBuffer, desc.initData.data(), desc.initDataCallback, (int)desc.initData.size());
 		// Generate the rest of the mips automatically.
-		if (desc.initData.size() < mipLevels_) {
+		if ((int)desc.initData.size() < mipLevels_) {
 			vkTex_->GenerateMips(cmd, (int)desc.initData.size(), false);
 			layout = VK_IMAGE_LAYOUT_GENERAL;
 		}

@@ -15,9 +15,6 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-// This is pretty much a stub implementation. Doesn't actually do anything, just tries to return values
-// to keep games happy anyway.
-
 #include <mutex>
 #include <deque>
 #include <StringUtils.h>
@@ -27,7 +24,6 @@
 #include "Core/HLE/FunctionWrappers.h"
 #include "Core/HLE/sceNp.h"
 #include "Core/HLE/sceNp2.h"
-
 
 bool npMatching2Inited = false;
 SceNpAuthMemoryStat npMatching2MemStat = {};
@@ -50,6 +46,37 @@ void notifyNpMatching2Handlers(NpMatching2Args &args, u32 ctxId, u32 serverId, u
 	std::lock_guard<std::recursive_mutex> npMatching2Guard(npMatching2EvtMtx);
 	// TODO: separate/map each list per ctxId
 	npMatching2Events.push_back(args);
+}
+
+bool NpMatching2ProcessEvents() {
+	if (npMatching2Events.empty()) {
+		return false;
+	}
+
+	auto& args = npMatching2Events.front();
+	auto& event = args.data[0];
+	auto& stat = args.data[1];
+	auto& serverIdPtr = args.data[2];
+	auto& inStructPtr = args.data[3];
+	auto& newStat = args.data[5];
+	npMatching2Events.pop_front();
+
+	//int handlerID = id - 1;
+	for (std::map<int, NpMatching2Handler>::iterator it = npMatching2Handlers.begin(); it != npMatching2Handlers.end(); ++it) {
+		//if (it->first == handlerID)
+		{
+			DEBUG_LOG(Log::sceNet, "NpMatching2Callback [HandlerID=%i][EventID=%04x][State=%04x][ArgsPtr=%08x]", it->first, event, stat, it->second.argument);
+			hleEnqueueCall(it->second.entryPoint, 7, args.data);
+		}
+	}
+
+	// Per npMatching2 function callback
+	u32* inStruct = (u32*)Memory::GetPointer(inStructPtr);
+	if (Memory::IsValidAddress(inStruct[0])) {
+		DEBUG_LOG(Log::sceNet, "NpMatching2Callback [ServerID=%i][EventID=%04x][State=%04x][FuncAddr=%08x][ArgsPtr=%08x]", *(u32*)Memory::GetPointer(serverIdPtr), event, stat, inStruct[0], inStruct[1]);
+		hleEnqueueCall(inStruct[0], 7, args.data);
+	}
+	return true;
 }
 
 static int sceNpMatching2Init(int poolSize, int threadPriority, int cpuAffinityMask, int threadStackSize)
@@ -448,7 +475,7 @@ static int sceNpMatching2LeaveRoom(int ctxId, u32 reqParamPtr, u32 optParamPtr, 
 	return 0;
 }
 
-static int sceNpMatching2JoinRoom(int ctxId, u32 reqParamPtr, u32 optParamPtr, u32 unknown1, u32 unknown2, u32 assignedReqIdPtr)
+static int sceNpMatching2CreateJoinRoom(int ctxId, u32 reqParamPtr, u32 optParamPtr, u32 unknown1, u32 unknown2, u32 assignedReqIdPtr)
 {
 	ERROR_LOG(Log::sceNet, "UNIMPL %s(%d, %08x, %08x, %08x[%08x]) at %08x", __FUNCTION__, ctxId, reqParamPtr, optParamPtr, assignedReqIdPtr, Memory::Read_U32(assignedReqIdPtr), currentMIPS->pc);
 	if (!npMatching2Inited)
@@ -561,12 +588,19 @@ const HLEFunction sceNpMatching2[] = {
 	{0xF47342FC, &WrapI_IUI<sceNpMatching2GetServerIdListLocal>,		"sceNpMatching2GetServerIdListLocal",			'i', "ixi"    },
 	{0x4EE3A8EC, &WrapI_IUUU<sceNpMatching2GetServerInfo>,				"sceNpMatching2GetServerInfo",					'i', "ixxx"   },
 	{0xC870535A, &WrapI_IUUU<sceNpMatching2LeaveRoom>,					"sceNpMatching2LeaveRoom",						'i', "ixxx"   },
-	{0xAAD0946A, &WrapI_IUUUUU<sceNpMatching2JoinRoom>,					"sceNpMatching2JoinRoom",						'i', "ixxxxx" },
+	{0xAAD0946A, &WrapI_IUUUUU<sceNpMatching2CreateJoinRoom>,			"sceNpMatching2CreateJoinRoom",					'i', "ixxxxx" },
 	{0x81C13E6D, &WrapI_IUUU<sceNpMatching2SearchRoom>,					"sceNpMatching2SearchRoom",						'i', "ixxx"   },
 	{0x55F7837F, &WrapI_IUUU<sceNpMatching2SendRoomChatMessage>,		"sceNpMatching2SendRoomChatMessage",			'i', "ixxx"   },
+	{0x12C5A111, nullptr,		                                        "sceNpMatching2GetRoomDataExternalList",		'i', ""       },
+	{0x6D6D0C75, nullptr,		                                        "sceNpMatching2SignalingGetConnectionStatus",	'i', ""       },
+	{0x7BBFC427, nullptr,		                                        "sceNpMatching2JoinRoom",			            'i', ""       },
+	{0x97529ECC, nullptr,		                                        "sceNpMatching2KickoutRoomMember",			    'i', ""       },
+	{0xA53E7C69, nullptr,		                                        "sceNpMatching2GetWorldInfoList",			    'i', ""       },
+	{0xE6C93DBD, nullptr,		                                        "sceNpMatching2SetRoomDataInternal",			'i', ""       },
+	{0xFADBA9DB, nullptr,		                                        "sceNpMatching2AbortRequest",			        'i', ""       },
 };
 
 void Register_sceNpMatching2()
 {
-	RegisterModule("sceNpMatching2", ARRAY_SIZE(sceNpMatching2), sceNpMatching2);
+	RegisterHLEModule("sceNpMatching2", ARRAY_SIZE(sceNpMatching2), sceNpMatching2);
 }

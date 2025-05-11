@@ -1,8 +1,11 @@
+#include <algorithm>
+#include <cstdarg>
 #include <climits>
 #include <cstdio>
 #include <string>
 
 #include "Common/Data/Text/Parsers.h"
+#include "Common/Data/Text/I18n.h"
 #include "Common/StringUtils.h"
 
 // Not strictly a parser...
@@ -27,6 +30,19 @@ std::string NiceSizeFormat(uint64_t size) {
 	char buffer[16];
 	NiceSizeFormat(size, buffer, sizeof(buffer));
 	return std::string(buffer);
+}
+
+std::string NiceTimeFormat(int seconds) {
+	auto di = GetI18NCategory(I18NCat::DIALOG);
+	if (seconds < 60) {
+		return StringFromFormat(di->T_cstr("%d seconds"), seconds);
+	} else if (seconds < 60 * 60) {
+		int minutes = seconds / 60;
+		return StringFromFormat(di->T_cstr("%d minutes"), minutes);
+	} else {
+		int hours = seconds / 3600;
+		return StringFromFormat(di->T_cstr("%d hours"), hours);
+	}
 }
 
 bool Version::ParseVersionString(std::string str) {
@@ -142,4 +158,17 @@ bool TryParse(const std::string &str, bool *const output) {
 		return false;
 
 	return true;
+}
+
+StringWriter &StringWriter::F(const char *format, ...) {
+	const size_t remainder = bufSize_ - (p_ - start_);
+	if (remainder < 3) {
+		return *this;
+	}
+	va_list args;
+	va_start(args, format);
+	int wouldHaveBeenWritten = vsnprintf(p_, remainder, format, args);
+	p_ += std::min((int)remainder, wouldHaveBeenWritten);
+	va_end(args);
+	return *this;
 }

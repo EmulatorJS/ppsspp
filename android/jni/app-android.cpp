@@ -147,13 +147,12 @@ static int framesPerBuffer = 0;
 static int androidVersion;
 static int deviceType;
 
-// Should only be used for display detection during startup (for config defaults etc)
 // This is the ACTUAL display size, not the hardware scaled display size.
-// Exposed so it can be displayed on the touchscreen test.
 static int display_xres;
 static int display_yres;
-static int display_dpi_x;
-static int display_dpi_y;
+static int display_dpi;
+static float display_scale;  // Scale factor due to backbuffer scaling
+
 static int backbuffer_format;	// Android PixelFormat enum
 
 static int desiredBackbufferSizeX;
@@ -222,7 +221,7 @@ void Android_AttachThreadToJNI() {
 
 		if (status < 0) {
 			// bad, but what can we do other than report..
-			ERROR_LOG_REPORT_ONCE(threadAttachFail, Log::System, "Failed to attach thread %s to JNI.", GetCurrentThreadName());
+			ERROR_LOG(Log::System, "Failed to attach thread %s to JNI.", GetCurrentThreadName());
 		}
 	} else {
 		WARN_LOG(Log::System, "Thread %s was already attached to JNI.", GetCurrentThreadName());
@@ -412,6 +411,8 @@ int64_t System_GetPropertyInt(SystemProperty prop) {
 		return display_xres;
 	case SYSPROP_DISPLAY_YRES:
 		return display_yres;
+	case SYSPROP_DISPLAY_DPI:
+		return display_dpi;
 	case SYSPROP_AUDIO_SAMPLE_RATE:
 		return sampleRate;
 	case SYSPROP_AUDIO_FRAMES_PER_BUFFER:
@@ -430,13 +431,13 @@ float System_GetPropertyFloat(SystemProperty prop) {
 	case SYSPROP_DISPLAY_REFRESH_RATE:
 		return g_display.display_hz;
 	case SYSPROP_DISPLAY_SAFE_INSET_LEFT:
-		return g_safeInsetLeft;
+		return g_safeInsetLeft * display_scale * g_display.dpi_scale;
 	case SYSPROP_DISPLAY_SAFE_INSET_RIGHT:
-		return g_safeInsetRight;
+		return g_safeInsetRight * display_scale * g_display.dpi_scale;
 	case SYSPROP_DISPLAY_SAFE_INSET_TOP:
-		return g_safeInsetTop;
+		return g_safeInsetTop * display_scale * g_display.dpi_scale;
 	case SYSPROP_DISPLAY_SAFE_INSET_BOTTOM:
-		return g_safeInsetBottom;
+		return g_safeInsetBottom * display_scale * g_display.dpi_scale;
 	default:
 		return -1;
 	}
@@ -681,6 +682,8 @@ static void parse_args(std::vector<std::string> &args, const std::string value) 
 // Need to use raw Android logging before NativeInit.
 #define EARLY_LOG(...)  __android_log_print(ANDROID_LOG_INFO, "PPSSPP", __VA_ARGS__)
 
+static bool bFirstResume = false;
+
 extern "C" void Java_org_ppsspp_ppsspp_NativeApp_init
 (JNIEnv * env, jclass, jstring jmodel, jint jdeviceType, jstring jlangRegion, jstring japkpath,
 	jstring jdataDir, jstring jexternalStorageDir, jstring jexternalFilesDir, jstring jNativeLibDir, jstring jadditionalStorageDirs, jstring jcacheDir, jstring jshortcutParam,
@@ -762,6 +765,8 @@ extern "C" void Java_org_ppsspp_ppsspp_NativeApp_init
 	}
 
 	NativeInit((int)args.size(), &args[0], user_data_path.c_str(), externalStorageDir.c_str(), cacheDir.c_str());
+
+	bFirstResume = true;
 
 	// In debug mode, don't allow creating software Vulkan devices (reject by VulkanMaybeAvailable).
 	// Needed for #16931.
@@ -872,7 +877,9 @@ extern "C" void Java_org_ppsspp_ppsspp_NativeApp_resume(JNIEnv *, jclass) {
 	INFO_LOG(Log::System, "NativeApp.resume() - resuming audio");
 	AndroidAudio_Resume(g_audioState);
 
-	System_PostUIMessage(UIMessage::APP_RESUMED);
+	System_PostUIMessage(UIMessage::APP_RESUMED, bFirstResume ? "first" : "");
+
+	bFirstResume = false;
 }
 
 extern "C" void Java_org_ppsspp_ppsspp_NativeApp_pause(JNIEnv *, jclass) {
@@ -993,44 +1000,33 @@ extern "C" jboolean Java_org_ppsspp_ppsspp_NativeRenderer_displayInit(JNIEnv * e
 	System_PostUIMessage(UIMessage::RECREATE_VIEWS);
 
 	if (IsVREnabled()) {
-		EnterVR(firstStart, graphicsContext->GetAPIContext());
+		EnterVR(firstStart);
 	}
 	return true;
 }
 
-static void recalculateDpi() {
-	g_display.dpi = (float)display_dpi_x;
-	g_display.dpi_scale_x = 240.0f / (float)display_dpi_x;
-	g_display.dpi_scale_y = 240.0f / (float)display_dpi_y;
-	g_display.dpi_scale_real_x = g_display.dpi_scale_x;
-	g_display.dpi_scale_real_y = g_display.dpi_scale_y;
+extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_backbufferResize(JNIEnv *, jclass, jint pixel_xres, jint pixel_yres, jint format) {
+	INFO_LOG(Log::System, "NativeApp.backbufferResize(%d x %d)", pixel_xres, pixel_yres);
 
-	g_display.dp_xres = display_xres * g_display.dpi_scale_x;
-	g_display.dp_yres = display_yres * g_display.dpi_scale_y;
-
-	g_display.pixel_in_dps_x = (float)g_display.pixel_xres / g_display.dp_xres;
-	g_display.pixel_in_dps_y = (float)g_display.pixel_yres / g_display.dp_yres;
-
-	INFO_LOG(Log::G3D, "RecalcDPI: display_xres=%d display_yres=%d pixel_xres=%d pixel_yres=%d", display_xres, display_yres, g_display.pixel_xres, g_display.pixel_yres);
-	INFO_LOG(Log::G3D, "RecalcDPI: g_dpi=%f g_dpi_scale_x=%f g_dpi_scale_y=%f dp_xres=%d dp_yres=%d", g_display.dpi, g_display.dpi_scale_x, g_display.dpi_scale_y, g_display.dp_xres, g_display.dp_yres);
-}
-
-extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_backbufferResize(JNIEnv *, jclass, jint bufw, jint bufh, jint format) {
-	INFO_LOG(Log::System, "NativeApp.backbufferResize(%d x %d)", bufw, bufh);
-
-	bool new_size = g_display.pixel_xres != bufw || g_display.pixel_yres != bufh;
 	int old_w = g_display.pixel_xres;
 	int old_h = g_display.pixel_yres;
+
 	// pixel_*res is the backbuffer resolution.
-	g_display.pixel_xres = bufw;
-	g_display.pixel_yres = bufh;
 	backbuffer_format = format;
 
 	if (IsVREnabled()) {
-		GetVRResolutionPerEye(&g_display.pixel_xres, &g_display.pixel_yres);
+		GetVRResolutionPerEye(&pixel_xres, &pixel_yres);
 	}
 
-	recalculateDpi();
+	// Compute display scale factor. Always < 1.0f (well, as long as we use buffers sized smaller than the screen...)
+	display_scale = (float)pixel_xres / (float)display_xres;
+
+	float dpi = (1.0f / display_scale) * (240.0f / (float)display_dpi);
+
+	bool new_size = g_display.Recalculate(pixel_xres, pixel_yres, dpi, UIScaleFactorToMultiplier(g_Config.iUIScaleFactor));
+
+	INFO_LOG(Log::G3D, "RecalcDPI: display_xres=%d display_yres=%d pixel_xres=%d pixel_yres=%d", display_xres, display_yres, g_display.pixel_xres, g_display.pixel_yres);
+	INFO_LOG(Log::G3D, "RecalcDPI: g_dpi=%d scaled_dpi=%f display_scale=%f g_dpi_scale=%f dp_xres=%d dp_yres=%d", display_dpi, dpi, display_scale, g_display.dpi_scale, g_display.dp_xres, g_display.dp_yres);
 
 	if (new_size) {
 		INFO_LOG(Log::G3D, "Size change detected (previously %d,%d) - calling NativeResized()", old_w, old_h);
@@ -1161,7 +1157,7 @@ extern "C" void Java_org_ppsspp_ppsspp_NativeRenderer_displayRender(JNIEnv *env,
 	}
 
 	if (IsVREnabled()) {
-		UpdateVRInput(g_Config.bHapticFeedback, g_display.dpi_scale_x, g_display.dpi_scale_y);
+		UpdateVRInput(g_Config.bHapticFeedback, g_display.dpi_scale);
 		FinishVRRender();
 	}
 }
@@ -1188,8 +1184,8 @@ extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_touch
 		return;
 	TouchInput touch{};
 	touch.id = pointerId;
-	touch.x = x * g_display.dpi_scale_x;
-	touch.y = y * g_display.dpi_scale_y;
+	touch.x = x * display_scale * g_display.dpi_scale;
+	touch.y = y * display_scale * g_display.dpi_scale;
 	touch.flags = code;
 	NativeTouch(touch);
 }
@@ -1250,6 +1246,70 @@ extern "C" void Java_org_ppsspp_ppsspp_NativeApp_joystickAxis(
 	delete[] axis;
 	env->ReleaseIntArrayElements(axisIds, axisIdBuffer, JNI_ABORT);  // ABORT just means we don't want changes copied back!
 	env->ReleaseFloatArrayElements(values, valueBuffer, JNI_ABORT);  // ABORT just means we don't want changes copied back!
+}
+
+extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_mouse(
+	JNIEnv *env, jclass, jfloat x, jfloat y, int button, int action) {
+	if (!renderer_inited)
+		return false;
+	TouchInput input{};
+
+	static float last_x = 0.0f;
+	static float last_y = 0.0f;
+
+	if (x == -1.0f) {
+		x = last_x;
+	} else {
+		last_x = x;
+	}
+	if (y == -1.0f) {
+		y = last_y;
+	} else {
+		last_y = y;
+	}
+
+	x *= g_display.dpi_scale;
+	y *= g_display.dpi_scale;
+
+	if (button == 0) {
+		// It's a pure mouse move.
+		input.flags = TOUCH_MOUSE | TOUCH_MOVE;
+		input.x = x;
+		input.y = y;
+		input.id = 0;
+	} else {
+		input.buttons = button;
+		input.x = x;
+		input.y = y;
+		switch (action) {
+		case 1:
+			input.flags = TOUCH_MOUSE | TOUCH_DOWN;
+			break;
+		case 2:
+			input.flags = TOUCH_MOUSE | TOUCH_UP;
+			break;
+		}
+		input.id = 0;
+	}
+	INFO_LOG(Log::System, "New-style mouse event: %f %f %d %d -> x: %f y: %f buttons: %d flags: %04x", x, y, button, action, input.x, input.y, input.buttons, input.flags);
+	NativeTouch(input);
+
+	// Also send mouse button key events, for binding.
+	if (button) {
+		KeyInput input{};
+		input.deviceId = DEVICE_ID_MOUSE;
+		switch (button) {
+		case 1: input.keyCode = NKCODE_EXT_MOUSEBUTTON_1; break;
+		case 2: input.keyCode = NKCODE_EXT_MOUSEBUTTON_2; break;
+		case 3: input.keyCode = NKCODE_EXT_MOUSEBUTTON_3; break;
+		default: WARN_LOG(Log::System, "Unexpected mouse button %d", button);
+		}
+		input.flags = action == 1 ? KEY_DOWN : KEY_UP;
+		if (input.keyCode != 0) {
+			NativeKey(input);
+		}
+	}
+	return true;
 }
 
 extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_mouseWheelEvent(
@@ -1320,10 +1380,10 @@ extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_sendMessageFromJava(JNI
 		// We don't bother with supporting exact rectangular regions. Safe insets are good enough.
 		int left, right, top, bottom;
 		if (4 == sscanf(prm.c_str(), "%d:%d:%d:%d", &left, &right, &top, &bottom)) {
-			g_safeInsetLeft = (float)left * g_display.dpi_scale_x;
-			g_safeInsetRight = (float)right * g_display.dpi_scale_x;
-			g_safeInsetTop = (float)top * g_display.dpi_scale_y;
-			g_safeInsetBottom = (float)bottom * g_display.dpi_scale_y;
+			g_safeInsetLeft = (float)left;
+			g_safeInsetRight = (float)right;
+			g_safeInsetTop = (float)top;
+			g_safeInsetBottom = (float)bottom;
 		}
 	} else if (msg == "inputDeviceConnectedID") {
 		nextInputDeviceID = (InputDeviceID)parseLong(prm);
@@ -1416,21 +1476,11 @@ extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_setDisplayParameters(JN
 		dpi = 320;
 	}
 
-	bool changed = false;
-	changed = changed || display_xres != xres || display_yres != yres;
-	changed = changed || display_dpi_x != dpi || display_dpi_y != dpi;
-	changed = changed || g_display.display_hz != refreshRate;
-
-	if (changed) {
-		display_xres = xres;
-		display_yres = yres;
-		display_dpi_x = dpi;
-		display_dpi_y = dpi;
-		g_display.display_hz = refreshRate;
-
-		recalculateDpi();
-		NativeResized();
-	}
+	// Hard parameters for the display. Actual DPI recalculation happens in BackbufferResize.
+	display_xres = xres;
+	display_yres = yres;
+	display_dpi = dpi;
+	g_display.display_hz = refreshRate;
 }
 
 extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_computeDesiredBackbufferDimensions(JNIEnv *, jclass) {
@@ -1506,7 +1556,7 @@ static void ProcessFrameCommands(JNIEnv *env) {
 		frameCmd = frameCommands.front();
 		frameCommands.pop();
 
-		INFO_LOG(Log::System, "frameCommand '%s' '%s'", frameCmd.command.c_str(), frameCmd.params.c_str());
+		DEBUG_LOG(Log::System, "frameCommand '%s' '%s'", frameCmd.command.c_str(), frameCmd.params.c_str());
 
 		jstring cmd = env->NewStringUTF(frameCmd.command.c_str());
 		jstring param = env->NewStringUTF(frameCmd.params.c_str());

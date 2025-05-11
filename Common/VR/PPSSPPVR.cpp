@@ -12,8 +12,6 @@
 #include "Common/Input/InputState.h"
 #include "Common/Input/KeyCodes.h"
 
-#include "Common/GPU/Vulkan/VulkanContext.h"
-
 #include "Common/Math/lin/matrix4x4.h"
 
 #include "Common/Input/InputState.h"
@@ -162,7 +160,6 @@ void InitVROnAndroid(void* vm, void* activity, const char* system, int version, 
 		VR_SetPlatformFLag(VR_PLATFORM_EXTENSION_PERFORMANCE, true);
 		VR_SetConfigFloat(VR_CONFIG_VIEWPORT_SUPERSAMPLING, 1.3f);
 	}
-	VR_SetPlatformFLag(VR_PLATFORM_RENDERER_VULKAN, (GPUBackend)g_Config.iGPUBackend == GPUBackend::VULKAN);
 
 	//Init VR
 	ovrJava java;
@@ -172,24 +169,10 @@ void InitVROnAndroid(void* vm, void* activity, const char* system, int version, 
 }
 #endif
 
-void EnterVR(bool firstStart, void* vulkanContext) {
+void EnterVR(bool firstStart) {
 	if (firstStart) {
 		engine_t* engine = VR_GetEngine();
-		bool useVulkan = (GPUBackend)g_Config.iGPUBackend == GPUBackend::VULKAN;
-		if (useVulkan) {
-			auto* context = (VulkanContext*)vulkanContext;
-			engine->graphicsBindingVulkan = {};
-			engine->graphicsBindingVulkan.type = XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR;
-			engine->graphicsBindingVulkan.next = NULL;
-			engine->graphicsBindingVulkan.device = context->GetDevice();
-			engine->graphicsBindingVulkan.instance = context->GetInstance();
-			engine->graphicsBindingVulkan.physicalDevice = context->GetCurrentPhysicalDevice();
-			engine->graphicsBindingVulkan.queueFamilyIndex = context->GetGraphicsQueueFamilyIndex();
-			engine->graphicsBindingVulkan.queueIndex = 0;
-			VR_EnterVR(engine, &engine->graphicsBindingVulkan);
-		} else {
-			VR_EnterVR(engine, nullptr);
-		}
+		VR_EnterVR(engine);
 		IN_VRInit(engine);
 	}
 	VR_SetConfig(VR_CONFIG_VIEWPORT_VALID, false);
@@ -219,7 +202,7 @@ void SetVRAppMode(VRAppMode mode) {
 	appMode = mode;
 }
 
-void UpdateVRInput(bool haptics, float dp_xscale, float dp_yscale) {
+void UpdateVRInput(bool haptics, float dp_scale) {
 	//axis
 	if (pspKeys[(int)VIRTKEY_VR_CAMERA_ADJUST]) {
 		AxisInput axis[2] = {};
@@ -338,8 +321,8 @@ void UpdateVRInput(bool haptics, float dp_xscale, float dp_yscale) {
 		//inform engine about the status
 		TouchInput touch;
 		touch.id = mouseController;
-		touch.x = x * dp_xscale;
-		touch.y = (height - y - 1) * dp_yscale / VR_GetConfigFloat(VR_CONFIG_CANVAS_ASPECT);
+		touch.x = x * dp_scale;
+		touch.y = (height - y - 1) * dp_scale / VR_GetConfigFloat(VR_CONFIG_CANVAS_ASPECT);
 		bool pressed = IN_VRGetButtonState(mouseController) & ovrButton_Trigger;
 		if (mousePressed != pressed) {
 			if (pressed) {
@@ -525,12 +508,6 @@ bool StartVRRender() {
 
 	if (VR_InitFrame(VR_GetEngine())) {
 
-		// VR flags
-		bool vrIncompatibleGame = PSP_CoreParameter().compat.vrCompat().ForceFlatScreen;
-		bool vrMode = (g_Config.bEnableVR || IsImmersiveVRMode()) && !vrIncompatibleGame;
-		bool vrScene = !vrFlatForced && (g_Config.bManualForceVR || (vr3DGeometryCount > 15));
-		bool vrStereo = !PSP_CoreParameter().compat.vrCompat().ForceMono && g_Config.bEnableStereo;
-
 		// Get VR status
 		for (int eye = 0; eye < ovrMaxNumEyes; eye++) {
 			vrView[eye] = VR_GetView(eye);
@@ -565,7 +542,8 @@ bool StartVRRender() {
 
 		// Decide if the scene is 3D or not
 		VR_SetConfigFloat(VR_CONFIG_CANVAS_ASPECT, 480.0f / 272.0f);
-		if (vrMode && vrScene && (appMode == VR_GAME_MODE)) {
+		bool vrStereo = !PSP_CoreParameter().compat.vrCompat().ForceMono && g_Config.bEnableStereo;
+		if (!IsBigScreenVRMode() && (appMode == VR_GAME_MODE)) {
 			VR_SetConfig(VR_CONFIG_MODE, vrStereo ? VR_MODE_STEREO_6DOF : VR_MODE_MONO_6DOF);
 			VR_SetConfig(VR_CONFIG_REPROJECTION, IsImmersiveVRMode() ? 0 : 1);
 			vrFlatGame = false;
@@ -583,7 +561,7 @@ bool StartVRRender() {
 		vrCompat[VR_COMPAT_SKYPLANE] = PSP_CoreParameter().compat.vrCompat().Skyplane;
 
 		// Set customizations
-		VR_SetConfigFloat(VR_CONFIG_CANVAS_DISTANCE, vrScene && (appMode == VR_GAME_MODE) ? g_Config.fCanvas3DDistance : g_Config.fCanvasDistance);
+		VR_SetConfigFloat(VR_CONFIG_CANVAS_DISTANCE, !IsBigScreenVRMode() && (appMode == VR_GAME_MODE) ? g_Config.fCanvas3DDistance : g_Config.fCanvasDistance);
 		VR_SetConfig(VR_CONFIG_PASSTHROUGH, g_Config.bPassthrough && IsPassthroughSupported());
 		return true;
 	}
@@ -614,6 +592,13 @@ int GetVRPassesCount() {
 
 bool IsPassthroughSupported() {
 	return VR_GetPlatformFlag(VR_PLATFORM_EXTENSION_PASSTHROUGH);
+}
+
+bool IsBigScreenVRMode() {
+	bool vrIncompatibleGame = PSP_CoreParameter().compat.vrCompat().ForceFlatScreen;
+	bool vrMode = (g_Config.bEnableVR || IsImmersiveVRMode()) && !vrIncompatibleGame;
+	bool vrScene = !vrFlatForced && (g_Config.bManualForceVR || (vr3DGeometryCount > 15));
+	return !vrMode || !vrScene;
 }
 
 bool IsFlatVRGame() {
@@ -708,7 +693,7 @@ void UpdateVRParams(float* projMatrix) {
 
 void UpdateVRProjection(float* projMatrix, float* output) {
 	for (int i = 0; i < 16; i++) {
-		if (!IsVREnabled()) {
+		if (!IsVREnabled() || IsBigScreenVRMode()) {
 			output[i] = projMatrix[i];
 		} else if (PSP_CoreParameter().compat.vrCompat().ProjectionHack && ((i == 8) || (i == 9))) {
 			output[i] = 0;

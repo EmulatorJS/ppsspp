@@ -313,7 +313,7 @@ bool Init() {
 }
 
 void Reinit() {
-	_assert_msg_(PSP_IsInited(), "Cannot reinit during startup/shutdown");
+	_assert_msg_(PSP_GetBootState() == BootState::Complete, "Cannot reinit during startup/shutdown");
 	Core_NotifyLifecycle(CoreLifecycle::MEMORY_REINITING);
 	Shutdown();
 	Init();
@@ -493,11 +493,18 @@ void Memset(const u32 _Address, const u8 _iValue, const u32 _iLength, const char
 		uint8_t *ptr = GetPointerWriteUnchecked(_Address);
 		memset(ptr, _iValue, _iLength);
 	} else {
-		for (size_t i = 0; i < _iLength; i++)
-			Write_U8(_iValue, (u32)(_Address + i));
+		// TODO: This mainly seems to be produced by GPUCommon::PerformMemorySet, called from
+		// Replace_memset_jak(). Strangely, this managed to crash in Write_U8().
+		for (size_t i = 0; i < _iLength; i++) {
+			if (Memory::IsValidAddress(_Address + i)) {
+				WriteUnchecked_U8(_iValue, (u32)(_Address + i));
+			}
+		}
 	}
 
-	NotifyMemInfo(MemBlockFlags::WRITE, _Address, _iLength, tag, strlen(tag));
+	if (tag) {
+		NotifyMemInfo(MemBlockFlags::WRITE, _Address, _iLength, tag, strlen(tag));
+	}
 }
 
 } // namespace

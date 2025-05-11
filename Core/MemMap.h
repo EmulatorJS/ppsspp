@@ -248,7 +248,16 @@ u8* GetPointerWrite(const u32 address);
 const u8* GetPointer(const u32 address);
 
 u8 *GetPointerWriteRange(const u32 address, const u32 size);
+template<typename T>
+T* GetTypedPointerWriteRange(const u32 address, const u32 size) {
+	return reinterpret_cast<T*>(GetPointerWriteRange(address, size));
+}
+
 const u8 *GetPointerRange(const u32 address, const u32 size);
+template<typename T>
+const T* GetTypedPointerRange(const u32 address, const u32 size) {
+	return reinterpret_cast<const T*>(GetPointerRange(address, size));
+}
 
 bool IsRAMAddress(const u32 address);
 inline bool IsVRAMAddress(const u32 address) {
@@ -371,11 +380,35 @@ inline const char *GetCharPointer(const u32 address) {
 	}
 }
 
+// Remaps the host pointer (potentially 64bit) into the 32bit virtual pointer, no checks are made
+inline u32 GetAddressFromHostPointerUnchecked(const void* host_ptr) {
+	auto address = static_cast<const u8*>(host_ptr) - base;
+	return static_cast<u32>(address);
+}
+
+// Remaps the host pointer (potentially 64bit) into the 32bit virtual pointer with checks
+inline u32 GetAddressFromHostPointer(const void* host_ptr) {
+	u32 address = GetAddressFromHostPointerUnchecked(host_ptr);
+	if (!IsValidAddress(address)) {
+		// Somehow report the error?
+		return 0;
+	}
+	return address;
+}
+
+// Like GetPointer, but bad values don't result in a memory exception, instead nullptr is returned.
+inline const u8* GetPointerOrNull(const u32 address) {
+	return IsValidAddress(address) ? GetPointerUnchecked(address) : nullptr;
+}
+
 }  // namespace Memory
 
 // Avoiding a global include for NotifyMemInfo.
 void PSPPointerNotifyRW(int rw, uint32_t ptr, uint32_t bytes, const char *tag, size_t tagLen);
 
+// TODO: These are actually quite annoying because they can't be followed in the MSVC debugger...
+// Need to find a solution for that. Can't just change the internal representation though, because
+// these can be present in PSP-native structs.
 template <typename T>
 struct PSPPointer
 {
@@ -390,7 +423,16 @@ struct PSPPointer
 #endif
 	}
 
-	inline T &operator[](int i) const
+	inline const T &operator[](int i) const
+	{
+#ifdef MASKED_PSP_MEMORY
+		return *((T *)(Memory::base + (ptr & Memory::MEMVIEW32_MASK)) + i);
+#else
+		return *((const T *)(Memory::base + ptr) + i);
+#endif
+	}
+
+	inline T &operator[](int i)
 	{
 #ifdef MASKED_PSP_MEMORY
 		return *((T *)(Memory::base + (ptr & Memory::MEMVIEW32_MASK)) + i);
@@ -399,7 +441,16 @@ struct PSPPointer
 #endif
 	}
 
-	inline T *operator->() const
+	inline const T *operator->() const
+	{
+#ifdef MASKED_PSP_MEMORY
+		return (T *)(Memory::base + (ptr & Memory::MEMVIEW32_MASK));
+#else
+		return (const T *)(Memory::base + ptr);
+#endif
+	}
+
+	inline T *operator->()
 	{
 #ifdef MASKED_PSP_MEMORY
 		return (T *)(Memory::base + (ptr & Memory::MEMVIEW32_MASK));
@@ -488,6 +539,14 @@ struct PSPPointer
 
 	bool IsValid() const {
 		return Memory::IsValidRange(ptr, (u32)sizeof(T));
+	}
+
+	void FillWithZero() {
+		memset(Memory::GetPointerWrite(ptr), 0, sizeof(T));
+	}
+
+	bool Equals(u32 addr) const {
+		return ptr == addr;
 	}
 
 	T *PtrOrNull() {

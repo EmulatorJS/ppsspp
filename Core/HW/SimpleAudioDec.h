@@ -18,18 +18,11 @@
 #pragma once
 
 #include "Core/HW/MediaEngine.h"
-#include "Core/HLE/sceAudio.h"
+#include "Core/HLE/sceAudiocodec.h"
 
 // Decodes packet by packet - does NOT demux.
 
-// audioType
-enum PSPAudioType {
-	PSP_CODEC_AT3PLUS = 0x00001000,
-	PSP_CODEC_AT3 = 0x00001001,
-	PSP_CODEC_MP3 = 0x00001002,
-	PSP_CODEC_AAC = 0x00001003,
-};
-
+// This basically corresponds to the core of sceAudiocodec.
 class AudioDecoder {
 public:
 	virtual ~AudioDecoder() {}
@@ -43,6 +36,7 @@ public:
 	virtual bool Decode(const uint8_t *inbuf, int inbytes, int *inbytesConsumed, int outputChannels, int16_t *outbuf, int *outSamples) = 0;
 	virtual bool IsOK() const = 0;
 
+	// NOTE: This can come late (MediaEngine::getAudioSample)! But it will come before the first Decode.
 	virtual void SetChannels(int channels) = 0;
 	virtual void FlushBuffers() {}
 

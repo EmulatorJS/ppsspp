@@ -330,12 +330,11 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "480x272"
    },
-#if 0 // see issue #16786
    {
       "ppsspp_mulitsample_level",
-      "MSAA Antialiasing (Vulkan Only)",
+      "MSAA Antialiasing",
       NULL,
-      NULL,
+      "Vulkan only. Core restart required.",
       NULL,
       "video",
       {
@@ -347,7 +346,6 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       },
       "Disabled"
    },
-#endif
    {
       "ppsspp_cropto16x9",
       "Crop to 16x9",
@@ -466,7 +464,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "ppsspp_analog_deadzone",
       "Analog Deadzone",
       NULL,
-      "Select how far you have to push the analog stick before it starts being processed.",
+      "Additional deadzone to apply after frontend input.",
       NULL,
       "input",
       {
@@ -483,13 +481,13 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { "0.50", "50%" },
          { NULL, NULL },
       },
-      "0.15"
+      "0.0"
    },
    {
       "ppsspp_analog_sensitivity",
       "Analog Axis Scale",
       NULL,
-      "Sets the analog stick axis scaling factor.",
+      "Additional sensitivity factor to apply after frontend input.",
       NULL,
       "input",
       {
@@ -502,7 +500,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          {"1.42", NULL}, {"1.43", NULL}, {"1.44", NULL}, {"1.45", NULL}, {"1.46", NULL}, {"1.47", NULL}, {"1.48", NULL},
          {"1.49", NULL}, {"1.50", NULL}, {NULL, NULL},
       },
-      "1.10"
+      "1.00"
    },
    {
       "ppsspp_skip_buffer_effects",
@@ -600,16 +598,6 @@ struct retro_core_option_v2_definition option_defs_us[] = {
       "Hardware Tesselation",
       NULL,
       "Uses hardware to make curves.",
-      NULL,
-      "video",
-      BOOL_OPTIONS,
-      "disabled"
-   },
-   {
-      "ppsspp_vertex_cache",
-      "Vertex Cache",
-      NULL,
-      "Faster, but may cause temporary flicker.",
       NULL,
       "video",
       BOOL_OPTIONS,

@@ -20,7 +20,7 @@ void MessagePopupScreen::CreatePopupContents(UI::ViewGroup *parent) {
 	std::vector<std::string_view> messageLines;
 	SplitString(message_, '\n', messageLines);
 	for (auto lineOfText : messageLines)
-		parent->Add(new UI::TextView(lineOfText, ALIGN_LEFT | ALIGN_VCENTER, false))->SetTextColor(dc.theme->popupStyle.fgColor);
+		parent->Add(new UI::TextView(lineOfText, ALIGN_LEFT | ALIGN_VCENTER, false));
 }
 
 void MessagePopupScreen::OnCompleted(DialogResult result) {
@@ -61,19 +61,22 @@ void PopupContextMenuScreen::CreatePopupContents(UI::ViewGroup *parent) {
 	auto category = GetI18NCategory(category_);
 
 	for (size_t i = 0; i < itemCount_; i++) {
+		Choice *choice;
 		if (items_[i].imageID) {
-			Choice *choice = new Choice(category->T(items_[i].text), ImageID(items_[i].imageID));
-			parent->Add(choice);
-			if (enabled_[i]) {
-				choice->OnClick.Add([=](EventParams &p) {
-					TriggerFinish(DR_OK);
-				p.a = (uint32_t)i;
-				OnChoice.Dispatch(p);
-				return EVENT_DONE;
-					});
-			} else {
-				choice->SetEnabled(false);
-			}
+			choice = new Choice(category->T(items_[i].text), ImageID(items_[i].imageID));
+		} else {
+			choice = new Choice(category->T(items_[i].text));
+		}
+		parent->Add(choice);
+		if (enabled_[i]) {
+			choice->OnClick.Add([=](EventParams &p) {
+				TriggerFinish(DR_OK);
+			p.a = (uint32_t)i;
+			OnChoice.Dispatch(p);
+			return EVENT_DONE;
+				});
+		} else {
+			choice->SetEnabled(false);
 		}
 	}
 
@@ -202,9 +205,10 @@ void PopupSliderChoiceFloat::SetFormat(std::string_view fmt) {
 EventReturn PopupSliderChoice::HandleClick(EventParams &e) {
 	restoreFocus_ = HasFocus();
 
-	SliderPopupScreen *popupScreen = new SliderPopupScreen(value_, minValue_, maxValue_, defaultValue_, ChopTitle(text_), step_, units_);
+	SliderPopupScreen *popupScreen = new SliderPopupScreen(value_, minValue_, maxValue_, defaultValue_, ChopTitle(text_), step_, units_, liveUpdate_);
 	if (!negativeLabel_.empty())
 		popupScreen->SetNegativeDisable(negativeLabel_);
+	popupScreen->RestrictChoices(fixedChoices_, numFixedChoices_);
 	popupScreen->OnChange.Handle(this, &PopupSliderChoice::HandleChange);
 	if (e.v)
 		popupScreen->SetPopupOrigin(e.v);
@@ -346,6 +350,13 @@ void SliderPopupScreen::UpdateTextBox() {
 	char temp[128];
 	snprintf(temp, sizeof(temp), "%d", sliderValue_);
 	edit_->SetText(temp);
+	if (liveUpdate_ && *value_ != sliderValue_) {
+		*value_ = sliderValue_;
+		EventParams e{};
+		e.v = nullptr;
+		e.a = *value_;
+		OnChange.Trigger(e);
+	}
 }
 
 void SliderPopupScreen::CreatePopupContents(UI::ViewGroup *parent) {
@@ -357,8 +368,9 @@ void SliderPopupScreen::CreatePopupContents(UI::ViewGroup *parent) {
 		sliderValue_ = 0;
 
 	LinearLayout *vert = parent->Add(new LinearLayout(ORIENT_VERTICAL, new LinearLayoutParams(UI::Margins(10, 10))));
-	slider_ = new Slider(&sliderValue_, minValue_, maxValue_, new LinearLayoutParams(UI::Margins(10, 10)));
+	slider_ = new Slider(&sliderValue_, minValue_, maxValue_, 1, new LinearLayoutParams(UI::Margins(10, 10)));
 	slider_->OnChange.Handle(this, &SliderPopupScreen::OnSliderChange);
+	slider_->RestrictChoices(fixedChoices_, numFixedChoices_);
 	vert->Add(slider_);
 
 	LinearLayout *lin = vert->Add(new LinearLayout(ORIENT_HORIZONTAL, new LinearLayoutParams(UI::Margins(10, 10))));
@@ -367,7 +379,6 @@ void SliderPopupScreen::CreatePopupContents(UI::ViewGroup *parent) {
 
 	edit_ = new TextEdit("", Title(), "", new LinearLayoutParams(1.0f));
 	edit_->SetMaxLen(16);
-	edit_->SetTextColor(dc.theme->itemStyle.fgColor);
 	edit_->SetTextAlign(FLAG_DYNAMIC_ASCII);
 	edit_->OnTextChange.Handle(this, &SliderPopupScreen::OnTextChange);
 	changing_ = true;
@@ -376,7 +387,7 @@ void SliderPopupScreen::CreatePopupContents(UI::ViewGroup *parent) {
 	lin->Add(edit_);
 
 	if (!units_.empty())
-		lin->Add(new TextView(units_))->SetTextColor(dc.theme->itemStyle.fgColor);
+		lin->Add(new TextView(units_));
 
 	if (defaultValue_ != NO_DEFAULT_FLOAT) {
 		auto di = GetI18NCategory(I18NCat::DIALOG);
@@ -519,7 +530,7 @@ void SliderFloatPopupScreen::OnCompleted(DialogResult result) {
 }
 
 PopupTextInputChoice::PopupTextInputChoice(RequesterToken token, std::string *value, std::string_view title, std::string_view placeholder, int maxLen, ScreenManager *screenManager, LayoutParams *layoutParams)
-	: AbstractChoiceWithValueDisplay(title, layoutParams), screenManager_(screenManager), value_(value), placeHolder_(placeholder), maxLen_(maxLen), token_(token) {
+	: AbstractChoiceWithValueDisplay(title, layoutParams), screenManager_(screenManager), value_(value), placeHolder_(placeholder), maxLen_(maxLen), token_(token), restriction_(StringRestriction::None) {
 	OnClick.Handle(this, &PopupTextInputChoice::HandleClick);
 }
 
@@ -529,7 +540,7 @@ EventReturn PopupTextInputChoice::HandleClick(EventParams &e) {
 	// Choose method depending on platform capabilities.
 	if (System_GetPropertyBool(SYSPROP_HAS_TEXT_INPUT_DIALOG)) {
 		System_InputBoxGetString(token_, text_, *value_, passwordMasking_, [=](const std::string &enteredValue, int) {
-			*value_ = StripSpaces(enteredValue);
+			*value_ = SanitizeString(StripSpaces(enteredValue), restriction_, minLen_, maxLen_);
 			EventParams params{};
 			OnChange.Trigger(params);
 		});
@@ -553,6 +564,7 @@ std::string PopupTextInputChoice::ValueText() const {
 }
 
 EventReturn PopupTextInputChoice::HandleChange(EventParams &e) {
+	*value_ = StripSpaces(SanitizeString(*value_, restriction_, minLen_, maxLen_));
 	e.v = this;
 	OnChange.Trigger(e);
 
@@ -691,7 +703,7 @@ std::string ChoiceWithValueDisplay::ValueText() const {
 }
 
 FileChooserChoice::FileChooserChoice(RequesterToken token, std::string *value, std::string_view text, BrowseFileType fileType, LayoutParams *layoutParams)
-	: AbstractChoiceWithValueDisplay(text, layoutParams), value_(value), fileType_(fileType), token_(token) {
+	: AbstractChoiceWithValueDisplay(text, layoutParams), value_(value) {
 	OnClick.Add([=](UI::EventParams &) {
 		System_BrowseForFile(token, text_, fileType, [=](const std::string &returnValue, int) {
 			if (*value_ != returnValue) {

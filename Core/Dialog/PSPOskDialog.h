@@ -23,7 +23,7 @@
 #include "Core/Dialog/PSPDialog.h"
 #include "Core/MemMap.h"
 #include "Common/CommonTypes.h"
-
+#include "Core/Dialog/PSPOskConstants.h"
 
 /**
 * Enumeration for input language
@@ -151,22 +151,6 @@ struct SceUtilityOskParams
 };
 
 // Internal enum, not from PSP.
-enum OskKeyboardDisplay
-{
-	OSK_KEYBOARD_LATIN_LOWERCASE,
-	OSK_KEYBOARD_LATIN_UPPERCASE,
-	OSK_KEYBOARD_HIRAGANA,
-	OSK_KEYBOARD_KATAKANA,
-	OSK_KEYBOARD_KOREAN,
-	OSK_KEYBOARD_RUSSIAN_LOWERCASE,
-	OSK_KEYBOARD_RUSSIAN_UPPERCASE,
-	OSK_KEYBOARD_LATIN_FW_LOWERCASE,
-	OSK_KEYBOARD_LATIN_FW_UPPERCASE,
-	// TODO: Something to do native?
-	OSK_KEYBOARD_COUNT
-};
-
-// Internal enum, not from PSP.
 enum OskKeyboardLanguage
 {
 	OSK_LANGUAGE_ENGLISH, //English half-width
@@ -191,15 +175,6 @@ const OskKeyboardDisplay OskKeyboardCases[OSK_LANGUAGE_COUNT][2] =
 	{ OSK_KEYBOARD_KOREAN, OSK_KEYBOARD_KOREAN }, // Korean only has one case, so just repeat it.
 	{ OSK_KEYBOARD_RUSSIAN_LOWERCASE, OSK_KEYBOARD_RUSSIAN_UPPERCASE },
 	{ OSK_KEYBOARD_LATIN_FW_LOWERCASE, OSK_KEYBOARD_LATIN_FW_UPPERCASE }
-};
-
-static const std::string OskKeyboardNames[] =
-{
-	"en_US",
-	"ja_JP",
-	"ko_KR",
-	"ru_RU",
-	"English Full-width",
 };
 
 enum class PSPOskNativeStatus {

@@ -237,11 +237,7 @@ void VR_InitRenderer( engine_t* engine ) {
 		projections[eye].type = XR_TYPE_VIEW;
 	}
 
-	void* vulkanContext = nullptr;
-	if (VR_GetPlatformFlag(VR_PLATFORM_RENDERER_VULKAN)) {
-		vulkanContext = &engine->graphicsBindingVulkan;
-	}
-	ovrRenderer_Create(engine->appState.Session, &engine->appState.Renderer, eyeW, eyeH, vulkanContext);
+	ovrRenderer_Create(engine->appState.Session, &engine->appState.Renderer, eyeW, eyeH);
 
 	if (VR_GetPlatformFlag(VRPlatformFlag::VR_PLATFORM_EXTENSION_PASSTHROUGH)) {
 		XrPassthroughCreateInfoFB ptci = {XR_TYPE_PASSTHROUGH_CREATE_INFO_FB};
@@ -298,16 +294,10 @@ bool VR_InitFrame( engine_t* engine ) {
 		passthroughRunning = (VR_GetConfig(VR_CONFIG_PASSTHROUGH) != 0);
 	}
 
-	// NOTE: OpenXR does not use the concept of frame indices. Instead,
-	// XrWaitFrame returns the predicted display time.
-	XrFrameWaitInfo waitFrameInfo = {};
-	waitFrameInfo.type = XR_TYPE_FRAME_WAIT_INFO;
-	waitFrameInfo.next = NULL;
-
 	frameState.type = XR_TYPE_FRAME_STATE;
 	frameState.next = NULL;
 
-	OXR(xrWaitFrame(engine->appState.Session, &waitFrameInfo, &frameState));
+	OXR(xrWaitFrame(engine->appState.Session, 0, &frameState));
 	engine->predictedDisplayTime = frameState.predictedDisplayTime;
 
 	XrViewLocateInfo projectionInfo = {};

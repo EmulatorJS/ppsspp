@@ -16,13 +16,14 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include "ppsspp_config.h"
-#include <algorithm>
 #include <thread>
 #include <mutex>
 
 #if PPSSPP_PLATFORM(WINDOWS) && !PPSSPP_PLATFORM(UWP)
+#include <initguid.h>
 #include "Common/CommonWindows.h"
 #include <netfw.h>
+#include <wrl/client.h>
 #endif
 
 // TODO: For text align flags, probably shouldn't be in gfx_es2/...
@@ -62,8 +63,8 @@ enum class ServerAllowStatus {
 
 static ServerAllowStatus IsServerAllowed(int port) {
 #if PPSSPP_PLATFORM(WINDOWS) && !PPSSPP_PLATFORM(UWP)
-	INetFwMgr *fwMgr = nullptr;
-	HRESULT hr = CoCreateInstance(__uuidof(NetFwMgr), nullptr, CLSCTX_INPROC_SERVER, __uuidof(INetFwMgr), (void **)&fwMgr);
+	Microsoft::WRL::ComPtr<INetFwMgr> fwMgr;
+	HRESULT hr = CoCreateInstance(__uuidof(NetFwMgr), nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&fwMgr));
 	if (FAILED(hr)) {
 		return ServerAllowStatus::UNKNOWN;
 	}
@@ -80,7 +81,6 @@ static ServerAllowStatus IsServerAllowed(int port) {
 	VariantInit(&allowedV);
 	VariantInit(&restrictedV);
 	hr = fwMgr->IsPortAllowed(&app[0], NET_FW_IP_VERSION_ANY, port, nullptr, NET_FW_IP_PROTOCOL_TCP, &allowedV, &restrictedV);
-	fwMgr->Release();
 
 	if (FAILED(hr)) {
 		return ServerAllowStatus::UNKNOWN;
@@ -278,12 +278,14 @@ RemoteISOScreen::RemoteISOScreen(const Path &filename) : TabbedUIDialogScreenWit
 void RemoteISOScreen::CreateTabs() {
 	auto ri = GetI18NCategory(I18NCat::REMOTEISO);
 
-	UI::LinearLayout *connect = AddTab("Connect", ri->T("Connect"));
-	connect->SetSpacing(5.0f);
-	CreateConnectTab(connect);
+	AddTab("Connect", ri->T("Connect"), [this](UI::LinearLayout *connect) {
+		connect->SetSpacing(5.0f);
+		CreateConnectTab(connect);
+	});
 
-	UI::LinearLayout *settings = AddTab("Settings", ri->T("Settings"));
-	CreateSettingsTab(settings);
+	AddTab("Settings", ri->T("Settings"), [this](UI::LinearLayout *settings) {
+		CreateSettingsTab(settings);
+	});
 }
 
 void RemoteISOScreen::update() {
@@ -447,7 +449,7 @@ RemoteISOConnectScreen::RemoteISOConnectScreen() {
 	scanCancelled = false;
 	scanAborted = false;
 
-	scanThread_ = new std::thread([](RemoteISOConnectScreen *thiz) {
+	scanThread_ = std::thread([](RemoteISOConnectScreen *thiz) {
 		SetCurrentThreadName("RemoteISOScan");
 		thiz->ExecuteScan();
 	}, this);
@@ -464,9 +466,8 @@ RemoteISOConnectScreen::~RemoteISOConnectScreen() {
 			break;
 		}
 	}
-	if (scanThread_->joinable())
-		scanThread_->join();
-	delete scanThread_;
+	if (scanThread_.joinable())
+		scanThread_.join();
 }
 
 void RemoteISOConnectScreen::CreateViews() {
@@ -509,11 +510,10 @@ void RemoteISOConnectScreen::update() {
 		status_ = ScanStatus::LOADING;
 
 		// Let's reuse scanThread_.
-		if (scanThread_->joinable())
-			scanThread_->join();
-		delete scanThread_;
+		if (scanThread_.joinable())
+			scanThread_.join();
 		statusMessage_.clear();
-		scanThread_ = new std::thread([](RemoteISOConnectScreen *thiz) {
+		scanThread_ = std::thread([](RemoteISOConnectScreen *thiz) {
 			thiz->ExecuteLoad();
 		}, this);
 		break;
@@ -528,11 +528,10 @@ void RemoteISOConnectScreen::update() {
 			status_ = ScanStatus::SCANNING;
 			nextRetry_ = 0.0;
 
-			if (scanThread_->joinable())
-				scanThread_->join();
-			delete scanThread_;
+			if (scanThread_.joinable())
+				scanThread_.join();
 			statusMessage_.clear();
-			scanThread_ = new std::thread([](RemoteISOConnectScreen *thiz) {
+			scanThread_ = std::thread([](RemoteISOConnectScreen *thiz) {
 				thiz->ExecuteScan();
 			}, this);
 		}
@@ -592,7 +591,7 @@ void RemoteISOBrowseScreen::CreateViews() {
 
 	bool vertical = UseVerticalLayout();
 
-	TabHolder *leftColumn = new TabHolder(ORIENT_HORIZONTAL, 64, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT));
+	TabHolder *leftColumn = new TabHolder(ORIENT_HORIZONTAL, 64, nullptr, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT));
 	tabHolder_ = leftColumn;
 	tabHolder_->SetTag("RemoteGames");
 	gameBrowsers_.clear();

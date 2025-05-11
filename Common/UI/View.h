@@ -88,7 +88,6 @@ struct FontStyle {
 	int flags = 0;
 };
 
-
 // To use with an UI atlas.
 struct Theme {
 	FontStyle uiFont;
@@ -108,10 +107,15 @@ struct Theme {
 
 	Style headerStyle;
 	Style infoStyle;
+	Style collapsibleHeaderStyle;
 
 	Style popupStyle;
+	Style popupTitleStyle;
+
+	Style tooltipStyle;
 
 	uint32_t backgroundColor;
+	uint32_t scrollbarColor;
 };
 
 // The four cardinal directions should be enough, plus Prev/Next in "element order".
@@ -425,6 +429,8 @@ public:
 	virtual bool CanBeFocused() const { return true; }
 	virtual bool SubviewFocused(View *view) { return false; }
 
+	void SetPopupStyle(bool popupStyle) { popupStyle_ = popupStyle; }
+
 	bool HasFocus() const {
 		return GetFocusedView() == this;
 	}
@@ -476,6 +482,8 @@ public:
 		return t;
 	}
 
+	virtual void Recurse(void (*func)(View *view)) {}
+
 protected:
 	// Inputs to layout
 	std::unique_ptr<LayoutParams> layoutParams_;
@@ -491,6 +499,9 @@ protected:
 	Bounds bounds_{};
 
 	std::vector<Tween *> tweens_;
+
+	// Whether to use popup colors for styling.
+	bool popupStyle_ = false;
 
 private:
 	std::function<bool()> enabledFunc_;
@@ -599,10 +610,7 @@ private:
 
 class Slider : public Clickable {
 public:
-	Slider(int *value, int minValue, int maxValue, LayoutParams *layoutParams = 0)
-		: Clickable(layoutParams), value_(value), showPercent_(false), minValue_(minValue), maxValue_(maxValue), paddingLeft_(5), paddingRight_(70), step_(1), repeat_(-1) {}
-
-	Slider(int *value, int minValue, int maxValue, int step = 1, LayoutParams *layoutParams = 0)
+	Slider(int *value, int minValue, int maxValue, int step = 1, LayoutParams *layoutParams = nullptr)
 		: Clickable(layoutParams), value_(value), showPercent_(false), minValue_(minValue), maxValue_(maxValue), paddingLeft_(5), paddingRight_(70), repeat_(-1) {
 		step_ = step <= 0 ? 1 : step;
 	}
@@ -613,6 +621,10 @@ public:
 	void Update() override;
 	void GetContentDimensions(const UIContext &dc, float &w, float &h) const override;
 	void SetShowPercent(bool s) { showPercent_ = s; }
+	void RestrictChoices(const int *fixedChoices, size_t numFixedChoices) {
+		fixedChoices_ = fixedChoices;
+		numFixedChoices_ = numFixedChoices;
+	}
 
 	// OK to call this from the outside after having modified *value_
 	void Clamp();
@@ -621,6 +633,7 @@ public:
 
 private:
 	bool ApplyKey(InputKeyCode keyCode);
+	void SnapToFixed();
 
 	int *value_;
 	bool showPercent_;
@@ -630,6 +643,8 @@ private:
 	float paddingRight_;
 	int step_;
 	int repeat_ = 0;
+	const int *fixedChoices_ = nullptr;
+	size_t numFixedChoices_ = 0;
 	InputKeyCode repeatCode_ = NKCODE_UNKNOWN;
 };
 
@@ -801,14 +816,8 @@ public:
 	void SetRightText(std::string_view text) {
 		rightText_ = text;
 	}
-	void SetChoiceStyle(bool choiceStyle) {
-		choiceStyle_ = choiceStyle;
-	}
 
 private:
-	CallbackColorTween *bgColor_ = nullptr;
-	CallbackColorTween *fgColor_ = nullptr;
-
 	std::string text_;
 	std::string rightText_;
 
@@ -853,11 +862,9 @@ public:
 	std::string DescribeText() const override;
 	void GetContentDimensionsBySpec(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert, float &w, float &h) const override;
 	void SetLarge(bool large) { large_ = large; }
-	void SetPopupStyle(bool popupStyle) { popupStyle_ = popupStyle; }
 private:
 	std::string text_;
 	bool large_ = false;
-	bool popupStyle_ = false;
 };
 
 class PopupHeader : public Item {
@@ -1018,6 +1025,19 @@ private:
 	bool clip_ = true;
 	bool bullet_ = false;
 	float pad_ = 0.0f;
+};
+
+// Quick hack for clickable version number
+class ClickableTextView : public TextView {
+public:
+	ClickableTextView(std::string_view text, LayoutParams *layoutParams = 0)
+		: TextView(text, layoutParams) {}
+	bool Touch(const TouchInput &input);
+	Event OnClick;
+
+private:
+	bool down_;
+	bool dragging_;
 };
 
 class TextEdit : public View {

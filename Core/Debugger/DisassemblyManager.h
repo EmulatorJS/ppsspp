@@ -43,13 +43,13 @@ struct DisassemblyLineInfo
 	u32 totalSize;
 };
 
-enum LineType { LINE_UP, LINE_DOWN, LINE_RIGHT };
+enum DisasmLineType { LINE_UP, LINE_DOWN, LINE_RIGHT };
 
 struct BranchLine
 {
 	u32 first;
 	u32 second;
-	LineType type;
+	DisasmLineType type;
 	int laneIndex;
 
 	bool operator<(const BranchLine& other) const
@@ -226,3 +226,6 @@ extern DisassemblyManager g_disassemblyManager;
 
 bool isInInterval(u32 start, u32 size, u32 value);
 bool IsLikelyStringAt(uint32_t addr);
+
+std::string DisassembleRange(u32 start, u32 size, bool displaySymbols, MIPSDebugInterface *debugger);
+bool GetDisasmAddressText(u32 address, char* dest, bool abbreviateLabels, bool showData, bool displaySymbols);

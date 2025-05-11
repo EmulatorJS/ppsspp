@@ -30,13 +30,13 @@ enum VRAppMode {
 // VR app flow integration
 bool IsVREnabled();
 void InitVROnAndroid(void* vm, void* activity, const char* system, int version, const char* name);
-void EnterVR(bool firstStart, void* vulkanContext);
+void EnterVR(bool firstStart);
 void GetVRResolutionPerEye(int* width, int* height);
 void SetVRCallbacks(void(*axis)(const AxisInput *axis, size_t count), bool(*key)(const KeyInput &key), void(*touch)(const TouchInput &touch));
 
 // VR input integration
 void SetVRAppMode(VRAppMode mode);
-void UpdateVRInput(bool haptics, float dp_xscale, float dp_yscale);
+void UpdateVRInput(bool haptics, float dp_scale);
 bool UpdateVRAxis(const AxisInput *axes, size_t count);
 bool UpdateVRKeys(const KeyInput &key);
 
@@ -53,6 +53,7 @@ void PostVRFrameRender();
 int GetVRFBOIndex();
 int GetVRPassesCount();
 bool IsPassthroughSupported();
+bool IsBigScreenVRMode();
 bool IsFlatVRGame();
 bool IsFlatVRScene();
 bool IsGameVRScene();

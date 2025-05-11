@@ -13,6 +13,9 @@
 #include "Common/System/System.h"
 #include "Common/System/NativeApp.h"
 #include "Core/System.h"
+#include "Core/Config.h"
+#include "Core/ConfigValues.h"
+
 #import <AVFoundation/AVFoundation.h>
 
 #define IS_IPAD() ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad)
@@ -142,27 +145,19 @@
 		std::swap(size.height, size.width);
 	}
 
+	float dpi;
 	if (screen == [UIScreen mainScreen]) {
-		g_display.dpi = (IS_IPAD() ? 200.0f : 150.0f) * scale;
+		dpi = (IS_IPAD() ? 200.0f : 150.0f) * scale;
 	} else {
 		float diagonal = sqrt(size.height * size.height + size.width * size.width);
-		g_display.dpi = diagonal * scale * 0.1f;
+		dpi = diagonal * scale * 0.1f;
 	}
-	g_display.dpi_scale_x = 240.0f / g_display.dpi;
-	g_display.dpi_scale_y = 240.0f / g_display.dpi;
-	g_display.dpi_scale_real_x = g_display.dpi_scale_x;
-	g_display.dpi_scale_real_y = g_display.dpi_scale_y;
-	g_display.pixel_xres = size.width * scale;
-	g_display.pixel_yres = size.height * scale;
 
-	g_display.dp_xres = g_display.pixel_xres * g_display.dpi_scale_x;
-	g_display.dp_yres = g_display.pixel_yres * g_display.dpi_scale_y;
+	float dpi_scale = 240.0f / dpi;
+	g_display.Recalculate(size.width * scale, size.height * scale, dpi_scale, UIScaleFactorToMultiplier(g_Config.iUIScaleFactor));
 
-	g_display.pixel_in_dps_x = (float)g_display.pixel_xres / (float)g_display.dp_xres;
-	g_display.pixel_in_dps_y = (float)g_display.pixel_yres / (float)g_display.dp_yres;
-	
 	[[sharedViewController getView] setContentScaleFactor:scale];
-	
+
 	// PSP native resize
 	PSP_CoreParameter().pixelWidth = g_display.pixel_xres;
 	PSP_CoreParameter().pixelHeight = g_display.pixel_yres;

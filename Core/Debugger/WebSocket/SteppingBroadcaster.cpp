@@ -33,8 +33,8 @@ struct CPUSteppingEvent {
 		j.writeUint("pc", currentMIPS->pc);
 		// A double ought to be good enough for a 156 day debug session.
 		j.writeFloat("ticks", CoreTiming::GetTicks());
-		if (reason_.reason) {
-			j.writeString("reason", reason_.reason);
+		if (reason_.reason != BreakReason::None) {
+			j.writeString("reason", BreakReasonToString(reason_.reason));
 			j.writeUint("relatedAddress", reason_.relatedAddress);
 		}
 		j.end();
@@ -57,7 +57,7 @@ private:
 //
 // Sent unexpectedly with no other properties.
 void SteppingBroadcaster::Broadcast(net::WebSocketServer *ws) {
-	if (PSP_IsInited()) {
+	if (PSP_GetBootState() == BootState::Complete) {
 		int steppingCounter = Core_GetSteppingCounter();
 		// We ignore CORE_POWERDOWN as a stepping state.
 		if (coreState == CORE_STEPPING_CPU && steppingCounter != lastCounter_) {

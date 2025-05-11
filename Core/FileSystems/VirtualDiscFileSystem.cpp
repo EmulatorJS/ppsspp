@@ -16,12 +16,6 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include "ppsspp_config.h"
-#ifdef __MINGW32__
-#include <unistd.h>
-#ifndef _POSIX_THREAD_SAFE_FUNCTIONS
-#define _POSIX_THREAD_SAFE_FUNCTIONS 200112L
-#endif
-#endif
 #include <ctime>
 
 #include "Common/File/FileUtil.h"
@@ -647,6 +641,11 @@ PSPFileInfo VirtualDiscFileSystem::GetFileInfo(std::string filename) {
 	return x;
 }
 
+PSPFileInfo VirtualDiscFileSystem::GetFileInfoByHandle(u32 handle) {
+	WARN_LOG(Log::FileSystem, "GetFileInfoByHandle not yet implemented for VirtualDiscFileSystem");
+	return PSPFileInfo();
+}
+
 #ifdef _WIN32
 #define FILETIME_FROM_UNIX_EPOCH_US 11644473600000000ULL
 
@@ -656,7 +655,7 @@ static void tmFromFiletime(tm &dest, const FILETIME &src)
 	u64 from_1970_us = from_1601_us - FILETIME_FROM_UNIX_EPOCH_US;
 
 	time_t t = (time_t) (from_1970_us / 1000000UL);
-	localtime_r(&t, &dest);
+	localtime_s(&dest, &t);
 }
 #endif
 

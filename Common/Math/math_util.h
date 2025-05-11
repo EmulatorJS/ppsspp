@@ -7,23 +7,6 @@
 #include <cstring>
 #include <cstdint>
 
-typedef unsigned short float16;
-
-// This ain't a 1.5.10 float16, it's a stupid hack format where we chop 16 bits off a float.
-// This choice is subject to change. Don't think I'm using this for anything at all now anyway.
-// DEPRECATED
-inline float16 FloatToFloat16(float x) {
-	int ix;
-	memcpy(&ix, &x, sizeof(float));
-	return ix >> 16;
-}
-
-inline float Float16ToFloat(float16 ix) {
-	float x;
-	memcpy(&x, &ix, sizeof(float));
-	return x;
-}
-
 inline bool isPowerOf2(int n) {
 	return n == 1 || (n & (n - 1)) == 0;
 }
@@ -44,6 +27,7 @@ inline uint32_t RoundUpToPowerOf2(uint32_t v, uint32_t power) {
 	return (v + power - 1) & ~(power - 1);
 }
 
+// TODO: this should just use a bitscan.
 inline uint32_t log2i(uint32_t val) {
 	unsigned int ret = -1;
 	while (val != 0) {

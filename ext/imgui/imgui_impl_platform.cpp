@@ -10,6 +10,7 @@
 #include "imgui_impl_platform.h"
 
 static ImGuiMouseCursor g_cursor = ImGuiMouseCursor_Arrow;
+Bounds g_imguiCentralNodeBounds;
 
 void ImGui_ImplPlatform_KeyEvent(const KeyInput &key) {
 	ImGuiIO &io = ImGui::GetIO();
@@ -55,25 +56,33 @@ void ImGui_ImplPlatform_TouchEvent(const TouchInput &touch) {
 	ImGuiIO& io = ImGui::GetIO();
 
 	// We use real pixels in the imgui, no DPI adjustment yet.
-	float x = touch.x / g_display.dpi_scale_x;
-	float y = touch.y / g_display.dpi_scale_y;
+	float x = touch.x / g_display.dpi_scale;
+	float y = touch.y / g_display.dpi_scale;
 
 	if (touch.flags & TOUCH_MOVE) {
 		io.AddMousePosEvent(x, y);
 	}
 	if (touch.flags & TOUCH_DOWN) {
 		io.AddMousePosEvent(x, y);
-		if (touch.buttons & 1)
+		if (touch.flags & TOUCH_MOUSE) {
+			if (touch.buttons & 1)
+				io.AddMouseButtonEvent(0, true);
+			if (touch.buttons & 2)
+				io.AddMouseButtonEvent(1, true);
+		} else {
 			io.AddMouseButtonEvent(0, true);
-		if (touch.buttons & 2)
-			io.AddMouseButtonEvent(1, true);
+		}
 	}
 	if (touch.flags & TOUCH_UP) {
 		io.AddMousePosEvent(x, y);
-		if (touch.buttons & 1)
+		if (touch.flags & TOUCH_MOUSE) {
+			if (touch.buttons & 1)
+				io.AddMouseButtonEvent(0, false);
+			if (touch.buttons & 2)
+				io.AddMouseButtonEvent(1, false);
+		} else {
 			io.AddMouseButtonEvent(0, false);
-		if (touch.buttons & 2)
-			io.AddMouseButtonEvent(1, false);
+		}
 	}
 }
 
@@ -180,6 +189,7 @@ ImGuiKey KeyCodeToImGui(InputKeyCode keyCode) {
 	case NKCODE_COMMA: return ImGuiKey_Comma;
 	case NKCODE_PERIOD: return ImGuiKey_Period;
 	case NKCODE_MINUS: return ImGuiKey_Minus;
+	case NKCODE_PLUS: return ImGuiKey_Equal;  // Hmm
 	case NKCODE_EQUALS: return ImGuiKey_Equal;
 	case NKCODE_LEFT_BRACKET: return ImGuiKey_LeftBracket;
 	case NKCODE_RIGHT_BRACKET: return ImGuiKey_RightBracket;

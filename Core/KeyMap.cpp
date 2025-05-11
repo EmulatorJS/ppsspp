@@ -419,6 +419,8 @@ const KeyMap_IntStrPair psp_button_names[] = {
 
 	{VIRTKEY_FASTFORWARD, "Fast-forward"},
 	{VIRTKEY_PAUSE, "Pause"},
+	{VIRTKEY_PAUSE_NO_MENU, "Pause (no menu)"},
+
 	{VIRTKEY_SPEED_TOGGLE, "SpeedToggle"},
 	{VIRTKEY_SPEED_CUSTOM1, "Alt speed 1"},
 	{VIRTKEY_SPEED_CUSTOM2, "Alt speed 2"},
@@ -728,8 +730,6 @@ void RestoreDefault() {
 	std::string name = System_GetProperty(SYSPROP_NAME);
 	if (IsNvidiaShield(name)) {
 		SetDefaultKeyMap(DEFAULT_MAPPING_SHIELD, false);
-	} else if (IsOuya(name)) {
-		SetDefaultKeyMap(DEFAULT_MAPPING_OUYA, false);
 	} else if (IsXperiaPlay(name)) {
 		SetDefaultKeyMap(DEFAULT_MAPPING_XPERIA_PLAY, false);
 	} else if (IsMOQII7S(name)) {
@@ -810,10 +810,6 @@ void ClearAllMappings() {
 	g_controllerMapGeneration++;
 }
 
-bool IsOuya(const std::string &name) {
-	return name == "OUYA:OUYA Console";
-}
-
 bool IsNvidiaShield(const std::string &name) {
 	return name == "NVIDIA:SHIELD";
 }
@@ -837,7 +833,7 @@ bool IsMOQII7S(const std::string &name) {
 }
 
 bool HasBuiltinController(const std::string &name) {
-	return IsOuya(name) || IsXperiaPlay(name) || IsNvidiaShield(name) || IsMOQII7S(name) || IsRetroid(name);
+	return IsXperiaPlay(name) || IsNvidiaShield(name) || IsMOQII7S(name) || IsRetroid(name);
 }
 
 void NotifyPadConnected(InputDeviceID deviceId, const std::string &name) {

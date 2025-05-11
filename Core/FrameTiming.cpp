@@ -19,6 +19,7 @@
 // * Frame skipping. This gets complicated.
 // * The game not actually asking for flips, like in static loading screens
 
+#include "ppsspp_config.h"
 #include "Common/Profiler/Profiler.h"
 #include "Common/Log.h"
 #include "Common/TimeUtil.h"
@@ -29,12 +30,19 @@
 #include "Core/System.h"
 #include "Core/Config.h"
 #include "Core/HW/Display.h"
+#include "Core/HLE/sceNet.h"
 #include "Core/FrameTiming.h"
 
 FrameTiming g_frameTiming;
 
 void WaitUntil(double now, double timestamp, const char *reason) {
-#ifdef _WIN32
+#if 1
+	// Use precise timing.
+	sleep_precise(timestamp - now);
+#else
+
+#if PPSSPP_PLATFORM(WINDOWS)
+	// Old method. TODO: Should we make an option?
 	while (time_now_d() < timestamp) {
 		sleep_ms(1, reason); // Sleep for 1ms on this thread
 	}
@@ -43,6 +51,8 @@ void WaitUntil(double now, double timestamp, const char *reason) {
 	if (left > 0.0 && left < 3.0) {
 		usleep((long)(left * 1000000));
 	}
+#endif
+
 #endif
 }
 
@@ -93,10 +103,16 @@ Draw::PresentMode ComputePresentMode(Draw::DrawContext *draw, int *interval) {
 			wantInstant = true;
 		}
 
-		if (PSP_CoreParameter().fastForward) {
+		if (PSP_CoreParameter().fastForward && NetworkAllowSpeedControl()) {
 			wantInstant = true;
 		}
-		if (PSP_CoreParameter().fpsLimit != FPSLimit::NORMAL) {
+
+		FPSLimit limit = PSP_CoreParameter().fpsLimit;
+		if (!NetworkAllowSpeedControl()) {
+			limit = FPSLimit::NORMAL;
+		}
+
+		if (limit != FPSLimit::NORMAL) {
 			int limit;
 			if (PSP_CoreParameter().fpsLimit == FPSLimit::CUSTOM1)
 				limit = g_Config.iFpsLimit1;

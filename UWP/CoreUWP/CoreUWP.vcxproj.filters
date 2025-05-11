@@ -86,6 +86,9 @@
     <Filter Include="Ext\libzip">
       <UniqueIdentifier>{1ad7ee67-c496-4709-bf98-cad322fe5d97}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Net">
+      <UniqueIdentifier>{4341253d-564e-490a-9780-179786e7ab2a}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="pch.cpp" />
@@ -309,6 +312,9 @@
     <ClCompile Include="..\..\Core\FileLoaders\RetryingFileLoader.cpp">
       <Filter>FileLoaders</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Core\FileLoaders\ZipFileLoader.cpp">
+      <Filter>FileLoaders</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Core\HLE\__sceAudio.cpp">
       <Filter>HLE</Filter>
     </ClCompile>
@@ -447,6 +453,9 @@
     <ClCompile Include="..\..\Core\HLE\sceMp4.cpp">
       <Filter>HLE</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Core\HLE\sceAac.cpp">
+      <Filter>HLE</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Core\HLE\sceMpeg.cpp">
       <Filter>HLE</Filter>
     </ClCompile>
@@ -456,7 +465,13 @@
     <ClCompile Include="..\..\Core\HLE\sceNet.cpp">
       <Filter>HLE</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Core\HLE\sceNet_lib.cpp">
+      <Filter>HLE</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\Core\HLE\sceNetAdhoc.cpp">
+      <Filter>HLE</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Core\HLE\sceNetAdhocMatching.cpp">
       <Filter>HLE</Filter>
     </ClCompile>
     <ClCompile Include="..\..\Core\HLE\sceNp.cpp">
@@ -1179,7 +1194,6 @@
       <Filter>Ext\libzip</Filter>
     </ClCompile>
     <ClCompile Include="..\..\Core\KeyMap.cpp" />
-    <ClCompile Include="..\..\Core\ThreadPools.cpp" />
     <ClCompile Include="..\..\Core\ControlMapper.cpp" />
     <ClCompile Include="..\..\Core\KeyMapDefaults.cpp" />
     <ClCompile Include="..\..\Core\HLE\sceNp2.cpp">
@@ -1205,6 +1219,33 @@
     <ClCompile Include="..\..\Core\HLE\AtracCtx2.cpp">
       <Filter>HLE</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\Core\Dialog\PSPOskConstants.cpp">
+      <Filter>Dialog</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Core\HLE\sceNetApctl.cpp">
+      <Filter>HLE</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Core\HLE\sceNetInet.cpp">
+      <Filter>HLE</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Core\HLE\sceNetResolver.cpp">
+      <Filter>HLE</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Core\HLE\NetInetConstants.cpp">
+      <Filter>HLE</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Core\HLE\SocketManager.cpp">
+      <Filter>HLE</Filter>
+    <ClCompile Include="..\..\Core\LuaContext.cpp" />
+      <Filter>Dialog</Filter>
+    </ClCompile>
+    </ClCompile>
+    <ClCompile Include="..\..\Core\Util\AtracTrack.cpp">
+      <Filter>Util</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\Core\Util\RecentFiles.cpp">
+      <Filter>Util</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="pch.h" />
@@ -1229,7 +1270,6 @@
     <ClInclude Include="..\..\Core\SaveState.h" />
     <ClInclude Include="..\..\Core\Screenshot.h" />
     <ClInclude Include="..\..\Core\System.h" />
-    <ClInclude Include="..\..\Core\ThreadEventQueue.h" />
     <ClInclude Include="..\..\Core\WaveFile.h" />
     <ClInclude Include="..\..\Core\MIPS\ARM\ArmCompVFPUNEONUtil.h">
       <Filter>MIPS\ARM</Filter>
@@ -1367,6 +1407,9 @@
       <Filter>FileLoaders</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Core\FileLoaders\RetryingFileLoader.h">
+      <Filter>FileLoaders</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Core\FileLoaders\ZipFileLoader.h">
       <Filter>FileLoaders</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Core\HLE\__sceAudio.h">
@@ -1513,6 +1556,9 @@
     <ClInclude Include="..\..\Core\HLE\sceMp4.h">
       <Filter>HLE</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\Core\HLE\sceAac.h">
+      <Filter>HLE</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\Core\HLE\sceMpeg.h">
       <Filter>HLE</Filter>
     </ClInclude>
@@ -1522,7 +1568,13 @@
     <ClInclude Include="..\..\Core\HLE\sceNet.h">
       <Filter>HLE</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\Core\HLE\sceNet_lib.h">
+      <Filter>HLE</Filter>
+    </ClInclude>
     <ClInclude Include="..\..\Core\HLE\sceNetAdhoc.h">
+      <Filter>HLE</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Core\HLE\sceNetAdhocMatching.h">
       <Filter>HLE</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Core\HLE\sceNp.h">
@@ -1870,7 +1922,6 @@
       <Filter>Ext\jpge</Filter>
     </ClInclude>
     <ClInclude Include="..\..\Core\KeyMap.h" />
-    <ClInclude Include="..\..\Core\ThreadPools.h" />
     <ClInclude Include="..\..\Core\ControlMapper.h" />
     <ClInclude Include="..\..\Core\KeyMapDefaults.h" />
     <ClInclude Include="..\..\Core\HLE\sceNp2.h">
@@ -1896,6 +1947,33 @@
     </ClInclude>
     <ClInclude Include="..\..\Core\HLE\AtracCtx2.h">
       <Filter>HLE</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Core\Dialog\PSPOskConstants.h">
+      <Filter>Dialog</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Core\HLE\sceNetApctl.h">
+      <Filter>HLE</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Core\HLE\sceNetInet.h">
+      <Filter>HLE</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Core\HLE\sceNetResolver.h">
+      <Filter>HLE</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Core\HLE\NetInetConstants.h">
+      <Filter>HLE</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Core\HLE\SocketManager.h">
+      <Filter>HLE</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Core\Util\AtracTrack.h">
+      <Filter>Util</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Core\Util\RecentFiles.h">
+      <Filter>Util</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\Core\LuaContext.h" />
+      <Filter>Dialog</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

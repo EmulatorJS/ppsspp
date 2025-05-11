@@ -24,6 +24,7 @@
 #include "Core/CoreTiming.h"
 #include "Core/MemMapHelpers.h"
 #include "Core/HLE/HLE.h"
+#include "Core/HLE/ErrorCodes.h"
 #include "Core/HLE/sceKernel.h"
 #include "Core/HLE/sceKernelMsgPipe.h"
 #include "Core/HLE/sceKernelMemory.h"
@@ -715,7 +716,7 @@ int sceKernelCreateMsgPipe(const char *name, int partition, u32 attr, u32 size, 
 			WARN_LOG_REPORT(Log::sceKernel, "sceKernelCreateMsgPipe(%s) unsupported options parameter, size = %d", name, optionsSize);
 	}
 
-	return id;
+	return hleNoLog(id);
 }
 
 int sceKernelDeleteMsgPipe(SceUID uid)
@@ -724,10 +725,8 @@ int sceKernelDeleteMsgPipe(SceUID uid)
 
 	u32 error;
 	MsgPipe *m = kernelObjects.Get<MsgPipe>(uid, error);
-	if (!m)
-	{
-		ERROR_LOG(Log::sceKernel, "sceKernelDeleteMsgPipe(%i) - ERROR %08x", uid, error);
-		return error;
+	if (!m) {
+		return hleLogError(Log::sceKernel, error, "bad msgpipe id");
 	}
 
 	hleEatCycles(3100);
@@ -806,50 +805,47 @@ int sceKernelSendMsgPipe(SceUID uid, u32 sendBufAddr, u32 sendSize, u32 waitMode
 {
 	u32 error = __KernelValidateSendMsgPipe(uid, sendBufAddr, sendSize, waitMode, resultAddr);
 	if (error != 0) {
-		return error;
+		return hleLogError(Log::sceKernel, error);
 	}
 	MsgPipe *m = kernelObjects.Get<MsgPipe>(uid, error);
 	if (!m) {
-		ERROR_LOG(Log::sceKernel, "sceKernelSendMsgPipe(%i) - ERROR %08x", uid, error);
-		return error;
+		return hleLogError(Log::sceKernel, error, "bad msgpipe id");
 	}
 
-	DEBUG_LOG(Log::sceKernel, "sceKernelSendMsgPipe(id=%i, addr=%08x, size=%i, mode=%i, result=%08x, timeout=%08x)", uid, sendBufAddr, sendSize, waitMode, resultAddr, timeoutPtr);
-	return __KernelSendMsgPipe(m, sendBufAddr, sendSize, waitMode, resultAddr, timeoutPtr, false, false);
+	int result = __KernelSendMsgPipe(m, sendBufAddr, sendSize, waitMode, resultAddr, timeoutPtr, false, false);
+	return hleLogDebug(Log::sceKernel, result);
 }
 
 int sceKernelSendMsgPipeCB(SceUID uid, u32 sendBufAddr, u32 sendSize, u32 waitMode, u32 resultAddr, u32 timeoutPtr)
 {
 	u32 error = __KernelValidateSendMsgPipe(uid, sendBufAddr, sendSize, waitMode, resultAddr);
 	if (error != 0) {
-		return error;
+		return hleLogError(Log::sceKernel, error);
 	}
 	MsgPipe *m = kernelObjects.Get<MsgPipe>(uid, error);
 	if (!m) {
-		ERROR_LOG(Log::sceKernel, "sceKernelSendMsgPipeCB(%i) - ERROR %08x", uid, error);
-		return error;
+		return hleLogError(Log::sceKernel, error, "bad msgpipe id");
 	}
 
-	DEBUG_LOG(Log::sceKernel, "sceKernelSendMsgPipeCB(id=%i, addr=%08x, size=%i, mode=%i, result=%08x, timeout=%08x)", uid, sendBufAddr, sendSize, waitMode, resultAddr, timeoutPtr);
 	// TODO: Verify callback behavior.
 	hleCheckCurrentCallbacks();
-	return __KernelSendMsgPipe(m, sendBufAddr, sendSize, waitMode, resultAddr, timeoutPtr, true, false);
+	int result = __KernelSendMsgPipe(m, sendBufAddr, sendSize, waitMode, resultAddr, timeoutPtr, true, false);
+	return hleLogDebug(Log::sceKernel, result);
 }
 
 int sceKernelTrySendMsgPipe(SceUID uid, u32 sendBufAddr, u32 sendSize, u32 waitMode, u32 resultAddr)
 {
 	u32 error = __KernelValidateSendMsgPipe(uid, sendBufAddr, sendSize, waitMode, resultAddr, true);
 	if (error != 0) {
-		return error;
+		return hleLogError(Log::sceKernel, error);
 	}
 	MsgPipe *m = kernelObjects.Get<MsgPipe>(uid, error);
 	if (!m) {
-		ERROR_LOG(Log::sceKernel, "sceKernelTrySendMsgPipe(%i) - ERROR %08x", uid, error);
-		return error;
+		return hleLogError(Log::sceKernel, error, "bad msgpipe id");
 	}
 
-	DEBUG_LOG(Log::sceKernel, "sceKernelTrySendMsgPipe(id=%i, addr=%08x, size=%i, mode=%i, result=%08x)", uid, sendBufAddr, sendSize, waitMode, resultAddr);
-	return __KernelSendMsgPipe(m, sendBufAddr, sendSize, waitMode, resultAddr, 0, false, true);
+	int result = __KernelSendMsgPipe(m, sendBufAddr, sendSize, waitMode, resultAddr, 0, false, true);
+	return hleLogDebug(Log::sceKernel, result);
 }
 
 static int __KernelValidateReceiveMsgPipe(SceUID uid, u32 receiveBufAddr, u32 receiveSize, int waitMode, u32 resultAddr, bool tryMode = false)
@@ -913,50 +909,47 @@ int sceKernelReceiveMsgPipe(SceUID uid, u32 receiveBufAddr, u32 receiveSize, u32
 {
 	u32 error = __KernelValidateReceiveMsgPipe(uid, receiveBufAddr, receiveSize, waitMode, resultAddr);
 	if (error != 0) {
-		return error;
+		return hleLogError(Log::sceKernel, error);
 	}
 	MsgPipe *m = kernelObjects.Get<MsgPipe>(uid, error);
 	if (!m) {
-		ERROR_LOG(Log::sceKernel, "sceKernelReceiveMsgPipe(%i) - ERROR %08x", uid, error);
-		return error;
+		return hleLogError(Log::sceKernel, error, "bad msgpipe id");
 	}
 
-	DEBUG_LOG(Log::sceKernel, "sceKernelReceiveMsgPipe(%i, %08x, %i, %i, %08x, %08x)", uid, receiveBufAddr, receiveSize, waitMode, resultAddr, timeoutPtr);
-	return __KernelReceiveMsgPipe(m, receiveBufAddr, receiveSize, waitMode, resultAddr, timeoutPtr, false, false);
+	int result = __KernelReceiveMsgPipe(m, receiveBufAddr, receiveSize, waitMode, resultAddr, timeoutPtr, false, false);
+	return hleLogDebug(Log::sceKernel, result);
 }
 
 int sceKernelReceiveMsgPipeCB(SceUID uid, u32 receiveBufAddr, u32 receiveSize, u32 waitMode, u32 resultAddr, u32 timeoutPtr)
 {
 	u32 error = __KernelValidateReceiveMsgPipe(uid, receiveBufAddr, receiveSize, waitMode, resultAddr);
 	if (error != 0) {
-		return error;
+		return hleLogError(Log::sceKernel, error);
 	}
 	MsgPipe *m = kernelObjects.Get<MsgPipe>(uid, error);
 	if (!m) {
-		ERROR_LOG(Log::sceKernel, "sceKernelReceiveMsgPipeCB(%i) - ERROR %08x", uid, error);
-		return error;
+		return hleLogError(Log::sceKernel, error, "bad msgpipe id");
 	}
 
-	DEBUG_LOG(Log::sceKernel, "sceKernelReceiveMsgPipeCB(%i, %08x, %i, %i, %08x, %08x)", uid, receiveBufAddr, receiveSize, waitMode, resultAddr, timeoutPtr);
 	// TODO: Verify callback behavior.
 	hleCheckCurrentCallbacks();
-	return __KernelReceiveMsgPipe(m, receiveBufAddr, receiveSize, waitMode, resultAddr, timeoutPtr, true, false);
+	int result = __KernelReceiveMsgPipe(m, receiveBufAddr, receiveSize, waitMode, resultAddr, timeoutPtr, true, false);
+	return hleLogDebug(Log::sceKernel, result);
 }
 
 int sceKernelTryReceiveMsgPipe(SceUID uid, u32 receiveBufAddr, u32 receiveSize, u32 waitMode, u32 resultAddr)
 {
 	u32 error = __KernelValidateReceiveMsgPipe(uid, receiveBufAddr, receiveSize, waitMode, resultAddr, true);
 	if (error != 0) {
-		return error;
+		return hleLogError(Log::sceKernel, error);
 	}
 	MsgPipe *m = kernelObjects.Get<MsgPipe>(uid, error);
 	if (!m) {
-		ERROR_LOG(Log::sceKernel, "sceKernelTryReceiveMsgPipe(%i) - ERROR %08x", uid, error);
-		return error;
+		return hleLogError(Log::sceKernel, error, "bad msgpipe id");
 	}
 
-	DEBUG_LOG(Log::sceKernel, "sceKernelTryReceiveMsgPipe(%i, %08x, %i, %i, %08x)", uid, receiveBufAddr, receiveSize, waitMode, resultAddr);
-	return __KernelReceiveMsgPipe(m, receiveBufAddr, receiveSize, waitMode, resultAddr, 0, false, true);
+	int result = __KernelReceiveMsgPipe(m, receiveBufAddr, receiveSize, waitMode, resultAddr, 0, false, true);
+	return hleLogDebug(Log::sceKernel, result);
 }
 
 int sceKernelCancelMsgPipe(SceUID uid, u32 numSendThreadsAddr, u32 numReceiveThreadsAddr)
@@ -965,10 +958,8 @@ int sceKernelCancelMsgPipe(SceUID uid, u32 numSendThreadsAddr, u32 numReceiveThr
 
 	u32 error;
 	MsgPipe *m = kernelObjects.Get<MsgPipe>(uid, error);
-	if (!m)
-	{
-		ERROR_LOG(Log::sceKernel, "sceKernelCancelMsgPipe(%i) - ERROR %08x", uid, error);
-		return error;
+	if (!m) {
+		return hleLogError(Log::sceKernel, error, "bad msgpipe id");
 	}
 
 	hleEatCycles(1100);
@@ -990,8 +981,7 @@ int sceKernelCancelMsgPipe(SceUID uid, u32 numSendThreadsAddr, u32 numReceiveThr
 	// And now the entire buffer is free.
 	m->nmp.freeSize = m->nmp.bufSize;
 
-	DEBUG_LOG(Log::sceKernel, "sceKernelCancelMsgPipe(%i, %i, %i)", uid, numSendThreadsAddr, numReceiveThreadsAddr);
-	return 0;
+	return hleLogDebug(Log::sceKernel, 0);
 }
 
 int sceKernelReferMsgPipeStatus(SceUID uid, u32 statusPtr) {
@@ -1013,7 +1003,7 @@ int sceKernelReferMsgPipeStatus(SceUID uid, u32 statusPtr) {
 			*status = m->nmp;
 			status.NotifyWrite("MsgPipeStatus");
 		}
-		return hleLogSuccessI(Log::sceKernel, 0);
+		return hleLogDebug(Log::sceKernel, 0);
 	} else {
 		return hleLogError(Log::sceKernel, error, "bad message pipe");
 	}

@@ -24,6 +24,7 @@
 #include "Common/System/System.h"
 #include "Common/System/Request.h"
 #include "Core/HLE/HLE.h"
+#include "Core/HLE/ErrorCodes.h"
 #include "Core/HLE/FunctionWrappers.h"
 #include "Core/HLE/sceKernelThread.h"
 #include "Core/HLE/sceUsbMic.h"
@@ -38,11 +39,6 @@
 #include "Common/CommonWindows.h"
 #include "Windows/CaptureDevice.h"
 #endif
-
-enum {
-	SCE_USBMIC_ERROR_INVALID_MAX_SAMPLES = 0x80243806,
-	SCE_USBMIC_ERROR_INVALID_SAMPLERATE  = 0x8024380A,
-};
 
 int eventMicBlockingResume = -1;
 
@@ -59,36 +55,42 @@ static int micState; // 0 means stopped, 1 means started, for save state.
 static void __MicBlockingResume(u64 userdata, int cyclesLate) {
 	SceUID threadID = (SceUID)userdata;
 	u32 error;
-	int count = 0;
-	for (auto waitingThread : waitingThreads) {
-		if (waitingThread.threadID == threadID) {
-			SceUID waitID = __KernelGetWaitID(threadID, WAITTYPE_MICINPUT, error);
-			if (waitID == 0)
-				continue;
-			if (Microphone::isHaveDevice()) {
-				if (Microphone::getReadMicDataLength() >= waitingThread.needSize) {
-					u32 ret = __KernelGetWaitValue(threadID, error);
-					DEBUG_LOG(Log::HLE, "sceUsbMic: Waking up thread(%d)", (int)waitingThread.threadID);
-					__KernelResumeThreadFromWait(threadID, ret);
-					waitingThreads.erase(waitingThreads.begin() + count);
-				} else {
-					u64 waitTimeus = (waitingThread.needSize - Microphone::getReadMicDataLength()) * 1000000 / 2 / waitingThread.sampleRate;
-					CoreTiming::ScheduleEvent(usToCycles(waitTimeus), eventMicBlockingResume, userdata);
-				}
-			} else {
-				for (int i = 0; i < waitingThread.needSize; i++) {
-					if (Memory::IsValidAddress(waitingThread.addr + i)) {
-						Memory::Write_U8(i & 0xFF, waitingThread.addr + i);
-					}
-				}
-				u32 ret = __KernelGetWaitValue(threadID, error);
-				DEBUG_LOG(Log::HLE, "sceUsbMic: Waking up thread(%d)", (int)waitingThread.threadID);
-				__KernelResumeThreadFromWait(threadID, ret);
-				waitingThreads.erase(waitingThreads.begin() + count);
-				readMicDataLength += waitingThread.needSize;
-			}
+	// On each path, we must either erase-iter-idiom, or increment iter
+	for (auto iter = waitingThreads.begin(); iter != waitingThreads.end();) {
+		if (iter->threadID != threadID) {
+			iter++;
+			continue;
 		}
-		++count;
+
+		SceUID waitID = __KernelGetWaitID(threadID, WAITTYPE_MICINPUT, error);
+		if (waitID == 0) {
+			iter++;
+			continue;
+		}
+
+		if (Microphone::isHaveDevice()) {
+			if (Microphone::getReadMicDataLength() >= iter->needSize) {
+				u32 ret = __KernelGetWaitValue(threadID, error);
+				DEBUG_LOG(Log::HLE, "sceUsbMic: Waking up thread(%d)", (int)iter->threadID);
+				__KernelResumeThreadFromWait(threadID, ret);
+				iter = waitingThreads.erase(iter);
+			} else {
+				u64 waitTimeus = (iter->needSize - Microphone::getReadMicDataLength()) * 1000000 / 2 / iter->sampleRate;
+				CoreTiming::ScheduleEvent(usToCycles(waitTimeus), eventMicBlockingResume, userdata);
+				iter++;
+			}
+		} else {
+			for (int i = 0; i < iter->needSize; i++) {
+				if (Memory::IsValidAddress(iter->addr + i)) {
+					Memory::Write_U8(i & 0xFF, iter->addr + i);
+				}
+			}
+			u32 ret = __KernelGetWaitValue(threadID, error);
+			DEBUG_LOG(Log::HLE, "sceUsbMic: Waking up thread(%d)", (int)iter->threadID);
+			__KernelResumeThreadFromWait(threadID, ret);
+			readMicDataLength += iter->needSize;
+			iter = waitingThreads.erase(iter);
+		}
 	}
 }
 
@@ -252,11 +254,11 @@ static int sceUsbMicInputBlocking(u32 maxSamples, u32 sampleRate, u32 bufAddr) {
 
 	INFO_LOG(Log::HLE, "sceUsbMicInputBlocking: maxSamples: %d, samplerate: %d, bufAddr: %08x", maxSamples, sampleRate, bufAddr);
 	if (maxSamples <= 0 || (maxSamples & 0x3F) != 0) {
-		return SCE_USBMIC_ERROR_INVALID_MAX_SAMPLES;
+		return SCE_ERROR_USBMIC_INVALID_MAX_SAMPLES;
 	}
 
 	if (sampleRate != 44100 && sampleRate != 22050 && sampleRate != 11025) {
-		return SCE_USBMIC_ERROR_INVALID_SAMPLERATE;
+		return SCE_ERROR_USBMIC_INVALID_SAMPLERATE;
 	}
 
 	return __MicInput(maxSamples, sampleRate, bufAddr, USBMIC);
@@ -275,11 +277,11 @@ static int sceUsbMicInput(u32 maxSamples, u32 sampleRate, u32 bufAddr) {
 
 	WARN_LOG(Log::HLE, "UNTEST sceUsbMicInput: maxSamples: %d, samplerate: %d, bufAddr: %08x", maxSamples, sampleRate, bufAddr);
 	if (maxSamples <= 0 || (maxSamples & 0x3F) != 0) {
-		return SCE_USBMIC_ERROR_INVALID_MAX_SAMPLES;
+		return SCE_ERROR_USBMIC_INVALID_MAX_SAMPLES;
 	}
 
 	if (sampleRate != 44100 && sampleRate != 22050 && sampleRate != 11025) {
-		return SCE_USBMIC_ERROR_INVALID_SAMPLERATE;
+		return SCE_ERROR_USBMIC_INVALID_SAMPLERATE;
 	}
 
 	return __MicInput(maxSamples, sampleRate, bufAddr, USBMIC, false);
@@ -452,5 +454,5 @@ const HLEFunction sceUsbMic[] = {
 };
 
 void Register_sceUsbMic() {
-	RegisterModule("sceUsbMic", ARRAY_SIZE(sceUsbMic), sceUsbMic);
+	RegisterHLEModule("sceUsbMic", ARRAY_SIZE(sceUsbMic), sceUsbMic);
 }

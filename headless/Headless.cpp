@@ -1,3 +1,4 @@
+
 // Headless version of PPSSPP, for testing using http://code.google.com/p/pspautotests/ .
 // See headless.txt.
 // To build on non-windows systems, just run CMake in the SDL directory, it will build both a normal ppsspp and the headless version.
@@ -11,6 +12,8 @@
 #if PPSSPP_PLATFORM(ANDROID)
 #include <jni.h>
 #endif
+
+#include <algorithm>
 
 #include "Common/Profiler/Profiler.h"
 #include "Common/System/NativeApp.h"
@@ -30,6 +33,7 @@
 #include "Common/File/FileUtil.h"
 #include "Common/GraphicsContext.h"
 #include "Common/TimeUtil.h"
+#include "Common/StringUtils.h"
 #include "Common/Thread/ThreadManager.h"
 #include "Core/Config.h"
 #include "Core/ConfigValues.h"
@@ -90,6 +94,7 @@ bool System_GetPropertyBool(SystemProperty prop) {
 }
 void System_Notify(SystemNotification notification) {}
 void System_PostUIMessage(UIMessage message, const std::string &param) {}
+void System_RunOnMainThread(std::function<void()>) {}
 bool System_MakeRequest(SystemRequestType type, int requestId, const std::string &param1, const std::string &param2, int64_t param3, int64_t param4) {
 	switch (type) {
 	case SystemRequestType::SEND_DEBUG_OUTPUT:
@@ -112,7 +117,7 @@ void System_AskForPermission(SystemPermission permission) {}
 PermissionStatus System_GetPermissionStatus(SystemPermission permission) { return PERMISSION_STATUS_GRANTED; }
 void System_AudioGetDebugStats(char *buf, size_t bufSize) { if (buf) buf[0] = '\0'; }
 void System_AudioClear() {}
-void System_AudioPushSamples(const s32 *audio, int numSamples) {}
+void System_AudioPushSamples(const s32 *audio, int numSamples, float volume) {}
 
 // TODO: To avoid having to define these here, these should probably be turned into system "requests".
 bool NativeSaveSecret(std::string_view nameOfSecret, std::string_view data) { return false; }
@@ -180,9 +185,9 @@ bool RunAutoTest(HeadlessHost *headlessHost, CoreParameter &coreParameter, const
 	if (opt.compare || opt.bench)
 		coreParameter.collectDebugOutput = &output;
 
-	std::string error_string;
-	if (!PSP_InitStart(coreParameter, &error_string)) {
-		fprintf(stderr, "Failed to start '%s'. Error: %s\n", coreParameter.fileToStart.c_str(), error_string.c_str());
+	if (!PSP_InitStart(coreParameter)) {
+		// Shouldn't really happen anymore, the errors happen later in PSP_InitUpdate.
+		fprintf(stderr, "Failed to start '%s'.\n", coreParameter.fileToStart.c_str());
 		printf("TESTERROR\n");
 		TeamCityPrint("testIgnored name='%s' message='PRX/ELF missing'", currentTestName.c_str());
 		GitHubActionsPrint("error", "PRX/ELF missing for %s", currentTestName.c_str());
@@ -194,9 +199,12 @@ bool RunAutoTest(HeadlessHost *headlessHost, CoreParameter &coreParameter, const
 	if (opt.compare)
 		headlessHost->SetComparisonScreenshot(ExpectedScreenshotFromFilename(coreParameter.fileToStart), opt.maxScreenshotError);
 
-	while (!PSP_InitUpdate(&error_string))
+	std::string error_string;
+	while (PSP_InitUpdate(&error_string) == BootState::Booting)
 		sleep_ms(1, "auto-test");
+
 	if (!PSP_IsInited()) {
+		TeamCityPrint("%s", error_string.c_str());
 		TeamCityPrint("testFailed name='%s' message='Startup failed'", currentTestName.c_str());
 		TeamCityPrint("testFinished name='%s'", currentTestName.c_str());
 		GitHubActionsPrint("error", "Test init failed for %s", currentTestName.c_str());
@@ -258,7 +266,7 @@ bool RunAutoTest(HeadlessHost *headlessHost, CoreParameter &coreParameter, const
 		draw->EndFrame();
 	}
 
-	PSP_Shutdown();
+	PSP_Shutdown(true);
 
 	if (!opt.bench)
 		headlessHost->FlushDebugOutput();
@@ -293,12 +301,42 @@ std::vector<std::string> ReadFromListFile(const std::string &listFilename) {
 	return testFilenames;
 }
 
+static void AddRecursively(std::vector<std::string> *tests, Path actualPath) {
+	// TODO: Some file systems can optimize this.
+	std::vector<File::FileInfo> fileInfo;
+	if (!File::GetFilesInDir(actualPath, &fileInfo, "prx")) {
+		return;
+	}
+	for (const auto &file : fileInfo) {
+		if (file.isDirectory) {
+			AddRecursively(tests, actualPath / file.name);
+		} else if (file.name != "Makefile") {  // hack around filter problem
+			tests->push_back((actualPath / file.name).ToString());
+		}
+	}
+}
+
+static void AddTestsByPath(std::vector<std::string> *tests, std::string_view path) {
+	if (endsWith(path, "/...")) {
+		path = path.substr(0, path.size() - 4);
+		// Recurse for tests
+		AddRecursively(tests, Path(path));
+	} /* else if (File::IsDirectory(Path(path))) {
+		// Alternate syntax - just specify the path.
+		AddRecursively(tests, Path(path));
+	} */ else {
+		tests->push_back(std::string(path));
+	}
+}
+
 int main(int argc, const char* argv[])
 {
 	PROFILE_INIT();
 	TimeInit();
 #if PPSSPP_PLATFORM(WINDOWS)
-	SetCleanExitOnAssert();
+	if (!IsDebuggerPresent()) {
+		SetCleanExitOnAssert();
+	}
 #else
 	// Ignore sigpipe.
 	if (signal(SIGPIPE, SIG_IGN) == SIG_ERR) {
@@ -317,10 +355,11 @@ int main(int argc, const char* argv[])
 	GPUCore gpuCore = GPUCORE_SOFTWARE;
 	CPUCore cpuCore = CPUCore::JIT;
 	int debuggerPort = -1;
-	bool newAtrac = false;
+	bool oldAtrac = false;
 	bool outputDebugStringLog = false;
 
 	std::vector<std::string> testFilenames;
+	std::vector<std::string> ignoredTests;
 	const char *mountIso = nullptr;
 	const char *mountRoot = nullptr;
 	const char *screenshotFilename = nullptr;
@@ -357,8 +396,8 @@ int main(int argc, const char* argv[])
 			testOptions.bench = true;
 		else if (!strcmp(argv[i], "-v") || !strcmp(argv[i], "--verbose"))
 			testOptions.verbose = true;
-		else if (!strcmp(argv[i], "--new-atrac"))
-			newAtrac = true;
+		else if (!strcmp(argv[i], "--old-atrac"))
+			oldAtrac = true;
 		else if (!strncmp(argv[i], "--graphics=", strlen("--graphics=")) && strlen(argv[i]) > strlen("--graphics="))
 		{
 			const char *gpuName = argv[i] + strlen("--graphics=");
@@ -397,12 +436,27 @@ int main(int argc, const char* argv[])
 			stateToLoad = argv[i] + strlen("--state=");
 		else if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h"))
 			return printUsage(argv[0], NULL);
-		else
-			testFilenames.push_back(argv[i]);
+		else if (!strcmp(argv[i], "--ignore")) {
+			if (++i >= argc)
+				return printUsage(argv[0], "Missing argument after --ignore");
+			ignoredTests.push_back(argv[i]);
+		} else {
+			AddTestsByPath(&testFilenames, argv[i]);
+		}
 	}
 
 	if (testFilenames.size() == 1 && testFilenames[0][0] == '@')
 		testFilenames = ReadFromListFile(testFilenames[0].substr(1));
+
+	// Remove any ignored tests.
+	testFilenames.erase(
+		std::remove_if(
+			testFilenames.begin(),
+			testFilenames.end(),
+			[&ignoredTests](const std::string& item) { return std::find(ignoredTests.begin(), ignoredTests.end(), item) != ignoredTests.end(); }
+		),
+		testFilenames.end()
+	);
 
 	if (testFilenames.empty())
 		return printUsage(argv[0], argc <= 1 ? NULL : "No executables specified");
@@ -480,10 +534,11 @@ int main(int argc, const char* argv[])
 	g_Config.sMACAddress = "12:34:56:78:9A:BC";
 	g_Config.iFirmwareVersion = PSP_DEFAULT_FIRMWARE;
 	g_Config.iPSPModel = PSP_MODEL_SLIM;
-	g_Config.iGlobalVolume = VOLUME_FULL;
-	g_Config.iReverbVolume = VOLUME_FULL;
+	g_Config.iGameVolume = VOLUMEHI_FULL;
+	g_Config.iReverbVolume = VOLUMEHI_FULL;
 	g_Config.internalDataDirectory.clear();
-	g_Config.bUseExperimentalAtrac = newAtrac;
+	g_Config.bUseOldAtrac = oldAtrac;
+	g_Config.iForceEnableHLE = 0xFFFFFFFF;  // Run all modules as HLE. We don't have anything to load in this context.
 
 	Path exePath = File::GetExeDirectory();
 	g_Config.flash0Directory = exePath / "assets/flash0";

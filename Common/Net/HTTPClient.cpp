@@ -1,31 +1,14 @@
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+
 #include "Common/Net/HTTPClient.h"
 
 #include "Common/TimeUtil.h"
 #include "Common/StringUtils.h"
 #include "Common/System/OSD.h"
 
-#ifndef _WIN32
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <sys/select.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <netdb.h>
-#include <unistd.h>
-#define closesocket close
-#else
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <io.h>
-#endif
-
-#include <cmath>
-#include <cstdio>
-#include <cstdlib>
-
+#include "Common/Net/SocketCompat.h"
 #include "Common/Net/Resolve.h"
 #include "Common/Net/URL.h"
 
@@ -137,17 +120,10 @@ bool Connection::Connect(int maxTries, double timeout, bool *cancelConnect) {
 			// Start trying to connect (async with timeout.)
 			errno = 0;
 			if (connect(sock, possible->ai_addr, (int)possible->ai_addrlen) < 0) {
-#if PPSSPP_PLATFORM(WINDOWS)
-				int errorCode = WSAGetLastError();
+				int errorCode = socket_errno;
 				std::string errorString = GetStringErrorMsg(errorCode);
-				bool unreachable = errorCode == WSAENETUNREACH;
-				bool inProgress = errorCode == WSAEINPROGRESS || errorCode == WSAEWOULDBLOCK;
-#else
-				int errorCode = errno;
-				std::string errorString = strerror(errno);
 				bool unreachable = errorCode == ENETUNREACH;
 				bool inProgress = errorCode == EINPROGRESS || errorCode == EWOULDBLOCK;
-#endif
 				if (!inProgress) {
 					char addrStr[128]{};
 					FormatAddr(addrStr, sizeof(addrStr), possible);
@@ -183,7 +159,7 @@ bool Connection::Connect(int maxTries, double timeout, bool *cancelConnect) {
 
 			selectResult = select(maxfd, nullptr, &fds, nullptr, &tv);
 			if (cancelConnect && *cancelConnect) {
-				WARN_LOG(Log::HTTP, "connect: cancelled (1)");
+				WARN_LOG(Log::HTTP, "connect: cancelled (1): %s:%d", host_.c_str(), port_);
 				break;
 			}
 		}
@@ -207,7 +183,7 @@ bool Connection::Connect(int maxTries, double timeout, bool *cancelConnect) {
 		}
 
 		if (cancelConnect && *cancelConnect) {
-			WARN_LOG(Log::HTTP, "connect: cancelled (2)");
+			WARN_LOG(Log::HTTP, "connect: cancelled (2): %s:%d", host_.c_str(), port_);
 			break;
 		}
 
@@ -235,6 +211,7 @@ constexpr const char *HTTP_VERSION = "1.1";
 
 Client::Client() {
 	userAgent_ = DEFAULT_USERAGENT;
+	httpVersion_ = HTTP_VERSION;
 }
 
 Client::~Client() {
@@ -322,13 +299,14 @@ int Client::GET(const RequestParams &req, Buffer *output, net::RequestProgress *
 	return code;
 }
 
-int Client::POST(const RequestParams &req, const std::string &data, const std::string &mime, Buffer *output, net::RequestProgress *progress) {
+int Client::POST(const RequestParams &req, std::string_view data, std::string_view mime, Buffer *output, net::RequestProgress *progress) {
 	char otherHeaders[2048];
 	if (mime.empty()) {
 		snprintf(otherHeaders, sizeof(otherHeaders), "Content-Length: %lld\r\n", (long long)data.size());
 	} else {
-		snprintf(otherHeaders, sizeof(otherHeaders), "Content-Length: %lld\r\nContent-Type: %s\r\n", (long long)data.size(), mime.c_str());
+		snprintf(otherHeaders, sizeof(otherHeaders), "Content-Length: %lld\r\nContent-Type: %.*s\r\n", (long long)data.size(), (int)mime.size(), mime.data());
 	}
+
 	int err = SendRequestWithData("POST", req, data, otherHeaders, progress);
 	if (err < 0) {
 		return err;
@@ -348,7 +326,7 @@ int Client::POST(const RequestParams &req, const std::string &data, const std::s
 	return code;
 }
 
-int Client::POST(const RequestParams &req, const std::string &data, Buffer *output, net::RequestProgress *progress) {
+int Client::POST(const RequestParams &req, std::string_view data, Buffer *output, net::RequestProgress *progress) {
 	return POST(req, data, "", output, progress);
 }
 
@@ -356,7 +334,7 @@ int Client::SendRequest(const char *method, const RequestParams &req, const char
 	return SendRequestWithData(method, req, "", otherHeaders, progress);
 }
 
-int Client::SendRequestWithData(const char *method, const RequestParams &req, const std::string &data, const char *otherHeaders, net::RequestProgress *progress) {
+int Client::SendRequestWithData(const char *method, const RequestParams &req, std::string_view data, const char *otherHeaders, net::RequestProgress *progress) {
 	progress->Update(0, 0, false);
 
 	net::Buffer buffer;
@@ -383,7 +361,7 @@ int Client::SendRequestWithData(const char *method, const RequestParams &req, co
 	return 0;
 }
 
-int Client::ReadResponseHeaders(net::Buffer *readbuf, std::vector<std::string> &responseHeaders, net::RequestProgress *progress) {
+int Client::ReadResponseHeaders(net::Buffer *readbuf, std::vector<std::string> &responseHeaders, net::RequestProgress *progress, std::string *statusLine) {
 	// Snarf all the data we can into RAM. A little unsafe but hey.
 	static constexpr float CANCEL_INTERVAL = 0.25f;
 	bool ready = false;
@@ -417,14 +395,18 @@ int Client::ReadResponseHeaders(net::Buffer *readbuf, std::vector<std::string> &
 	if (code_pos != line.npos) {
 		code = atoi(&line[code_pos]);
 	} else {
-		ERROR_LOG(Log::HTTP, "Could not parse HTTP status code: %s", line.c_str());
+		ERROR_LOG(Log::HTTP, "Could not parse HTTP status code: '%s'", line.c_str());
 		return -1;
 	}
+
+	if (statusLine)
+		*statusLine = line;
 
 	while (true) {
 		int sz = readbuf->TakeLineCRLF(&line);
 		if (!sz || sz < 0)
 			break;
+		VERBOSE_LOG(Log::HTTP, "Header line: %s", line.c_str());
 		responseHeaders.push_back(line);
 	}
 
@@ -504,14 +486,17 @@ int Client::ReadResponseEntity(net::Buffer *readbuf, const std::vector<std::stri
 	return 0;
 }
 
-HTTPRequest::HTTPRequest(RequestMethod method, const std::string &url, const std::string &postData, const std::string &postMime, const Path &outfile, ProgressBarMode progressBarMode, std::string_view name)
-	: Request(method, url, name, &cancelled_, progressBarMode), postData_(postData), postMime_(postMime), outfile_(outfile) {
+HTTPRequest::HTTPRequest(RequestMethod method, std::string_view url, std::string_view postData, std::string_view postMime, const Path &outfile, RequestFlags flags, std::string_view name)
+	: Request(method, url, name, &cancelled_, flags), postData_(postData), postMime_(postMime) {
+	outfile_ = outfile;
 }
 
 HTTPRequest::~HTTPRequest() {
 	g_OSD.RemoveProgressBar(url_, !failed_, 0.5f);
 
-	_assert_msg_(joined_, "Download destructed without join");
+	if (thread_.joinable()) {
+		_dbg_assert_msg_(false, "Download destructed without join");
+	}
 }
 
 void HTTPRequest::Start() {
@@ -519,11 +504,11 @@ void HTTPRequest::Start() {
 }
 
 void HTTPRequest::Join() {
-	if (joined_) {
+	if (!thread_.joinable()) {
 		ERROR_LOG(Log::HTTP, "Already joined thread!");
+		_dbg_assert_(false);
 	}
 	thread_.join();
-	joined_ = true;
 }
 
 void HTTPRequest::SetFailed(int code) {
@@ -553,7 +538,7 @@ int HTTPRequest::Perform(const std::string &url) {
 	}
 
 	if (!client.Connect(2, 20.0, &cancelled_)) {
-		ERROR_LOG(Log::HTTP, "Failed connecting to server or cancelled.");
+		ERROR_LOG(Log::HTTP, "Failed connecting to server or cancelled (=%d).", cancelled_);
 		return -1;
 	}
 
@@ -616,7 +601,8 @@ void HTTPRequest::Do() {
 
 		if (resultCode == 200) {
 			INFO_LOG(Log::HTTP, "Completed requesting %s (storing result to %s)", url_.c_str(), outfile_.empty() ? "memory" : outfile_.c_str());
-			if (!outfile_.empty() && !buffer_.FlushToFile(outfile_)) {
+			bool clear = !(flags_ & RequestFlags::KeepInMemory);
+			if (!outfile_.empty() && !buffer_.FlushToFile(outfile_, clear)) {
 				ERROR_LOG(Log::HTTP, "Failed writing download to '%s'", outfile_.c_str());
 			}
 		} else {
@@ -630,4 +616,4 @@ void HTTPRequest::Do() {
 	completed_ = true;
 }
 
-}	// http
+}  // namespace http

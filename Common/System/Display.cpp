@@ -54,14 +54,42 @@ DisplayProperties::DisplayProperties() {
 	rot_matrix.setIdentity();
 }
 
+bool DisplayProperties::Recalculate(int new_pixel_xres, int new_pixel_yres, float new_scale, float customScale) {
+	bool px_changed = false;
+	if (new_pixel_xres > 0 && pixel_xres != new_pixel_xres) {
+		pixel_xres = new_pixel_xres;
+		px_changed = true;
+	}
+	if (new_pixel_yres > 0 && pixel_yres != new_pixel_yres) {
+		pixel_yres = new_pixel_yres;
+		px_changed = true;
+	}
+
+	if (new_scale > 0) {
+		dpi_scale_real = new_scale;
+	}
+	dpi_scale = dpi_scale_real / customScale;
+	pixel_in_dps = 1.0f / dpi_scale;
+
+	int new_dp_xres = (int)(pixel_xres * dpi_scale);
+	int new_dp_yres = (int)(pixel_yres * dpi_scale);
+	if (new_dp_xres != dp_xres || new_dp_yres != dp_yres || px_changed) {
+		dp_xres = new_dp_xres;
+		dp_yres = new_dp_yres;
+		return true;
+	} else {
+		return false;
+	}
+}
+
 void DisplayProperties::Print() {
 	printf("dp_xres/yres: %d, %d\n", dp_xres, dp_yres);
 	printf("pixel_xres/yres: %d, %d\n", pixel_xres, pixel_yres);
 
-	printf("dpi, x, y: %f, %f, %f\n", dpi, dpi_scale_x, dpi_scale_y);
-	printf("pixel_in_dps: %f, %f\n", pixel_in_dps_x, pixel_in_dps_y);
+	printf("dpi_scale: %f\n", dpi_scale);
+	printf("pixel_in_dps: %f\n", pixel_in_dps);
 
-	printf("dpi_real: %f, %f\n", dpi_scale_real_x, dpi_scale_real_y);
+	printf("dpi_real: %f\n", dpi_scale_real);
 	printf("display_hz: %f\n", display_hz);
 
 	printf("rotation: %d\n", (int)rotation);
@@ -77,14 +105,15 @@ Lin::Matrix4x4 ComputeOrthoMatrix(float xres, float yres, CoordConvention coordC
 		ortho.setOrthoD3D(0.0f, xres, 0, yres, -1.0f, 1.0f);
 		break;
 	case CoordConvention::Direct3D9:
+	{
 		ortho.setOrthoD3D(0.0f, xres, yres, 0.0f, -1.0f, 1.0f);
-		Matrix4x4 translation;
 		// Account for the small window adjustment.
-		translation.setTranslation(Vec3(
-			-0.5f * g_display.dpi_scale_x / g_display.dpi_scale_real_x,
-			-0.5f * g_display.dpi_scale_y / g_display.dpi_scale_real_y, 0.0f));
+		float half_pixel = -0.5f * g_display.dpi_scale / g_display.dpi_scale_real;
+		Matrix4x4 translation;
+		translation.setTranslation(Vec3(half_pixel, half_pixel, 0.0f));
 		ortho = translation * ortho;
 		break;
+	}
 	case CoordConvention::Direct3D11:
 		ortho.setOrthoD3D(0.0f, xres, yres, 0.0f, -1.0f, 1.0f);
 		break;

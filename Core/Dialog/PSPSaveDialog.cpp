@@ -15,15 +15,8 @@
 // Official git repository and contact information can be found at
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
-#ifdef __MINGW32__
-#include <unistd.h>
-#ifndef _POSIX_THREAD_SAFE_FUNCTIONS
-#define _POSIX_THREAD_SAFE_FUNCTIONS 200112L
-#endif
-#endif
-
-
 #include <algorithm>
+#include <ctime>
 #include <thread>
 
 #include "Common/Data/Encoding/Utf8.h"
@@ -36,13 +29,29 @@
 #include "Core/Dialog/PSPSaveDialog.h"
 #include "Core/FileSystems/MetaFileSystem.h"
 #include "Core/Util/PPGeDraw.h"
+#include "Common/TimeUtil.h"
 #include "Core/HLE/sceCtrl.h"
 #include "Core/HLE/sceUtility.h"
+#include "Core/HLE/ErrorCodes.h"
 #include "Core/HW/MemoryStick.h"
 #include "Core/MemMapHelpers.h"
 #include "Core/Config.h"
 #include "Core/Reporting.h"
 #include "Core/SaveState.h"
+
+static double g_lastSaveTime = -1.0;
+
+void ResetSecondsSinceLastGameSave() {
+	g_lastSaveTime = time_now_d();
+}
+
+double SecondsSinceLastGameSave() {
+	if (g_lastSaveTime < 0) {
+		return -1.0;
+	} else {
+		return time_now_d() - g_lastSaveTime;
+	}
+}
 
 const static float FONT_SCALE = 0.55f;
 
@@ -88,18 +97,23 @@ PSPSaveDialog::PSPSaveDialog(UtilityDialogType type) : PSPDialog(type) {
 }
 
 PSPSaveDialog::~PSPSaveDialog() {
-	JoinIOThread();
+	if (ioThread.joinable()) {
+		ioThread.join();
+	}
 }
 
-int PSPSaveDialog::Init(int paramAddr)
-{
+int PSPSaveDialog::Init(int paramAddr) {
 	// Ignore if already running
 	if (GetStatus() != SCE_UTILITY_STATUS_NONE) {
 		ERROR_LOG_REPORT(Log::sceUtility, "A save request is already running, not starting a new one");
 		return SCE_ERROR_UTILITY_INVALID_STATUS;
 	}
 
-	JoinIOThread();
+	if (ioThread.joinable()) {
+		// Normally shouldn't be the case here.
+		ioThread.join();
+	}
+
 	ioThreadStatus = SAVEIO_NONE;
 
 	requestAddr = paramAddr;
@@ -733,7 +747,9 @@ int PSPSaveDialog::Update(int animSpeed)
 		break;
 		case DS_SAVE_SAVING:
 			if (ioThreadStatus != SAVEIO_PENDING) {
-				JoinIOThread();
+				if (ioThread.joinable()) {
+					ioThread.join();
+				}
 			}
 
 			StartDraw();
@@ -748,7 +764,9 @@ int PSPSaveDialog::Update(int animSpeed)
 			EndDraw();
 		break;
 		case DS_SAVE_FAILED:
-			JoinIOThread();
+			if (ioThread.joinable()) {
+				ioThread.join();
+			}
 			StartDraw();
 
 			DisplaySaveIcon(true);
@@ -772,8 +790,8 @@ int PSPSaveDialog::Update(int animSpeed)
 			EndDraw();
 		break;
 		case DS_SAVE_DONE:
-			if (ioThread) {
-				JoinIOThread();
+			if (ioThread.joinable()) {
+				ioThread.join();
 				param.SetPspParam(param.GetPspParam());
 			}
 			StartDraw();
@@ -838,7 +856,9 @@ int PSPSaveDialog::Update(int animSpeed)
 		break;
 		case DS_LOAD_LOADING:
 			if (ioThreadStatus != SAVEIO_PENDING) {
-				JoinIOThread();
+				if (ioThread.joinable()) {
+					ioThread.join();
+				}
 			}
 
 			StartDraw();
@@ -853,7 +873,9 @@ int PSPSaveDialog::Update(int animSpeed)
 			EndDraw();
 		break;
 		case DS_LOAD_FAILED:
-			JoinIOThread();
+			if (ioThread.joinable()) {
+				ioThread.join();
+			}
 			StartDraw();
 
 			DisplaySaveIcon(true);
@@ -876,7 +898,9 @@ int PSPSaveDialog::Update(int animSpeed)
 			EndDraw();
 		break;
 		case DS_LOAD_DONE:
-			JoinIOThread();
+			if (ioThread.joinable()) {
+				ioThread.join();
+			}
 			StartDraw();
 			
 			DisplaySaveIcon(true);
@@ -963,7 +987,9 @@ int PSPSaveDialog::Update(int animSpeed)
 		break;
 		case DS_DELETE_DELETING:
 			if (ioThreadStatus != SAVEIO_PENDING) {
-				JoinIOThread();
+				if (ioThread.joinable()) {
+					ioThread.join();
+				}
 			}
 
 			StartDraw();
@@ -975,7 +1001,9 @@ int PSPSaveDialog::Update(int animSpeed)
 			EndDraw();
 		break;
 		case DS_DELETE_FAILED:
-			JoinIOThread();
+			if (ioThread.joinable()) {
+				ioThread.join();
+			}
 			StartDraw();
 
 			DisplayMessage(di->T("DeleteFailed", "Unable to delete data."));
@@ -993,8 +1021,8 @@ int PSPSaveDialog::Update(int animSpeed)
 			EndDraw();
 		break;
 		case DS_DELETE_DONE:
-			if (ioThread) {
-				JoinIOThread();
+			if (ioThread.joinable()) {
+				ioThread.join();
 				param.SetPspParam(param.GetPspParam());
 			}
 			StartDraw();
@@ -1047,7 +1075,9 @@ int PSPSaveDialog::Update(int animSpeed)
 					// ... except in Host IO timing, where we wait as long as needed.
 					break;
 				}
-				JoinIOThread();
+				if (ioThread.joinable()) {
+					ioThread.join();
+				}
 				ChangeStatus(SCE_UTILITY_STATUS_FINISHED, 0);
 				break;
 			}
@@ -1074,6 +1104,7 @@ void PSPSaveDialog::ExecuteIOAction() {
 		result = param.Load(param.GetPspParam(), GetSelectedSaveDirName(), currentSelectedSave);
 		if (result == 0) {
 			display = DS_LOAD_DONE;
+			g_lastSaveTime = time_now_d();
 		} else {
 			display = DS_LOAD_FAILED;
 		}
@@ -1082,6 +1113,7 @@ void PSPSaveDialog::ExecuteIOAction() {
 		SaveState::NotifySaveData();
 		if (param.Save(param.GetPspParam(), GetSelectedSaveDirName()) == 0) {
 			display = DS_SAVE_DONE;
+			g_lastSaveTime = time_now_d();
 		} else {
 			display = DS_SAVE_FAILED;
 		}
@@ -1195,14 +1227,6 @@ void PSPSaveDialog::ExecuteNotVisibleIOAction() {
 	param.ClearSFOCache();
 }
 
-void PSPSaveDialog::JoinIOThread() {
-	if (ioThread) {
-		ioThread->join();
-		delete ioThread;
-		ioThread = 0;
-	}
-}
-
 static void DoExecuteIOAction(PSPSaveDialog *dialog) {
 	SetCurrentThreadName("SaveIO");
 
@@ -1211,20 +1235,22 @@ static void DoExecuteIOAction(PSPSaveDialog *dialog) {
 }
 
 void PSPSaveDialog::StartIOThread() {
-	if (ioThread) {
+	if (ioThread.joinable()) {
 		WARN_LOG_REPORT(Log::sceUtility, "Starting a save io thread when one already pending, uh oh.");
-		JoinIOThread();
+		ioThread.join();
 	}
 
 	ioThreadStatus = SAVEIO_PENDING;
-	ioThread = new std::thread(&DoExecuteIOAction, this);
+	ioThread = std::thread(&DoExecuteIOAction, this);
 }
 
 int PSPSaveDialog::Shutdown(bool force) {
 	if (GetStatus() != SCE_UTILITY_STATUS_FINISHED && !force)
 		return SCE_ERROR_UTILITY_INVALID_STATUS;
 
-	JoinIOThread();
+	if (ioThread.joinable()) {
+		ioThread.join();
+	}
 	ioThreadStatus = SAVEIO_NONE;
 
 	PSPDialog::Shutdown(force);
@@ -1238,7 +1264,9 @@ int PSPSaveDialog::Shutdown(bool force) {
 }
 
 void PSPSaveDialog::DoState(PointerWrap &p) {
-	JoinIOThread();
+	if (ioThread.joinable()) {
+		ioThread.join();
+	}
 	PSPDialog::DoState(p);
 
 	auto s = p.Section("PSPSaveDialog", 1, 2);

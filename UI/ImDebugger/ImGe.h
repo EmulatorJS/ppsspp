@@ -50,6 +50,8 @@ public:
 	void Snapshot();
 };
 
+void DrawImGeVertsWindow(ImConfig &cfg, ImControl &control, GPUDebugInterface *gpuDebug);
+
 namespace Draw {
 class Texture;
 enum class Aspect;
@@ -65,11 +67,12 @@ public:
 
 struct ImGePixelViewer : public PixelLookup {
 	~ImGePixelViewer();
-	bool Draw(GPUDebugInterface *gpuDebug, Draw::DrawContext *draw);
+	bool Draw(GPUDebugInterface *gpuDebug, Draw::DrawContext *draw, float zoom);
 	void Snapshot() {
 		dirty_ = true;
 	}
 	bool FormatValueAt(char *buf, size_t bufSize, int x, int y) const override;
+	void DeviceLost();
 
 	uint32_t addr = 0x04110000;
 	uint16_t stride = 512;
@@ -90,12 +93,15 @@ private:
 struct ImGeReadbackViewer : public PixelLookup {
 	ImGeReadbackViewer();
 	~ImGeReadbackViewer();
-	bool Draw(GPUDebugInterface *gpuDebug, Draw::DrawContext *);
+	bool Draw(GPUDebugInterface *gpuDebug, Draw::DrawContext *draw, float zoom);
 	void Snapshot() {
 		dirty_ = true;
 	}
 	bool FormatValueAt(char *buf, size_t bufSize, int x, int y) const override;
+	void DeviceLost();
 
+	// TODO: This is unsafe! If you load state for example with the debugger open...
+	// We need to re-fetch this each frame from the parameters.
 	VirtualFramebuffer *vfb = nullptr;
 
 	// This specifies what to show
@@ -122,6 +128,9 @@ public:
 		viewer_.stride = stride;
 		viewer_.format = format;
 	}
+	void DeviceLost() {
+		viewer_.DeviceLost();
+	}
 
 private:
 	ImGePixelViewer viewer_;
@@ -138,6 +147,7 @@ public:
 		return "GE Debugger";
 	}
 	void NotifyStep();
+	void DeviceLost();
 
 private:
 	ImGeDisasmView disasmView_;
@@ -150,4 +160,5 @@ private:
 	std::vector<GPUDebugVertex> previewVertices_;
 	int previewCount_ = 0;
 	Draw::Aspect selectedAspect_;
+	float previewZoom_ = 1.0f;
 };

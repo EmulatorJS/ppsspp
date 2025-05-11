@@ -44,11 +44,42 @@ enum class CPUStepType {
 	Frame,
 };
 
+// Must be set when breaking.
+enum class BreakReason {
+	None,
+	AssertChoice,
+	DebugBreak,
+	DebugStep,
+	DebugStepInto,
+	UIFocus,
+	AfterFrame,
+	MemoryException,
+	CpuException,
+	BreakInstruction,
+	SavestateLoad,
+	SavestateSave,
+	SavestateRewind,
+	SavestateCrash,
+	MemoryBreakpoint,
+	CpuBreakpoint,
+	MemoryAccess,  // ???
+	JitBranchDebug,
+	BreakOnBoot,
+	RABreak,
+	AddBreakpoint,
+	FrameAdvance,
+	UIPause,
+	HLEDebugBreak,
+};
+const char *BreakReasonToString(BreakReason reason);
+
 // Async, called from gui
-void Core_Break(const char *reason, u32 relatedAddress = 0);
+void Core_Break(BreakReason reason, u32 relatedAddress = 0);
 
 // Resumes execution. Works both when stepping the CPU and the GE.
 void Core_Resume();
+
+BreakReason Core_BreakReason();
 
 // This should be called externally.
 // Can fail if another step type was requested this frame.
@@ -60,7 +91,7 @@ void Core_SwitchToGe();  // Switches from CPU emulation to GE display list execu
 // Changes every time we enter stepping.
 int Core_GetSteppingCounter();
 struct SteppingReason {
-	const char *reason = nullptr;
+	BreakReason reason;
 	u32 relatedAddress = 0;
 };
 SteppingReason Core_GetSteppingReason();
@@ -86,12 +117,8 @@ enum CoreState {
 	CORE_NEXTFRAME = 1,
 	// Emulation is paused, CPU thread is sleeping.
 	CORE_STEPPING_CPU,  // Can be used for recoverable runtime errors (ignored memory exceptions)
-	// Core is being powered up.
-	CORE_POWERUP,
-	// Core is being powered down.
+	// Core is not running.
 	CORE_POWERDOWN,
-	// An error happened at boot.
-	CORE_BOOT_ERROR,
 	// Unrecoverable runtime error. Recoverable errors should use CORE_STEPPING.
 	CORE_RUNTIME_ERROR,
 	// Stepping the GPU. When done, will switch over to STEPPING_CPU.
@@ -99,15 +126,12 @@ enum CoreState {
 	// Running the GPU. When done, will switch over to RUNNING_CPU.
 	CORE_RUNNING_GE,
 };
+const char *CoreStateToString(CoreState state);
 
 // Callback is called on the Emu thread.
 typedef void (* CoreLifecycleFunc)(CoreLifecycle stage);
 void Core_ListenLifecycle(CoreLifecycleFunc func);
 void Core_NotifyLifecycle(CoreLifecycle stage);
-
-// Callback is executed on requesting thread.
-typedef void (* CoreStopRequestFunc)();
-void Core_ListenStopRequest(CoreStopRequestFunc callback);
 
 bool Core_IsStepping();
 
@@ -122,8 +146,6 @@ void Core_SetPowerSaving(bool mode);
 bool Core_GetPowerSaving();
 
 void Core_RunLoopUntil(u64 globalticks);
-
-const char *CoreStateToString(CoreState state);
 
 extern volatile CoreState coreState;
 extern volatile bool coreStatePending;

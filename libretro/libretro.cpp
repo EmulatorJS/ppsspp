@@ -104,6 +104,9 @@ namespace Libretro
    static retro_input_state_t input_state_cb;
    static retro_log_printf_t log_cb;
 
+   bool g_pendingBoot = false;
+   std::string g_bootErrorString;
+
    static bool detectVsyncSwapInterval = false;
    static bool detectVsyncSwapIntervalOptShown = true;
    static bool softwareRenderInitHack = false;
@@ -479,13 +482,6 @@ static void check_variables(CoreParameter &coreParam)
           coreParam.fastForward = isFastForwarding;
    }
 
-   bool updated = false;
-
-   if (     coreState != CoreState::CORE_POWERUP
-         && environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated)
-         && !updated)
-      return;
-
    struct retro_variable var = {0};
    std::string sTextureShaderName_prev;
    int iInternalResolution_prev;
@@ -700,7 +696,6 @@ static void check_variables(CoreParameter &coreParam)
          g_Config.iInternalResolution = 1;
    }
 
-#if 0 // see issue #16786
    var.key = "ppsspp_mulitsample_level";
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
    {
@@ -715,7 +710,6 @@ static void check_variables(CoreParameter &coreParam)
       else if (!strcmp(var.value, "x8"))
          g_Config.iMultiSampleLevel = 3;
    }
-#endif
 
    var.key = "ppsspp_cropto16x9";
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
@@ -772,11 +766,11 @@ static void check_variables(CoreParameter &coreParam)
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
    {
       if (!strcmp(var.value, "No buffer"))
-         g_Config.iInflightFrames = 0;
-      else if (!strcmp(var.value, "Up to 1"))
          g_Config.iInflightFrames = 1;
-      else if (!strcmp(var.value, "Up to 2"))
+      else if (!strcmp(var.value, "Up to 1"))
          g_Config.iInflightFrames = 2;
+      else if (!strcmp(var.value, "Up to 2"))
+         g_Config.iInflightFrames = 3;
    }
 
    var.key = "ppsspp_skip_buffer_effects";
@@ -1143,7 +1137,6 @@ static void check_variables(CoreParameter &coreParam)
          gpu->NotifyDisplayResized();
    }
 
-#if 0 // see issue #16786
    if (g_Config.iMultiSampleLevel != iMultiSampleLevel_prev && PSP_IsInited())
    {
       if (gpu)
@@ -1151,7 +1144,6 @@ static void check_variables(CoreParameter &coreParam)
          gpu->NotifyRenderResized();
       }
    }
-#endif
 
    if (updateAvInfo)
    {
@@ -1297,6 +1289,8 @@ void retro_get_system_av_info(struct retro_system_av_info *info)
    info->timing.fps            = (60.0 / 1.001) / (double)vsyncSwapInterval;
    info->timing.sample_rate    = SAMPLERATE;
 
+   _dbg_assert_(g_Config.iInternalResolution != 0);
+
    info->geometry.base_width   = g_Config.iInternalResolution * NATIVEWIDTH;
    info->geometry.base_height  = g_Config.iInternalResolution * NATIVEHEIGHT;
    info->geometry.max_width    = g_Config.iInternalResolution * NATIVEWIDTH;
@@ -1330,12 +1324,22 @@ namespace Libretro
       if (ctx->GetDrawContext())
          ctx->GetDrawContext()->BeginFrame(Draw::DebugFlags::NONE);
 
-      gpu->BeginHostFrame();
+      if (gpu)
+         gpu->BeginHostFrame();
 
-      coreState = CORE_RUNNING_CPU;
       PSP_RunLoopWhileState();
+      switch (coreState) {
+      case CORE_NEXTFRAME:
+         // Reached the end of the frame while running at full blast, all good. Set back to running for the next frame
+         coreState = CORE_RUNNING_CPU;
+         break;
+      default:
+         // We're not handling the various states used for debugging in the libretro port.
+         break;
+      }
 
-      gpu->EndHostFrame();
+      if (gpu)
+         gpu->EndHostFrame();
 
       if (ctx->GetDrawContext()) {
          ctx->GetDrawContext()->EndFrame();
@@ -1353,13 +1357,13 @@ namespace Libretro
          {
             case EmuThreadState::START_REQUESTED:
                emuThreadState = EmuThreadState::RUNNING;
-               /* fallthrough */
+               [[fallthrough]];
             case EmuThreadState::RUNNING:
                EmuFrame();
                break;
             case EmuThreadState::PAUSE_REQUESTED:
                emuThreadState = EmuThreadState::PAUSED;
-               /* fallthrough */
+               [[fallthrough]];
             case EmuThreadState::PAUSED:
                sleep_ms(1, "libretro-paused");
                break;
@@ -1446,7 +1450,6 @@ bool retro_load_game(const struct retro_game_info *game)
 
    retro_check_backend();
 
-   coreState = CORE_POWERUP;
    ctx       = LibretroGraphicsContext::CreateGraphicsContext();
    INFO_LOG(Log::System, "Using %s backend", ctx->Ident());
 
@@ -1456,14 +1459,14 @@ bool retro_load_game(const struct retro_game_info *game)
    useEmuThread              = ctx->GetGPUCore() == GPUCORE_GLES;
 
    // default to interpreter to allow startup in platforms w/o JIT capability
+   // TODO: I guess we should auto detect? And also, default to IR Interpreter...
    g_Config.iCpuCore         = (int)CPUCore::INTERPRETER;
 
    CoreParameter coreParam   = {};
    coreParam.enableSound     = true;
    coreParam.fileToStart     = Path(std::string(game->path));
-   coreParam.mountIso.clear();
    coreParam.startBreak      = false;
-   coreParam.headLess        = true;
+   coreParam.headLess        = true;  // really?
    coreParam.graphicsContext = ctx;
    coreParam.gpuCore         = ctx->GetGPUCore();
    check_variables(coreParam);
@@ -1477,31 +1480,35 @@ bool retro_load_game(const struct retro_game_info *game)
    // set cpuCore from libretro setting variable
    coreParam.cpuCore         =  (CPUCore)g_Config.iCpuCore;
 
-   std::string error_string;
-   if (!PSP_InitStart(coreParam, &error_string))
-   {
-      ERROR_LOG(Log::Boot, "%s", error_string.c_str());
-      return false;
-   }
+   g_pendingBoot = true;
 
    struct retro_core_option_display option_display;
 
    // Show/hide 'MSAA' and 'Texture Shader' options, Vulkan only
    option_display.visible = (g_Config.iGPUBackend == (int)GPUBackend::VULKAN);
-#if 0 // see issue #16786
    option_display.key = "ppsspp_mulitsample_level";
    environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
-#endif
    option_display.key = "ppsspp_texture_shader";
    environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
 
    // Show/hide 'Buffered Frames' option, Vulkan/GL only
    option_display.visible = (g_Config.iGPUBackend == (int)GPUBackend::VULKAN ||
-         g_Config.iGPUBackend == (int)GPUBackend::OPENGL);
+      g_Config.iGPUBackend == (int)GPUBackend::OPENGL);
    option_display.key = "ppsspp_inflight_frames";
    environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_DISPLAY, &option_display);
 
    set_variable_visibility();
+
+   // NOTE: At this point we haven't really booted yet, but "in-game" we'll just keep polling
+   // PSP_InitUpdate until done.
+
+   // Launch the init process.
+   if (!PSP_InitStart(coreParam)) {
+      g_bootErrorString = coreParam.errorString;
+      // Can't really fail, the errors happen later during InitUpdate
+      ERROR_LOG(Log::Boot, "%s", g_bootErrorString.c_str());
+      return false;
+   }
 
    return true;
 }
@@ -1511,7 +1518,7 @@ void retro_unload_game(void)
 	if (Libretro::useEmuThread)
 		Libretro::EmuThreadStop();
 
-	PSP_Shutdown();
+	PSP_Shutdown(true);
 	g_VFS.Clear();
 
 	delete ctx;
@@ -1521,13 +1528,11 @@ void retro_unload_game(void)
 
 void retro_reset(void)
 {
-   std::string error_string;
+   PSP_Shutdown(true);
 
-   PSP_Shutdown();
-
-   if (!PSP_Init(PSP_CoreParameter(), &error_string))
+   if (BootState::Complete != PSP_Init(PSP_CoreParameter(), &g_bootErrorString))
    {
-      ERROR_LOG(Log::Boot, "%s", error_string.c_str());
+      ERROR_LOG(Log::Boot, "%s", g_bootErrorString.c_str());
       environ_cb(RETRO_ENVIRONMENT_SHUTDOWN, nullptr);
    }
 }
@@ -1632,29 +1637,45 @@ static void retro_input(void)
 
 void retro_run(void)
 {
-   if (PSP_IsIniting())
-   {
-      std::string error_string;
-      while (!PSP_InitUpdate(&error_string))
-         sleep_ms(4, "libretro-init-poll");
-
-      if (!PSP_IsInited())
-      {
-         ERROR_LOG(Log::Boot, "%s", error_string.c_str());
+   if (g_pendingBoot) {
+      BootState state = PSP_InitUpdate(&g_bootErrorString);
+      switch (state) {
+      case BootState::Failed:
+         g_pendingBoot = false;
+         ERROR_LOG(Log::Boot, "%s", g_bootErrorString.c_str());
          environ_cb(RETRO_ENVIRONMENT_SHUTDOWN, nullptr);
+         return;
+      case BootState::Booting:
+         // Not done yet. Do maintenance stuff and bail.
+         retro_input();
+         ctx->SwapBuffers();
+         return;
+      case BootState::Off:
+         // shouldn't happen.
+         _dbg_assert_(false);
          return;
       }
 
-      if (softwareRenderInitHack)
-      {
-         log_cb(RETRO_LOG_DEBUG, "Software rendering init hack for opengl triggered.\n");
-         softwareRenderInitHack = false;
-         g_Config.bSoftwareRendering = true;
-         retro_reset();
-      }
+      // BootState is BootState::Complete.
+      // Here's where we finish the boot process.
+      coreState = CORE_RUNNING_CPU;
+      g_bootErrorString.clear();
+      g_pendingBoot = false;
    }
 
-   check_variables(PSP_CoreParameter());
+   // TODO: This seems dubious.
+   if (softwareRenderInitHack)
+   {
+      log_cb(RETRO_LOG_DEBUG, "Software rendering init hack for opengl triggered.\n");
+      softwareRenderInitHack = false;
+      g_Config.bSoftwareRendering = true;
+      retro_reset();
+   }
+
+   bool updated;
+   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE_UPDATE, &updated)
+      && updated)
+      check_variables(PSP_CoreParameter());
 
    retro_input();
 
@@ -1919,6 +1940,7 @@ void System_Notify(SystemNotification notification) {
 }
 bool System_MakeRequest(SystemRequestType type, int requestId, const std::string &param1, const std::string &param2, int64_t param3, int64_t param4) { return false; }
 void System_PostUIMessage(UIMessage message, const std::string &param) {}
+void System_RunOnMainThread(std::function<void()>) {}
 void NativeFrame(GraphicsContext *graphicsContext) {}
 void NativeResized() {}
 
@@ -1930,7 +1952,9 @@ inline int16_t Clamp16(int32_t sample) {
    return sample;
 }
 
-void System_AudioPushSamples(const int32_t *audio, int numSamples) {
+void System_AudioPushSamples(const int32_t *audio, int numSamples, float volume) {
+   // We ignore volume here, because it's handled by libretro presumably.
+
    // Convert to 16-bit audio for further processing.
    int16_t buffer[1024 * 2];
    int origSamples = numSamples * 2;

@@ -97,12 +97,78 @@ bool containsNoCase(std::string_view haystack, std::string_view needle) {
 
 int countChar(std::string_view haystack, char needle) {
 	int count = 0;
-	for (int i = 0; i < haystack.size(); i++) {
+	for (int i = 0; i < (int)haystack.size(); i++) {
 		if (haystack[i] == needle) {
 			count++;
 		}
 	}
 	return count;
+}
+
+std::string SanitizeString(std::string_view input, StringRestriction restriction, int minLength, int maxLength) {
+	if (restriction == StringRestriction::None) {
+		return std::string(input);
+	}
+	// First, remove any chars not in A-Za-z0-9_-. This will effectively get rid of any Unicode char, emojis etc too.
+	std::string sanitized;
+	sanitized.reserve(input.size());
+	bool lastWasLineBreak = false;
+	for (char c : input) {
+		switch (restriction) {
+		case StringRestriction::None:
+			sanitized.push_back(c);
+			break;
+		case StringRestriction::AlphaNumDashUnderscore:
+			if ((c >= 'A' && c <= 'Z') ||
+				(c >= 'a' && c <= 'z') ||
+				(c >= '0' && c <= '9') || c == '-' || c == '_') {
+				// Allowed chars.
+				sanitized.push_back(c);
+			}
+			break;
+		case StringRestriction::NoLineBreaksOrSpecials:
+			if ((uint8_t)c >= 32) {
+				sanitized.push_back(c);
+				lastWasLineBreak = false;
+			} else if (c == 10 || c == 13) {
+				// Collapse line breaks/feeds to single spaces.
+				if (!lastWasLineBreak) {
+					sanitized.push_back(' ');
+					lastWasLineBreak = true;
+				}
+			}
+			break;
+		case StringRestriction::ConvertToUnixEndings:  // Strips off carriage returns, keeps line feeds.
+			if (c != '\r') {
+				sanitized.push_back(c);
+			}
+			break;
+		}
+	}
+
+	if (minLength > 0) {
+		if ((int)sanitized.size() < minLength) {
+			// Just reject it by returning an empty string, as we can't really
+			// conjure up new characters here.
+			return std::string();
+		}
+	}
+
+	if (maxLength >= 0) {
+		// TODO: Cut at whole UTF-8 chars!
+		if ((int)sanitized.size() > maxLength) {
+			sanitized.resize(maxLength);
+		}
+	}
+
+	if (restriction == StringRestriction::NoLineBreaksOrSpecials) {
+		// Additionally, cut off the string if we find an overlong UTF-8 character, such as in Jak & Daxter's title.
+		size_t pos = sanitized.find("\xc0\x80");
+		if (pos != (size_t)std::string::npos) {
+			sanitized.resize(pos);
+		}
+	}
+	return sanitized;
 }
 
 bool CharArrayFromFormatV(char* out, int outsize, const char* format, va_list args)
@@ -191,16 +257,34 @@ std::string_view StripPrefix(std::string_view prefix, std::string_view s) {
 	}
 }
 
+std::string_view KeepAfterLast(std::string_view s, char c) {
+	size_t pos = s.rfind(c);
+	if (pos != std::string_view::npos) {
+		return s.substr(pos + 1);
+	} else {
+		return s;
+	}
+}
+
+std::string_view KeepIncludingLast(std::string_view s, char c) {
+	size_t pos = s.rfind(c);
+	if (pos != std::string_view::npos) {
+		return s.substr(pos);
+	} else {
+		return s;
+	}
+}
+
 void SkipSpace(const char **ptr) {
 	while (**ptr && isspace(**ptr)) {
 		(*ptr)++;
 	}
 }
 
-void DataToHexString(const uint8_t *data, size_t size, std::string *output) {
+void DataToHexString(const uint8_t *data, size_t size, std::string *output, bool lineBreaks) {
 	Buffer buffer;
 	for (size_t i = 0; i < size; i++) {
-		if (i && !(i & 15))
+		if (i && !(i & 15) && lineBreaks)
 			buffer.Printf("\n");
 		buffer.Printf("%02x ", data[i]);
 	}

@@ -118,3 +118,67 @@ private:
 
 	std::string statusMessage_;
 };
+
+enum class MemDumpMode {
+	Raw = 0,
+	Disassembly = 1,
+};
+
+class ImMemDumpWindow {
+public:
+	ImMemDumpWindow() {
+		filename_[0] = 0;
+		address_ = 0x08800000;
+		size_ = 0x01800000;
+	}
+	static const char *Title() {
+		return "Memory Dumper";
+	}
+	void Draw(ImConfig &cfg, MIPSDebugInterface *debug);
+	void SetRange(uint32_t addr, uint32_t size, MemDumpMode mode) {
+		address_ = addr;
+		size_ = size;
+		mode_ = mode;
+	}
+
+private:
+	uint32_t address_;
+	uint32_t size_;
+	MemDumpMode mode_ = MemDumpMode::Raw;
+	char filename_[1024];
+	std::string errorMsg_;
+};
+
+// Corresponds to the CMemView dialog
+class ImMemWindow {
+public:
+	void Draw(MIPSDebugInterface *mipsDebug, ImConfig &cfg, ImControl &control, int index);
+	ImMemView &View() {
+		return memView_;
+	}
+	void DirtySymbolMap() {
+		symsDirty_ = true;
+	}
+	void GotoAddr(u32 addr) {
+		gotoAddr_ = addr;
+		memView_.gotoAddr(addr);
+	}
+	static const char *Title(int index);
+
+private:
+	// We just keep the state directly in the window. Can refactor later.
+	enum {
+		INVALID_ADDR = 0xFFFFFFFF,
+	};
+
+	// Symbol cache
+	std::vector<SymbolEntry> symCache_;
+	bool symsDirty_ = true;
+	int selectedSymbol_ = -1;
+	char selectedSymbolName_[128];
+
+	ImMemView memView_;
+	char searchTerm_[64]{};
+
+	u32 gotoAddr_ = 0x08800000;
+};

@@ -39,7 +39,6 @@ struct PostShaderUniforms {
 	float gl_HalfPixel[4];
 };
 
-// Could use UI::Bounds but don't want to depend on that here.
 struct FRect {
 	float x;
 	float y;
@@ -47,7 +46,10 @@ struct FRect {
 	float h;
 };
 
+struct Bounds;  // from geom2d
+
 FRect GetScreenFrame(float pixelWidth, float pixelHeight);
+void SetOverrideScreenFrame(const Bounds *bounds);
 void CalculateDisplayOutputRect(FRect *rc, float origW, float origH, const FRect &frame, int rotation);
 
 namespace Draw {

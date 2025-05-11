@@ -40,6 +40,7 @@
 #include "Core/FileSystems/MetaFileSystem.h"
 #include "Core/ELF/ParamSFO.h"
 #include "Core/HLE/HLE.h"
+#include "Core/HLE/sceNet.h"
 #include "Core/HLE/ReplaceTables.h"
 #include "Core/HLE/sceDisplay.h"
 #include "Core/HLE/sceKernel.h"
@@ -59,8 +60,10 @@
 // Slot number is visual only, -2 will display special message
 constexpr int LOAD_UNDO_SLOT = -2;
 
-namespace SaveState
-{
+namespace SaveState {
+
+double g_lastSaveTime = -1.0;
+
 	struct SaveStart
 	{
 		void DoState(PointerWrap &p);
@@ -75,13 +78,10 @@ namespace SaveState
 		SAVESTATE_SAVE_SCREENSHOT,
 	};
 
-	struct Operation
-	{
+	struct Operation {
 		// The slot number is for visual purposes only. Set to -1 for operations where we don't display a message for example.
 		Operation(OperationType t, const Path &f, int slot_, Callback cb, void *cbUserData_)
-			: type(t), filename(f), callback(cb), slot(slot_), cbUserData(cbUserData_)
-		{
-		}
+			: type(t), filename(f), callback(cb), slot(slot_), cbUserData(cbUserData_) {}
 
 		OperationType type;
 		Path filename;
@@ -334,7 +334,10 @@ namespace SaveState
 	static std::string saveStateInitialGitVersion = "";
 
 	// TODO: Should this be configurable?
-	static const int SCREENSHOT_FAILURE_RETRIES = 15;
+	// Should only fail if the game hasn't created a framebuffer yet. Some games play video without a framebuffer,
+	// we should probably just read back memory then instead (GTA for example). But this is a really unimportant edge case,
+	// when in-game it's just not an issue.
+	static const int SCREENSHOT_FAILURE_RETRIES = 6;
 	static StateRingbuffer rewindStates;
 
 	void SaveStart::DoState(PointerWrap &p)
@@ -404,6 +407,9 @@ namespace SaveState
 
 	void Enqueue(const SaveState::Operation &op)
 	{
+		if (!NetworkAllowSaveState()) {
+			return;
+		}
 		if (Achievements::HardcoreModeActive()) {
 			if (g_Config.bAchievementsSaveStateInHardcoreMode && ((op.type == SaveState::SAVESTATE_SAVE) || (op.type == SAVESTATE_SAVE_SCREENSHOT))) {
 				// We allow saving in hardcore mode if this setting is on.
@@ -423,17 +429,25 @@ namespace SaveState
 
 	void Load(const Path &filename, int slot, Callback callback, void *cbUserData)
 	{
+		if (!NetworkAllowSaveState()) {
+			return;
+		}
+
 		rewindStates.NotifyState();
 		if (coreState == CoreState::CORE_RUNTIME_ERROR)
-			Core_Break("savestate.load", 0);
+			Core_Break(BreakReason::SavestateLoad, 0);
 		Enqueue(Operation(SAVESTATE_LOAD, filename, slot, callback, cbUserData));
 	}
 
 	void Save(const Path &filename, int slot, Callback callback, void *cbUserData)
 	{
+		if (!NetworkAllowSaveState()) {
+			return;
+		}
+
 		rewindStates.NotifyState();
 		if (coreState == CoreState::CORE_RUNTIME_ERROR)
-			Core_Break("savestate.save", 0);
+			Core_Break(BreakReason::SavestateSave, 0);
 		Enqueue(Operation(SAVESTATE_SAVE, filename, slot, callback, cbUserData));
 	}
 
@@ -444,18 +458,20 @@ namespace SaveState
 
 	void Rewind(Callback callback, void *cbUserData)
 	{
+		if (g_netInited) {
+			return;
+		}
 		if (coreState == CoreState::CORE_RUNTIME_ERROR)
-			Core_Break("savestate.rewind", 0);
+			Core_Break(BreakReason::SavestateRewind, 0);
 		Enqueue(Operation(SAVESTATE_REWIND, Path(), -1, callback, cbUserData));
 	}
 
-	void SaveScreenshot(const Path &filename, Callback callback, void *cbUserData)
-	{
-		Enqueue(Operation(SAVESTATE_SAVE_SCREENSHOT, filename, -1, callback, cbUserData));
+	static void SaveScreenshot(const Path &filename) {
+		screenshotFailures = 0;
+		Enqueue(Operation(SAVESTATE_SAVE_SCREENSHOT, filename, -1, nullptr, nullptr));
 	}
 
-	bool CanRewind()
-	{
+	bool CanRewind() {
 		return !rewindStates.Empty();
 	}
 
@@ -574,6 +590,10 @@ namespace SaveState
 
 	void LoadSlot(const Path &gameFilename, int slot, Callback callback, void *cbUserData)
 	{
+		if (!NetworkAllowSaveState()) {
+			return;
+		}
+
 		Path fn = GenerateSaveSlotFilename(gameFilename, slot, STATE_EXTENSION);
 		if (!fn.empty()) {
 			// This add only 1 extra state, should we just always enable it?
@@ -611,6 +631,10 @@ namespace SaveState
 
 	bool UndoLoad(const Path &gameFilename, Callback callback, void *cbUserData)
 	{
+		if (!NetworkAllowSaveState()) {
+			return false;
+		}
+
 		if (g_Config.sStateLoadUndoGame != GenerateFullDiscId(gameFilename)) {
 			if (callback) {
 				auto sy = GetI18NCategory(I18NCat::SYSTEM);
@@ -634,6 +658,10 @@ namespace SaveState
 
 	void SaveSlot(const Path &gameFilename, int slot, Callback callback, void *cbUserData)
 	{
+		if (!NetworkAllowSaveState()) {
+			return;
+		}
+
 		Path fn = GenerateSaveSlotFilename(gameFilename, slot, STATE_EXTENSION);
 		Path fnUndo = GenerateSaveSlotFilename(gameFilename, slot, UNDO_STATE_EXTENSION);
 		if (!fn.empty()) {
@@ -661,7 +689,7 @@ namespace SaveState
 				DeleteIfExists(shotUndo);
 				RenameIfExists(shot, shotUndo);
 			}
-			SaveScreenshot(shot, Callback(), 0);
+			SaveScreenshot(shot);
 			Save(fn.WithExtraExtension(".tmp"), slot, renameCallback, cbUserData);
 		} else {
 			if (callback) {
@@ -671,7 +699,11 @@ namespace SaveState
 		}
 	}
 
-	bool UndoSaveSlot(const Path &gameFilename, int slot) {		
+	bool UndoSaveSlot(const Path &gameFilename, int slot) {
+		if (!NetworkAllowSaveState()) {
+			return false;
+		}
+
 		Path fnUndo = GenerateSaveSlotFilename(gameFilename, slot, UNDO_STATE_EXTENSION);
 
 		// Do nothing if there's no undo.
@@ -690,6 +722,10 @@ namespace SaveState
 
 
 	bool UndoLastSave(const Path &gameFilename) {
+		if (!NetworkAllowSaveState()) {
+			return false;
+		}
+
 		if (g_Config.sStateUndoLastSaveGame != GenerateFullDiscId(gameFilename))
 			return false;
 
@@ -929,11 +965,9 @@ namespace SaveState
 
 		bool readbackImage = false;
 
-		for (size_t i = 0, n = operations.size(); i < n; ++i) {
-			Operation &op = operations[i];
+		for (const auto &op : operations) {
 			CChunkFileReader::Error result;
 			Status callbackResult;
-			bool tempResult;
 			std::string callbackMessage;
 			std::string title;
 
@@ -970,6 +1004,7 @@ namespace SaveState
 						}
 					}
 #endif
+					g_lastSaveTime = time_now_d();
 				} else if (result == CChunkFileReader::ERROR_BROKEN_STATE) {
 					HandleLoadFailure(false);
 					callbackMessage = std::string(i18nLoadFailure) + ": " + errorString;
@@ -1005,6 +1040,7 @@ namespace SaveState
 						}
 					}
 #endif
+					g_lastSaveTime = time_now_d();
 				} else if (result == CChunkFileReader::ERROR_BROKEN_STATE) {
 					// TODO: What else might we want to do here? This should be very unusual.
 					callbackMessage = i18nSaveFailure;
@@ -1017,7 +1053,8 @@ namespace SaveState
 				break;
 
 			case SAVESTATE_VERIFY:
-				tempResult = CChunkFileReader::Verify(state) == CChunkFileReader::ERROR_NONE;
+			{
+				int tempResult = CChunkFileReader::Verify(state) == CChunkFileReader::ERROR_NONE;
 				callbackResult = tempResult ? Status::SUCCESS : Status::FAILURE;
 				if (tempResult) {
 					INFO_LOG(Log::SaveState, "Verified save state system");
@@ -1025,6 +1062,7 @@ namespace SaveState
 					ERROR_LOG(Log::SaveState, "Save state system verification failed");
 				}
 				break;
+			}
 
 			case SAVESTATE_REWIND:
 				INFO_LOG(Log::SaveState, "Rewinding to recent savestate snapshot");
@@ -1054,19 +1092,36 @@ namespace SaveState
 
 			case SAVESTATE_SAVE_SCREENSHOT:
 			{
+				_dbg_assert_(!op.callback);
+
 				int maxResMultiplier = 2;
-				tempResult = TakeGameScreenshot(nullptr, op.filename, ScreenshotFormat::JPG, SCREENSHOT_DISPLAY, nullptr, nullptr, maxResMultiplier);
-				callbackResult = tempResult ? Status::SUCCESS : Status::FAILURE;
-				if (!tempResult) {
-					ERROR_LOG(Log::SaveState, "Failed to take a screenshot for the savestate! %s", op.filename.c_str());
-					if (screenshotFailures++ < SCREENSHOT_FAILURE_RETRIES) {
-						// Requeue for next frame.
-						SaveScreenshot(op.filename, op.callback, op.cbUserData);
+				ScreenshotResult tempResult = TakeGameScreenshot(nullptr, op.filename, ScreenshotFormat::JPG, SCREENSHOT_DISPLAY, maxResMultiplier, [](bool success) {
+					if (success) {
+						screenshotFailures = 0;
 					}
-				} else {
-					screenshotFailures = 0;
+				});
+				
+				switch (tempResult) {
+				case ScreenshotResult::ScreenshotNotPossible:
+					// Try again soon, for a short while.
+					callbackResult = Status::FAILURE;
+					WARN_LOG(Log::SaveState, "Failed to take a screenshot for the savestate! (%s) The savestate will lack an icon.", op.filename.c_str());
+					if (coreState != CORE_STEPPING_CPU && screenshotFailures++ < SCREENSHOT_FAILURE_RETRIES) {
+						// Requeue for next frame (if we were stepping, no point, will just spam errors quickly).
+						SaveScreenshot(op.filename);
+					}
+					break;
+				case ScreenshotResult::DelayedResult:
+				case ScreenshotResult::Success:
+					// We might not know if the file write succeeded yet though.
+					callbackResult = Status::SUCCESS;
+					readbackImage = true;
+					break;
+				case ScreenshotResult::FailedToWriteFile:
+					// Can't reach here when we pass in a callback to TakeGameScreenshot.
+					callbackResult = Status::SUCCESS;
+					break;
 				}
-				readbackImage = true;
 				break;
 			}
 			default:
@@ -1092,15 +1147,10 @@ namespace SaveState
 	}
 
 	void Cleanup() {
+		// TODO: Handle this better.
 		if (needsRestart) {
-			PSP_Shutdown();
-			std::string resetError;
-			if (!PSP_Init(PSP_CoreParameter(), &resetError)) {
-				ERROR_LOG(Log::Boot, "Error resetting: %s", resetError.c_str());
-				// TODO: This probably doesn't clean up well enough.
-				Core_Stop();
-				return;
-			}
+			std::string error_string;
+			PSP_Reboot(&error_string);
 			System_Notify(SystemNotification::BOOT_DONE);
 			System_Notify(SystemNotification::DISASSEMBLY);
 			needsRestart = false;
@@ -1120,11 +1170,21 @@ namespace SaveState
 		saveDataGeneration = 0;
 		lastSaveDataGeneration = 0;
 		saveStateInitialGitVersion.clear();
+
+		g_lastSaveTime = time_now_d();
 	}
 
 	void Shutdown()
 	{
 		std::lock_guard<std::mutex> guard(mutex);
 		rewindStates.Clear();
+	}
+
+	double SecondsSinceLastSavestate() {
+		if (g_lastSaveTime < 0) {
+			return -1.0;
+		} else {
+			return time_now_d() - g_lastSaveTime;
+		}
 	}
 }

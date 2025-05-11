@@ -63,6 +63,10 @@ public:
 	void deviceLost() override;
 	void deviceRestored(Draw::DrawContext *draw) override;
 
+	void SendImDebuggerCommand(const ImCommand &command) {
+		imCmd_ = command;
+	}
+
 protected:
 	void darken();
 	void focusChanged(ScreenFocusChange focusChange) override;
@@ -74,7 +78,7 @@ private:
 	UI::EventReturn OnChat(UI::EventParams &params);
 	UI::EventReturn OnResume(UI::EventParams &params);
 
-	void bootGame(const Path &filename);
+	void ProcessGameBoot(const Path &filename);
 	bool bootAllowStorage(const Path &filename);
 	void bootComplete();
 	bool hasVisibleUI();
@@ -82,21 +86,21 @@ private:
 	void runImDebugger();
 	void renderImDebugger();
 
-	void onVKey(int virtualKeyCode, bool down);
-	void onVKeyAnalog(int virtualKeyCode, float value);
+	void onVKey(VirtKey virtualKeyCode, bool down);
+	void onVKeyAnalog(VirtKey virtualKeyCode, float value);
 
-	void autoLoad();
+	void AutoLoadSaveState();
 	bool checkPowerDown();
+
+	void ProcessQueuedVKeys();
+	void ProcessVKey(VirtKey vkey);
 
 	UI::Event OnDevMenu;
 	UI::Event OnChatMenu;
 	bool bootPending_ = true;
 	Path gamePath_;
 
-	// Something invalid was loaded, don't try to emulate
-	bool invalid_ = true;
 	bool quit_ = false;
-	bool stopRender_ = false;
 	std::string errorMessage_;
 
 	// If set, pauses at the end of the frame.
@@ -133,6 +137,7 @@ private:
 	ControlMapper controlMapper_;
 
 	std::unique_ptr<ImDebugger> imDebugger_ = nullptr;
+	ImCommand imCmd_{};  // needed to buffer commands in case imgui wasn't created yet.
 
 	bool imguiInited_ = false;
 	// For ImGui modifier tracking
@@ -142,6 +147,12 @@ private:
 	bool keyShiftRight_ = false;
 	bool keyAltLeft_ = false;
 	bool keyAltRight_ = false;
+
+	bool lastImguiEnabled_ = false;
+
+	std::vector<VirtKey> queuedVirtKeys_;
+
+	ImGuiContext *ctx_ = nullptr;
 };
 
 bool MustRunBehind();

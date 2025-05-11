@@ -49,9 +49,11 @@
 #include "sceKernelTime.h"
 #include "sceMd5.h"
 #include "sceMp4.h"
+#include "sceAac.h"
 #include "sceMp3.h"
 #include "sceNet.h"
 #include "sceNetAdhoc.h"
+#include "sceNetAdhocMatching.h"
 #include "sceNp.h"
 #include "sceMpeg.h"
 #include "sceOpenPSID.h"
@@ -62,6 +64,7 @@
 #include "scePower.h"
 #include "scePspNpDrm_user.h"
 #include "scePsmf.h"
+#include "sceReg.h"
 #include "sceRtc.h"
 #include "sceSas.h"
 #include "sceSircs.h"
@@ -80,6 +83,10 @@
 #include "sceSfmt19937.h"
 #include "sceG729.h"
 #include "KUBridge.h"
+#include "sceNetInet.h"
+#include "sceNetResolver.h"
+// #include "sceNp2.h"
+#include "sceNet_lib.h"
 
 #define N(s) s
 
@@ -236,7 +243,13 @@ void RegisterAllModules() {
 	Register_sceSasCore();
 	Register_sceFont();
 	Register_sceNet();
+	Register_sceNetResolver();
+	Register_sceNetInet();
+	Register_sceNetApctl();
 	Register_sceNetAdhoc();
+	Register_sceNetAdhocMatching();
+	Register_sceNetAdhocDiscover();
+	Register_sceNetAdhocctl();
 	Register_sceRtc();
 	Register_sceWlanDrv();
 	Register_sceMpeg();
@@ -264,6 +277,7 @@ void RegisterAllModules() {
 	Register_sceGameUpdate();
 	Register_sceDeflt();
 	Register_sceMp4();
+	Register_sceAac();
 	Register_scePauth();
 	Register_sceNp();
 	Register_sceNpCommerce2();
@@ -275,13 +289,13 @@ void RegisterAllModules() {
 	Register_sceHeap();
 
 	for (int i = 0; i < numModules; i++) {
-		RegisterModule(moduleList[i].name, moduleList[i].numFunctions, moduleList[i].funcTable);
+		RegisterHLEModule(moduleList[i].name, moduleList[i].numFunctions, moduleList[i].funcTable);
 	}
 
 	// IMPORTANT: New modules have to be added at the end, or they will break savestates.
 
 	Register_StdioForKernel();
-	RegisterModule("LoadCoreForKernel", ARRAY_SIZE(LoadCoreForKernel), LoadCoreForKernel);
+	RegisterHLEModule("LoadCoreForKernel", ARRAY_SIZE(LoadCoreForKernel), LoadCoreForKernel);
 	Register_IoFileMgrForKernel();
 	Register_LoadExecForKernel();
 	Register_SysMemForKernel();
@@ -309,6 +323,11 @@ void RegisterAllModules() {
 	Register_mp4msv();
 	Register_InterruptManagerForKernel();
 	Register_sceSircs();
+	Register_sceNet_lib();
+	Register_sceReg();
+	// Not ready to enable this due to apparent softlocks in Patapon 3.
+	// Register_sceNpMatching2();
+
 	// add new modules here.
 }
 

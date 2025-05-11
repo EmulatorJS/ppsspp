@@ -405,6 +405,7 @@
     <ClInclude Include="..\ext\basis_universal\basisu_transcoder_uastc.h" />
     <ClInclude Include="..\ext\imgui\imconfig.h" />
     <ClInclude Include="..\ext\imgui\imgui.h" />
+    <ClInclude Include="..\ext\imgui\imgui_extras.h" />
     <ClInclude Include="..\ext\imgui\imgui_impl_platform.h" />
     <ClInclude Include="..\ext\imgui\imgui_impl_thin3d.h" />
     <ClInclude Include="..\ext\imgui\imgui_internal.h" />
@@ -447,6 +448,9 @@
     <ClInclude Include="..\ext\lua\lzio.h" />
     <ClInclude Include="..\ext\minimp3\minimp3.h" />
     <ClInclude Include="..\ext\naett\naett.h" />
+    <ClInclude Include="..\ext\sol\config.hpp" />
+    <ClInclude Include="..\ext\sol\forward.hpp" />
+    <ClInclude Include="..\ext\sol\sol.hpp" />
     <ClInclude Include="..\ext\vma\vk_mem_alloc.h" />
     <ClInclude Include="ABI.h" />
     <ClInclude Include="Arm64Emitter.h" />
@@ -551,6 +555,7 @@
     <ClInclude Include="Net\HTTPRequest.h" />
     <ClInclude Include="Net\Resolve.h" />
     <ClInclude Include="Net\Sinks.h" />
+    <ClInclude Include="Net\SocketCompat.h" />
     <ClInclude Include="Net\URL.h" />
     <ClInclude Include="Net\WebsocketServer.h" />
     <ClInclude Include="Profiler\Profiler.h" />
@@ -657,6 +662,7 @@
     <ClCompile Include="..\ext\imgui\imgui.cpp" />
     <ClCompile Include="..\ext\imgui\imgui_demo.cpp" />
     <ClCompile Include="..\ext\imgui\imgui_draw.cpp" />
+    <ClCompile Include="..\ext\imgui\imgui_extras.cpp" />
     <ClCompile Include="..\ext\imgui\imgui_impl_platform.cpp" />
     <ClCompile Include="..\ext\imgui\imgui_impl_thin3d.cpp" />
     <ClCompile Include="..\ext\imgui\imgui_tables.cpp" />

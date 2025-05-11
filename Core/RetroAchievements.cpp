@@ -289,7 +289,7 @@ static void server_call_callback(const rc_api_request_t *request,
 	// If post data is provided, we need to make a POST request, otherwise, a GET request will suffice.
 	auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
 	if (request->post_data) {
-		std::shared_ptr<http::Request> download = g_DownloadManager.AsyncPostWithCallback(std::string(request->url), std::string(request->post_data), "application/x-www-form-urlencoded", http::ProgressBarMode::DELAYED, [=](http::Request &download) {
+		std::shared_ptr<http::Request> download = g_DownloadManager.AsyncPostWithCallback(std::string(request->url), std::string(request->post_data), "application/x-www-form-urlencoded", http::RequestFlags::ProgressBar | http::RequestFlags::ProgressBarDelayed, [=](http::Request &download) {
 			std::string buffer;
 			download.buffer().TakeAll(&buffer);
 			rc_api_server_response_t response{};
@@ -299,7 +299,7 @@ static void server_call_callback(const rc_api_request_t *request,
 			callback(&response, callback_data);
 		}, ac->T("Contacting RetroAchievements server..."));
 	} else {
-		std::shared_ptr<http::Request> download = g_DownloadManager.StartDownloadWithCallback(std::string(request->url), Path(), http::ProgressBarMode::DELAYED, [=](http::Request &download) {
+		std::shared_ptr<http::Request> download = g_DownloadManager.StartDownloadWithCallback(std::string(request->url), Path(), http::RequestFlags::ProgressBar | http::RequestFlags::ProgressBarDelayed, [=](http::Request &download) {
 			std::string buffer;
 			download.buffer().TakeAll(&buffer);
 			rc_api_server_response_t response{};
@@ -545,7 +545,7 @@ static void raintegration_event_handler(const rc_client_raintegration_event_t *e
 		break;
 	case RC_CLIENT_RAINTEGRATION_EVENT_PAUSE:
 		// The toolkit has hit a breakpoint and wants to pause the emulator. Do so.
-		Core_Break("ra_breakpoint");
+		Core_Break(BreakReason::RABreak);
 		break;
 	case RC_CLIENT_RAINTEGRATION_EVENT_HARDCORE_CHANGED:
 		// Hardcore mode has been changed (either directly by the user, or disabled through the use of the tools).
@@ -746,16 +746,20 @@ void UpdateSettings() {
 
 bool Shutdown() {
 	g_activeChallenges.clear();
+	if (g_rcClient) {
 #ifdef RC_CLIENT_SUPPORTS_RAINTEGRATION
-	rc_client_unload_raintegration(g_rcClient);
+		rc_client_unload_raintegration(g_rcClient);
 #endif
-	rc_client_destroy(g_rcClient);
-	g_rcClient = nullptr;
-	INFO_LOG(Log::Achievements, "Achievements shut down.");
+		rc_client_destroy(g_rcClient);
+		g_rcClient = nullptr;
+		INFO_LOG(Log::Achievements, "Achievements shut down.");
+	}
 	return true;
 }
 
 void ResetRuntime() {
+	if (!g_rcClient)
+		return;
 	INFO_LOG(Log::Achievements, "Resetting rcheevos state...");
 	rc_client_reset(g_rcClient);
 	g_activeChallenges.clear();
@@ -874,7 +878,7 @@ bool HasAchievementsOrLeaderboards() {
 void DownloadImageIfMissing(const std::string &cache_key, std::string &&url) {
 	if (g_iconCache.MarkPending(cache_key)) {
 		INFO_LOG(Log::Achievements, "Downloading image: %s (%s)", url.c_str(), cache_key.c_str());
-		g_DownloadManager.StartDownloadWithCallback(url, Path(), http::ProgressBarMode::NONE, [cache_key](http::Request &download) {
+		g_DownloadManager.StartDownloadWithCallback(url, Path(), http::RequestFlags::Default, [cache_key](http::Request &download) {
 			if (download.ResultCode() != 200)
 				return;
 			std::string data;
@@ -962,10 +966,6 @@ void identify_and_load_callback(int result, const char *error_message, rc_client
 	g_isIdentifying = false;
 }
 
-bool IsReadyToStart() {
-	return !g_isLoggingIn;
-}
-
 void SetGame(const Path &path, IdentifiedFileType fileType, FileLoader *fileLoader) {
 	bool homebrew = false;
 	switch (fileType) {
@@ -996,6 +996,11 @@ void SetGame(const Path &path, IdentifiedFileType fileType, FileLoader *fileLoad
 			ShowNotLoggedInMessage();
 		}
 		// Nothing to do.
+		return;
+	}
+
+	if (!fileLoader) {
+		ERROR_LOG(Log::Achievements, "File loader not initialized");
 		return;
 	}
 

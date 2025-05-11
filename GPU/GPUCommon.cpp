@@ -22,9 +22,9 @@
 #include "Core/MemMap.h"
 #include "Core/Reporting.h"
 #include "Core/HLE/HLE.h"
+#include "Core/HLE/ErrorCodes.h"
 #include "Core/HLE/sceKernelMemory.h"
 #include "Core/HLE/sceKernelInterrupt.h"
-#include "Core/HLE/sceKernelThread.h"
 #include "Core/HLE/sceGe.h"
 #include "Core/Util/PPGeDraw.h"
 #include "Core/MemMapHelpers.h"
@@ -35,6 +35,8 @@
 #include "GPU/Debugger/Debugger.h"
 #include "GPU/Debugger/Record.h"
 #include "GPU/Debugger/Stepping.h"
+
+bool __KernelIsDispatchEnabled();
 
 void GPUCommon::Flush() {
 	drawEngineCommon_->Flush();
@@ -358,7 +360,8 @@ u32 GPUCommon::EnqueueList(u32 listpc, u32 stall, int subIntrBase, PSPPointer<Ps
 
 	// If args->size is below 16, it's the old struct without stack info.
 	if (args.IsValid() && args->size >= 16 && args->numStacks >= 256) {
-		return hleLogError(Log::G3D, SCE_KERNEL_ERROR_INVALID_SIZE, "invalid stack depth %d", args->numStacks);
+		ERROR_LOG(Log::G3D, "invalid stack depth %d", args->numStacks);
+		return SCE_KERNEL_ERROR_INVALID_SIZE;
 	}
 
 	int id = -1;
@@ -529,7 +532,7 @@ u32 GPUCommon::Continue(bool *runList) {
 	else
 	{
 		if (sceKernelGetCompiledSdkVersion() >= 0x02000000)
-			return 0x80000004;
+			return 0x80000004;  // matches SCE_KERNEL_ERROR_BAD_ARGUMENT but doesn't really seem like it. Maybe that error code is more general.
 		return -1;
 	}
 
@@ -623,31 +626,30 @@ bool GPUCommon::SlowRunLoop(DisplayList &list) {
 	const bool dumpThisFrame = dumpThisFrame_;
 	while (downcount > 0) {
 		GPUDebug::NotifyResult result = NotifyCommand(list.pc, &breakpoints_);
-
-		if (result == GPUDebug::NotifyResult::Execute) {
-			recorder_.NotifyCommand(list.pc);
-			u32 op = Memory::ReadUnchecked_U32(list.pc);
-			u32 cmd = op >> 24;
-
-			u32 diff = op ^ gstate.cmdmem[cmd];
-			PreExecuteOp(op, diff);
-			if (dumpThisFrame) {
-				char temp[256];
-				u32 prev;
-				if (Memory::IsValidAddress(list.pc - 4)) {
-					prev = Memory::ReadUnchecked_U32(list.pc - 4);
-				} else {
-					prev = 0;
-				}
-				GeDisassembleOp(list.pc, op, prev, temp, 256);
-				NOTICE_LOG(Log::G3D, "%08x: %s", op, temp);
-			}
-			gstate.cmdmem[cmd] = op;
-
-			ExecuteOp(op, diff);
-		} else if (result == GPUDebug::NotifyResult::Break) {
+		if (result == GPUDebug::NotifyResult::Break) {
 			return false;
 		}
+
+		recorder_.NotifyCommand(list.pc);
+		u32 op = Memory::ReadUnchecked_U32(list.pc);
+		u32 cmd = op >> 24;
+
+		u32 diff = op ^ gstate.cmdmem[cmd];
+		PreExecuteOp(op, diff);
+		if (dumpThisFrame) {
+			char temp[256];
+			u32 prev;
+			if (Memory::IsValidAddress(list.pc - 4)) {
+				prev = Memory::ReadUnchecked_U32(list.pc - 4);
+			} else {
+				prev = 0;
+			}
+			GeDisassembleOp(list.pc, op, prev, temp, 256);
+			NOTICE_LOG(Log::G3D, "%08x: %s", op, temp);
+		}
+		gstate.cmdmem[cmd] = op;
+
+		ExecuteOp(op, diff);
 
 		list.pc += 4;
 		--downcount;
@@ -748,17 +750,19 @@ DLResult GPUCommon::ProcessDLQueue() {
 	for (int listIndex = GetNextListIndex(); listIndex != -1; listIndex = GetNextListIndex()) {
 		DisplayList &list = dls[listIndex];
 
-		if (!Memory::IsValidAddress(list.pc)) {
-			ERROR_LOG(Log::G3D, "DL PC = %08x WTF!!!!", list.pc);
-			return DLResult::Error;
+		if (list.state == PSP_GE_DL_STATE_PAUSED) {
+			return DLResult::Done;
+		}
+
+		// Temporary workaround for Crazy Taxi, see #19894
+		if (list.state == PSP_GE_DL_STATE_NONE) {
+			WARN_LOG(Log::G3D, "Discarding display list with state NONE (pc=%08x). This is odd.", list.pc);
+			dlQueue.erase(std::remove(dlQueue.begin(), dlQueue.end(), listIndex), dlQueue.end());
+			return DLResult::Done;
 		}
 
 		DEBUG_LOG(Log::G3D, "%s DL execution at %08x - stall = %08x (startingTicks=%lld)",
 			list.pc == list.startpc ? "Starting" : "Resuming", list.pc, list.stall, startingTicks);
-
-		if (list.state == PSP_GE_DL_STATE_PAUSED) {
-			return DLResult::Done;
-		}
 
 		if (!resumingFromDebugBreak_) {
 			// TODO: Need to be careful when *resuming* a list (when it wasn't from a stall...)
@@ -770,6 +774,11 @@ DLResult GPUCommon::ProcessDLQueue() {
 			list.started = true;
 
 			gstate_c.offsetAddr = list.offsetAddr;
+
+			if (!Memory::IsValidAddress(list.pc)) {
+				ERROR_LOG(Log::G3D, "DL PC = %08x WTF!!!!", list.pc);
+				return DLResult::Done;
+			}
 
 			cycleLastPC = list.pc;
 			cyclesExecuted += 60;
@@ -842,6 +851,7 @@ DLResult GPUCommon::ProcessDLQueue() {
 			// don't do anything - though dunno about error...
 			break;
 		case GPUSTATE_STALL:
+			// Resume work on this same display list later.
 			return DLResult::Done;
 		default:
 			return DLResult::Error;
@@ -987,8 +997,10 @@ void GPUCommon::Execute_Ret(u32 op, u32 diff) {
 }
 
 void GPUCommon::Execute_End(u32 op, u32 diff) {
-	if (flushOnParams_)
+	if (flushOnParams_) {
+		drawEngineCommon_->FlushQueuedDepth();
 		Flush();
+	}
 
 	const u32 prev = Memory::ReadUnchecked_U32(currentList->pc - 4);
 	UpdatePC(currentList->pc, currentList->pc);
@@ -1311,8 +1323,10 @@ void GPUCommon::FlushImm() {
 	gstate_c.UpdateUVScaleOffset();
 
 	VirtualFramebuffer *vfb = nullptr;
-	if (framebufferManager_)
-		vfb = framebufferManager_->SetRenderFrameBuffer(gstate_c.IsDirty(DIRTY_FRAMEBUF), gstate_c.skipDrawReason);
+	if (framebufferManager_) {
+		bool changed;
+		vfb = framebufferManager_->SetRenderFrameBuffer(gstate_c.IsDirty(DIRTY_FRAMEBUF), gstate_c.skipDrawReason, &changed);
+	}
 	if (vfb) {
 		CheckDepthUsage(vfb);
 	}
@@ -1378,8 +1392,9 @@ void GPUCommon::FastLoadBoneMatrix(u32 target) {
 	}
 
 	if (!g_Config.bSoftwareSkinning) {
-		if (flushOnParams_)
+		if (flushOnParams_) {
 			Flush();
+		}
 		gstate_c.Dirty(uniformsToDirty);
 	} else {
 		gstate_c.deferredVertTypeDirty |= uniformsToDirty;
@@ -2103,11 +2118,6 @@ GPUDebug::NotifyResult GPUCommon::NotifyCommand(u32 pc, GPUBreakpoints *breakpoi
 	if (debugBreak) {
 		breakpoints->ClearTempBreakpoints();
 
-		if (coreState == CORE_POWERDOWN) {
-			breakNext_ = BreakNext::NONE;
-			return process ? NotifyResult::Execute : NotifyResult::Skip;
-		}
-
 		u32 op = Memory::Read_U32(pc);
 		auto info = DisassembleOp(pc, op);
 		NOTICE_LOG(Log::GeDebugger, "Waiting at %08x, %s", pc, info.desc.c_str());
@@ -2128,6 +2138,10 @@ void GPUCommon::NotifyFlush() {
 		if (primAfterDraw_) {
 			NOTICE_LOG(Log::GeDebugger, "Flush detected, breaking at next PRIM");
 			primAfterDraw_ = false;
+
+			// We've got one to rewind.
+			primsThisFrame_--;
+
 			// Switch to PRIM mode.
 			SetBreakNext(BreakNext::PRIM);
 		}

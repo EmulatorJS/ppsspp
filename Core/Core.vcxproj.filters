@@ -273,6 +273,9 @@
     <ClCompile Include="HLE\sceNet.cpp">
       <Filter>HLE\Libraries</Filter>
     </ClCompile>
+    <ClCompile Include="HLE\sceNet_lib.cpp">
+      <Filter>HLE\Libraries</Filter>
+    </ClCompile>
     <ClCompile Include="HLE\scePower.cpp">
       <Filter>HLE\Libraries</Filter>
     </ClCompile>
@@ -518,6 +521,9 @@
       <Filter>HLE\Libraries</Filter>
     </ClCompile>
     <ClCompile Include="HLE\sceNetAdhoc.cpp">
+      <Filter>HLE\Libraries</Filter>
+    </ClCompile>
+    <ClCompile Include="HLE\sceNetAdhocMatching.cpp">
       <Filter>HLE\Libraries</Filter>
     </ClCompile>
     <ClCompile Include="Dialog\PSPGamedataInstallDialog.cpp">
@@ -946,9 +952,6 @@
     <ClCompile Include="KeyMap.cpp">
       <Filter>Core</Filter>
     </ClCompile>
-    <ClCompile Include="ThreadPools.cpp">
-      <Filter>Core</Filter>
-    </ClCompile>
     <ClCompile Include="Debugger\WebSocket\InputSubscriber.cpp">
       <Filter>Debugger\WebSocket</Filter>
     </ClCompile>
@@ -1315,6 +1318,42 @@
     <ClCompile Include="HLE\AtracCtx2.cpp">
       <Filter>HLE\Libraries</Filter>
     </ClCompile>
+    <ClCompile Include="Dialog\PSPOskConstants.cpp">
+      <Filter>Dialog</Filter>
+    </ClCompile>
+    <ClCompile Include="HLE\sceNetApctl.cpp">
+      <Filter>HLE\Libraries</Filter>
+    </ClCompile>
+    <ClCompile Include="HLE\sceNetInet.cpp">
+      <Filter>HLE\Libraries</Filter>
+    </ClCompile>
+    <ClCompile Include="HLE\sceNetResolver.cpp">
+      <Filter>HLE\Libraries</Filter>
+    </ClCompile>
+    <ClCompile Include="HLE\NetInetConstants.cpp">
+      <Filter>HLE\Libraries</Filter>
+    </ClCompile>
+    <ClCompile Include="HLE\SocketManager.cpp">
+      <Filter>HLE\Libraries</Filter>
+    </ClCompile>
+    <ClCompile Include="HLE\sceAac.cpp">
+      <Filter>HLE\Libraries</Filter>
+    </ClCompile>
+    <ClCompile Include="Util\AtracTrack.cpp">
+      <Filter>Util</Filter>
+    </ClCompile>
+    <ClCompile Include="Util\RecentFiles.cpp">
+      <Filter>Util</Filter>
+    </ClCompile>
+    <ClCompile Include="LuaContext.cpp">
+      <Filter>Core</Filter>
+    </ClCompile>
+    <ClCompile Include="HLE\sceReg.cpp">
+      <Filter>HLE\Libraries</Filter>
+    </ClCompile>
+    <ClCompile Include="FileLoaders\ZipFileLoader.cpp">
+      <Filter>FileLoaders</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ELF\ElfReader.h">
@@ -1480,6 +1519,9 @@
       <Filter>HLE\Libraries</Filter>
     </ClInclude>
     <ClInclude Include="HLE\sceNet.h">
+      <Filter>HLE\Libraries</Filter>
+    </ClInclude>
+    <ClInclude Include="HLE\sceNet_lib.h">
       <Filter>HLE\Libraries</Filter>
     </ClInclude>
     <ClInclude Include="HLE\scePower.h">
@@ -1698,9 +1740,6 @@
     <ClInclude Include="FileSystems\VirtualDiscFileSystem.h">
       <Filter>FileSystems</Filter>
     </ClInclude>
-    <ClInclude Include="ThreadEventQueue.h">
-      <Filter>Core</Filter>
-    </ClInclude>
     <ClInclude Include="HW\AsyncIOManager.h">
       <Filter>HW</Filter>
     </ClInclude>
@@ -1720,6 +1759,9 @@
       <Filter>HLE\Libraries</Filter>
     </ClInclude>
     <ClInclude Include="HLE\sceNetAdhoc.h">
+      <Filter>HLE\Libraries</Filter>
+    </ClInclude>
+    <ClInclude Include="HLE\sceNetAdhocMatching.h">
       <Filter>HLE\Libraries</Filter>
     </ClInclude>
     <ClInclude Include="Dialog\PSPGamedataInstallDialog.h">
@@ -1998,9 +2040,6 @@
     <ClInclude Include="KeyMap.h">
       <Filter>Core</Filter>
     </ClInclude>
-    <ClInclude Include="ThreadPools.h">
-      <Filter>Core</Filter>
-    </ClInclude>
     <ClInclude Include="Debugger\WebSocket\InputSubscriber.h">
       <Filter>Debugger\WebSocket</Filter>
     </ClInclude>
@@ -2109,6 +2148,48 @@
     <ClInclude Include="HLE\AtracCtx2.h">
       <Filter>HLE\Libraries</Filter>
     </ClInclude>
+    <ClInclude Include="Dialog\PSPOskConstants.h">
+      <Filter>Dialog</Filter>
+    </ClInclude>
+    <ClInclude Include="HLE\sceNetApctl.h">
+      <Filter>HLE\Libraries</Filter>
+    </ClInclude>
+    <ClInclude Include="HLE\sceNetInet.h">
+      <Filter>HLE\Libraries</Filter>
+    </ClInclude>
+    <ClInclude Include="HLE\sceNetResolver.h">
+      <Filter>HLE\Libraries</Filter>
+    </ClInclude>
+    <ClInclude Include="HLE\NetInetConstants.h">
+      <Filter>HLE\Libraries</Filter>
+    </ClInclude>
+    <ClInclude Include="HLE\SocketManager.h">
+      <Filter>HLE\Libraries</Filter>
+    </ClInclude>
+    <ClInclude Include="HLE\sceAac.h">
+      <Filter>HLE\Libraries</Filter>
+    </ClInclude>
+    <ClInclude Include="HLE\ErrorCodes.h">
+      <Filter>HLE</Filter>
+    </ClInclude>
+    <ClInclude Include="Util\AtracTrack.h">
+      <Filter>Util</Filter>
+    </ClInclude>
+    <ClInclude Include="Util\RecentFiles.h">
+      <Filter>Util</Filter>
+    </ClInclude>
+    <ClInclude Include="LuaContext.h">
+      <Filter>Core</Filter>
+    </ClInclude>
+    <ClInclude Include="HLE\PSPThreadContext.h">
+      <Filter>HLE\Kernel</Filter>
+    </ClInclude>
+    <ClInclude Include="HLE\sceReg.h">
+      <Filter>HLE\Libraries</Filter>
+    </ClInclude>
+    <ClInclude Include="FileLoaders\ZipFileLoader.h">
+      <Filter>FileLoaders</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <None Include="..\LICENSE.TXT" />
@@ -2124,6 +2205,7 @@
     <None Include="..\ext\libzip\Android.mk">
       <Filter>Ext\libzip</Filter>
     </None>
+    <None Include="..\assets\infra-dns.json" />
   </ItemGroup>
   <ItemGroup>
     <Text Include="..\ext\sha1\CMakeLists.txt">

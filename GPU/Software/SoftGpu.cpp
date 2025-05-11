@@ -16,6 +16,7 @@
 // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
 
 #include <set>
+
 #include "Common/System/Display.h"
 #include "Common/GPU/OpenGL/GLFeatures.h"
 
@@ -430,9 +431,6 @@ SoftGPU::SoftGPU(GraphicsContext *gfxCtx, Draw::DrawContext *draw)
 	Rasterizer::Init();
 	Sampler::Init();
 	drawEngine_ = new SoftwareDrawEngine();
-	if (!drawEngine_)
-		return;
-
 	drawEngine_->SetGPUCommon(this);
 	drawEngine_->Init();
 	drawEngineCommon_ = drawEngine_;
@@ -1447,8 +1445,7 @@ bool SoftGPU::GetCurrentTexture(GPUDebugBuffer &buffer, int level, bool *isFrame
 	return Rasterizer::GetCurrentTexture(buffer, level);
 }
 
-bool SoftGPU::GetCurrentClut(GPUDebugBuffer &buffer)
-{
+bool SoftGPU::GetCurrentClut(GPUDebugBuffer &buffer) {
 	const u32 bpp = gstate.getClutPaletteFormat() == GE_CMODE_32BIT_ABGR8888 ? 4 : 2;
 	const u32 pixels = 1024 / bpp;
 

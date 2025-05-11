@@ -1,5 +1,6 @@
 #include "ext/imgui/imgui.h"
 #include "ext/imgui/imgui_internal.h"
+#include "ext/imgui/imgui_extras.h"
 #include "ext/imgui/imgui_impl_thin3d.h"
 #include "Common/Data/Convert/ColorConv.h"
 #include "UI/ImDebugger/ImGe.h"
@@ -43,7 +44,11 @@ void DrawTexturesWindow(ImConfig &cfg, TextureCacheCommon *textureCache) {
 		return;
 	}
 
-	textureCache->DrawImGuiDebug(cfg.selectedTexAddr);
+	if (textureCache) {
+		textureCache->DrawImGuiDebug(cfg.selectedTexAddr);
+	} else {
+		ImGui::TextUnformatted("Texture cache not available");
+	}
 
 	ImGui::End();
 }
@@ -55,22 +60,28 @@ void DrawDisplayWindow(ImConfig &cfg, FramebufferManagerCommon *framebufferManag
 		return;
 	}
 
-	ImGui::Checkbox("Display latched", &cfg.displayLatched);
+	if (framebufferManager) {
+		ImGui::Checkbox("Display latched", &cfg.displayLatched);
 
-	PSPPointer<u8> topaddr;
-	u32 linesize;
-	u32 pixelFormat;
+		PSPPointer<u8> topaddr;
+		u32 linesize;
+		u32 pixelFormat;
 
-	__DisplayGetFramebuf(&topaddr, &linesize, &pixelFormat, cfg.displayLatched);
+		__DisplayGetFramebuf(&topaddr, &linesize, &pixelFormat, cfg.displayLatched);
 
-	VirtualFramebuffer *fb = framebufferManager->GetVFBAt(topaddr.ptr);
-	if (fb && fb->fbo) {
-		ImTextureID texId = ImGui_ImplThin3d_AddFBAsTextureTemp(fb->fbo, Draw::Aspect::COLOR_BIT, ImGuiPipeline::TexturedOpaque);
-		ImGui::Image(texId, ImVec2(fb->width, fb->height));
-		ImGui::Text("%s - %08x", fb->fbo->Tag(), topaddr.ptr);
+		VirtualFramebuffer *fb = framebufferManager->GetVFBAt(topaddr.ptr);
+		if (fb && fb->fbo) {
+			ImTextureID texId = ImGui_ImplThin3d_AddFBAsTextureTemp(fb->fbo, Draw::Aspect::COLOR_BIT, ImGuiPipeline::TexturedOpaque);
+			ImGui::Image(texId, ImVec2(fb->width, fb->height));
+			ImGui::Text("%s - %08x", fb->fbo->Tag(), topaddr.ptr);
+		} else {
+			// TODO: Sometimes we should display RAM here.
+			ImGui::Text("Framebuffer not available to display");
+		}
 	} else {
-		// TODO: Sometimes we should display RAM here.
-		ImGui::Text("Framebuffer not available to display");
+		// TODO: We should implement this anyway for software mode.
+		// In the meantime, use the pixel viewer.
+		ImGui::TextUnformatted("Framebuffer manager not available");
 	}
 
 	ImGui::End();
@@ -174,7 +185,7 @@ void ImGePixelViewerWindow::Draw(ImConfig &cfg, ImControl &control, GPUDebugInte
 	ImGui::SameLine();
 	if (ImGui::BeginChild("right")) {
 		ImVec2 p0 = ImGui::GetCursorScreenPos();
-		viewer_.Draw(gpuDebug, draw);
+		viewer_.Draw(gpuDebug, draw, 1.0f);
 		if (ImGui::IsItemHovered()) {
 			int x = (int)(ImGui::GetMousePos().x - p0.x);
 			int y = (int)(ImGui::GetMousePos().y - p0.y);
@@ -197,7 +208,14 @@ ImGePixelViewer::~ImGePixelViewer() {
 		texture_->Release();
 }
 
-bool ImGePixelViewer::Draw(GPUDebugInterface *gpuDebug, Draw::DrawContext *draw) {
+void ImGePixelViewer::DeviceLost() {
+	if (texture_) {
+		texture_->Release();
+		texture_ = nullptr;
+	}
+}
+
+bool ImGePixelViewer::Draw(GPUDebugInterface *gpuDebug, Draw::DrawContext *draw, float zoom) {
 	if (dirty_) {
 		UpdateTexture(draw);
 		dirty_ = false;
@@ -206,7 +224,7 @@ bool ImGePixelViewer::Draw(GPUDebugInterface *gpuDebug, Draw::DrawContext *draw)
 	if (Memory::IsValid4AlignedAddress(addr)) {
 		if (texture_) {
 			ImTextureID texId = ImGui_ImplThin3d_AddTextureTemp(texture_, useAlpha ? ImGuiPipeline::TexturedAlphaBlend : ImGuiPipeline::TexturedOpaque);
-			ImGui::Image(texId, ImVec2((float)width, (float)height));
+			ImGui::Image(texId, ImVec2((float)width * zoom, (float)height * zoom));
 			return true;
 		} else {
 			ImGui::Text("(invalid params: %dx%d, %08x)", width, height, addr);
@@ -262,15 +280,16 @@ void ImGePixelViewer::UpdateTexture(Draw::DrawContext *draw) {
 		texture_ = nullptr;
 	}
 	if (!Memory::IsValid4AlignedAddress(addr) || width == 0 || height == 0 || stride > 1024 || stride == 0) {
-		INFO_LOG(Log::GeDebugger, "PixelViewer: Bad texture params");
+		// TODO: Show a warning triangle or something.
 		return;
 	}
 
 	int bpp = BufferFormatBytesPerPixel(format);
 
 	int srcBytes = width * stride * bpp;
-	if (stride > width)
+	if (stride > width) {
 		srcBytes -= stride - width;
+	}
 	if (Memory::ValidSize(addr, srcBytes) != srcBytes) {
 		// TODO: Show a message that the address is out of bounds.
 		return;
@@ -375,7 +394,14 @@ ImGeReadbackViewer::~ImGeReadbackViewer() {
 	delete[] data_;
 }
 
-bool ImGeReadbackViewer::Draw(GPUDebugInterface *gpuDebug, Draw::DrawContext *draw) {
+void ImGeReadbackViewer::DeviceLost() {
+	if (texture_) {
+		texture_->Release();
+		texture_ = nullptr;
+	}
+}
+
+bool ImGeReadbackViewer::Draw(GPUDebugInterface *gpuDebug, Draw::DrawContext *draw, float zoom) {
 	FramebufferManagerCommon *fbmanager = gpuDebug->GetFramebufferManagerCommon();
 	if (!vfb || !vfb->fbo || !fbmanager) {
 		ImGui::TextUnformatted("(N/A)");
@@ -400,6 +426,8 @@ bool ImGeReadbackViewer::Draw(GPUDebugInterface *gpuDebug, Draw::DrawContext *dr
 		case Draw::Aspect::STENCIL_BIT:
 			readbackFmt_ = Draw::DataFormat::S8;
 			rbBpp = 1;
+			break;
+		default:
 			break;
 		}
 
@@ -452,13 +480,14 @@ bool ImGeReadbackViewer::Draw(GPUDebugInterface *gpuDebug, Draw::DrawContext *dr
 	} else {
 		texId = ImGui_ImplThin3d_AddFBAsTextureTemp(vfb->fbo, Draw::Aspect::COLOR_BIT, ImGuiPipeline::TexturedOpaque);
 	}
-	ImGui::Image(texId, ImVec2((float)vfb->fbo->Width(), (float)vfb->fbo->Height()));
+	ImGui::Image(texId, ImVec2((float)vfb->fbo->Width() * zoom, (float)vfb->fbo->Height() * zoom));
 	return true;
 }
 
 bool ImGeReadbackViewer::FormatValueAt(char *buf, size_t bufSize, int x, int y) const {
 	if (!vfb || !vfb->fbo || !data_) {
 		snprintf(buf, bufSize, "N/A");
+		return true;
 	}
 	int bpp = (int)Draw::DataFormatSizeInBytes(readbackFmt_);
 	int offset = (y * vfb->fbo->Width() + x) * bpp;
@@ -749,6 +778,11 @@ ImGeDebuggerWindow::ImGeDebuggerWindow() {
 	selectedAspect_ = Draw::Aspect::COLOR_BIT;
 }
 
+void ImGeDebuggerWindow::DeviceLost() {
+	rbViewer_.DeviceLost();
+	swViewer_.DeviceLost();
+}
+
 void ImGeDebuggerWindow::NotifyStep() {
 	reloadPreview_ = true;
 	disasmView_.NotifyStep();
@@ -824,19 +858,15 @@ void ImGeDebuggerWindow::Draw(ImConfig &cfg, ImControl &control, GPUDebugInterfa
 		ImGui::BeginDisabled();
 	}
 	ImGui::SameLine();
-	if (ImGui::Button("Tex")) {
+	if (ImGui::RepeatButtonShift("Tex")) {
 		gpuDebug->SetBreakNext(GPUDebug::BreakNext::TEX);
 	}
 	ImGui::SameLine();
-	if (ImGui::Button("NonTex")) {
-		gpuDebug->SetBreakNext(GPUDebug::BreakNext::NONTEX);
-	}
-	ImGui::SameLine();
-	if (ImGui::Button("Prim")) {
+	if (ImGui::RepeatButtonShift("Prim")) {
 		gpuDebug->SetBreakNext(GPUDebug::BreakNext::PRIM);
 	}
 	ImGui::SameLine();
-	if (ImGui::Button("Draw")) {
+	if (ImGui::RepeatButtonShift("Draw")) {
 		gpuDebug->SetBreakNext(GPUDebug::BreakNext::DRAW);
 	}
 	ImGui::SameLine();
@@ -848,14 +878,13 @@ void ImGeDebuggerWindow::Draw(ImConfig &cfg, ImControl &control, GPUDebugInterfa
 		gpuDebug->SetBreakNext(GPUDebug::BreakNext::CURVE);
 	}
 	ImGui::SameLine();
-	if (ImGui::Button("Single step")) {
+	if (ImGui::RepeatButtonShift("Single step")) {
 		gpuDebug->SetBreakNext(GPUDebug::BreakNext::OP);
 	}
 	if (disableStepButtons) {
 		ImGui::EndDisabled();
 	}
 
-	ImGui::SameLine();
 	ImGui::Text("%d/%d", gpuDebug->PrimsThisFrame(), gpuDebug->PrimsLastFrame());
 
 	if (disableStepButtons) {
@@ -879,26 +908,13 @@ void ImGeDebuggerWindow::Draw(ImConfig &cfg, ImControl &control, GPUDebugInterfa
 		ImGui::EndDisabled();
 	}
 
-	// Line break
-	if (ImGui::Button("Goto PC")) {
-		disasmView_.GotoPC();
-	}
-	ImGui::SameLine();
-	if (ImGui::Button("Settings")) {
-		ImGui::OpenPopup("disSettings");
-	}
-	if (ImGui::BeginPopup("disSettings")) {
-		ImGui::Checkbox("Follow PC", &disasmView_.followPC_);
-		ImGui::EndPopup();
-	}
-
 	// Display any pending step event.
 	if (gpuDebug->GetBreakNext() != GPUDebug::BreakNext::NONE && gpuDebug->GetBreakNext() != GPUDebug::BreakNext::DEBUG_RUN) {
 		if (showBannerInFrames_ > 0) {
 			showBannerInFrames_--;
 		}
 		if (showBannerInFrames_ == 0) {
-			ImGui::Text("Step pending (waiting for CPU): %s", GPUDebug::BreakNextToString(gpuDebug->GetBreakNext()));
+			ImGui::Text("Step pending: %s", GPUDebug::BreakNextToString(gpuDebug->GetBreakNext()));
 			ImGui::SameLine();
 			if (gpuDebug->GetBreakNext() == GPUDebug::BreakNext::COUNT) {
 				ImGui::Text("(%d)", gpuDebug->GetBreakCount());
@@ -910,6 +926,19 @@ void ImGeDebuggerWindow::Draw(ImConfig &cfg, ImControl &control, GPUDebugInterfa
 		}
 	} else {
 		showBannerInFrames_ = 2;
+	}
+
+	// Line break
+	if (ImGui::Button("Goto PC")) {
+		disasmView_.GotoPC();
+	}
+	ImGui::SameLine();
+	if (ImGui::Button("Settings")) {
+		ImGui::OpenPopup("disSettings");
+	}
+	if (ImGui::BeginPopup("disSettings")) {
+		ImGui::Checkbox("Follow PC", &disasmView_.followPC_);
+		ImGui::EndPopup();
 	}
 
 	// First, let's list any active display lists in the left column, on top of the disassembly.
@@ -925,17 +954,17 @@ void ImGeDebuggerWindow::Draw(ImConfig &cfg, ImControl &control, GPUDebugInterfa
 				ImGui::Text("State: %s", DLStateToString(list.state));
 				ImGui::TextUnformatted("PC:");
 				ImGui::SameLine();
-				ImClickableAddress(list.pc, control, ImCmd::SHOW_IN_GE_DISASM);
+				ImClickableValue("pc", list.pc, control, ImCmd::SHOW_IN_GE_DISASM);
 				ImGui::Text("StartPC:");
 				ImGui::SameLine();
-				ImClickableAddress(list.startpc, control, ImCmd::SHOW_IN_GE_DISASM);
+				ImClickableValue("startpc", list.startpc, control, ImCmd::SHOW_IN_GE_DISASM);
 				if (list.pendingInterrupt) {
 					ImGui::TextUnformatted("(Pending interrupt)");
 				}
 				if (list.stall) {
 					ImGui::TextUnformatted("Stall addr:");
 					ImGui::SameLine();
-					ImClickableAddress(list.pc, control, ImCmd::SHOW_IN_GE_DISASM);
+					ImClickableValue("stall", list.pc, control, ImCmd::SHOW_IN_GE_DISASM);
 				}
 				ImGui::Text("Stack depth: %d", (int)list.stackptr);
 				ImGui::Text("BBOX result: %d", (int)list.bboxResult);
@@ -978,7 +1007,7 @@ void ImGeDebuggerWindow::Draw(ImConfig &cfg, ImControl &control, GPUDebugInterfa
 
 	}
 
-	ImGui::BeginChild("texture/fb view"); // Leave room for 1 line below us
+	ImGui::BeginChild("texture/fb view");
 
 	ImDrawList *drawList = ImGui::GetWindowDrawList();
 
@@ -999,7 +1028,10 @@ void ImGeDebuggerWindow::Draw(ImConfig &cfg, ImControl &control, GPUDebugInterfa
 				} else {
 					ImGui::Text("Framebuffer");
 				}
+				ImGui::SameLine();
 			}
+			ImGui::SetNextItemWidth(200.0f);
+			ImGui::SliderFloat("Zoom", &previewZoom_, 0.125f, 2.f, "%.3f", ImGuiSliderFlags_Logarithmic);
 
 			// Use selectable instead of tab bar so we can get events (haven't figured that out).
 			static const Draw::Aspect aspects[3] = { Draw::Aspect::COLOR_BIT, Draw::Aspect::DEPTH_BIT, Draw::Aspect::STENCIL_BIT, };
@@ -1018,7 +1050,7 @@ void ImGeDebuggerWindow::Draw(ImConfig &cfg, ImControl &control, GPUDebugInterfa
 				float maximum = 256.0f;
 				ImGui::SameLine();
 				ImGui::SetNextItemWidth(200.0f);
-				if (ImGui::DragFloat("Z scale", &rbViewer_.scale, 1.0f, 0.5f, 256.0f, "%0.2f", ImGuiSliderFlags_Logarithmic)) {
+				if (ImGui::DragFloat("Z value scale", &rbViewer_.scale, 1.0f, 0.5f, 256.0f, "%0.2f", ImGuiSliderFlags_Logarithmic)) {
 					rbViewer_.Snapshot();
 					swViewer_.Snapshot();
 				}
@@ -1029,7 +1061,7 @@ void ImGeDebuggerWindow::Draw(ImConfig &cfg, ImControl &control, GPUDebugInterfa
 			float scale = 1.0f;
 			if (vfb && vfb->fbo) {
 				scale = vfb->renderScaleFactor;
-				p1 = ImVec2(p0.x + vfb->fbo->Width(), p0.y + vfb->fbo->Height());
+				p1 = ImVec2(p0.x + vfb->fbo->Width() * previewZoom_, p0.y + vfb->fbo->Height() * previewZoom_);
 			} else {
 				// Guess
 				p1 = ImVec2(p0.x + swViewer_.width, p0.y + swViewer_.height);
@@ -1040,23 +1072,23 @@ void ImGeDebuggerWindow::Draw(ImConfig &cfg, ImControl &control, GPUDebugInterfa
 
 			PixelLookup *lookup = nullptr;
 			if (vfb) {
-				rbViewer_.Draw(gpuDebug, draw);
+				rbViewer_.Draw(gpuDebug, draw, previewZoom_);
 				lookup = &rbViewer_;
 				// ImTextureID texId = ImGui_ImplThin3d_AddFBAsTextureTemp(vfb->fbo, Draw::Aspect::COLOR_BIT, ImGuiPipeline::TexturedOpaque);
 				// ImGui::Image(texId, ImVec2(vfb->width, vfb->height));
 			} else {
-				swViewer_.Draw(gpuDebug, draw);
+				swViewer_.Draw(gpuDebug, draw, previewZoom_);
 				lookup = &swViewer_;
 			}
 
 			// Draw vertex preview on top!
-			DrawPreviewPrimitive(drawList, p0, previewPrim_, previewIndices_, previewVertices_, previewCount_, false, scale, scale);
+			DrawPreviewPrimitive(drawList, p0, previewPrim_, previewIndices_, previewVertices_, previewCount_, false, scale * previewZoom_, scale * previewZoom_);
 
 			drawList->PopClipRect();
 
 			if (ImGui::IsItemHovered()) {
-				int x = (int)(ImGui::GetMousePos().x - p0.x);
-				int y = (int)(ImGui::GetMousePos().y - p0.y);
+				int x = (int)(ImGui::GetMousePos().x - p0.x) * previewZoom_;
+				int y = (int)(ImGui::GetMousePos().y - p0.y) * previewZoom_;
 				char temp[128];
 				if (lookup->FormatValueAt(temp, sizeof(temp), x, y)) {
 					ImGui::Text("(%d, %d): %s", x, y, temp);
@@ -1083,7 +1115,7 @@ void ImGeDebuggerWindow::Draw(ImConfig &cfg, ImControl &control, GPUDebugInterfa
 				TexCacheEntry *tex = texcache ? texcache->SetTexture() : nullptr;
 				if (tex) {
 					ImGui::Text("Texture: ");
-					texcache->ApplyTexture();
+					texcache->ApplyTexture(false);
 
 					void *nativeView = texcache->GetNativeTextureView(tex, true);
 					ImTextureID texId = ImGui_ImplThin3d_AddNativeTextureTemp(nativeView);
@@ -1359,7 +1391,7 @@ void ImGeStateWindow::Draw(ImConfig &cfg, ImControl &control, GPUDebugInterface 
 							// Special handling for pointer and pointer/width entries - create an address control
 							if (info.fmt == CMD_FMT_PTRWIDTH) {
 								const u32 val = (value & 0xFFFFFF) | (otherValue & 0x00FF0000) << 8;
-								ImClickableAddress(val, control, ImCmd::NONE);
+								ImClickableValue(info.uiName, val, control, ImCmd::NONE);
 								ImGui::SameLine();
 								ImGui::Text("w=%d", otherValue & 0xFFFF);
 							} else {
@@ -1389,92 +1421,136 @@ void ImGeStateWindow::Draw(ImConfig &cfg, ImControl &control, GPUDebugInterface 
 		buildStateTab("Lighting", g_lightingState, ARRAY_SIZE(g_lightingState));
 		buildStateTab("Transform/Tess", g_vertexState, ARRAY_SIZE(g_vertexState));
 
-		// Do a vertex tab (maybe later a separate window)
-		if (ImGui::BeginTabItem("Vertices")) {
-			const ImGuiTableFlags tableFlags =
-				ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV | ImGuiTableFlags_NoBordersInBody | ImGuiTableFlags_ScrollY;
-			if (ImGui::BeginTabBar("vertexmode", ImGuiTabBarFlags_None)) {
-				auto state = gpuDebug->GetGState();
-				char fmtTemp[256];
-				FormatStateRow(gpuDebug, fmtTemp, sizeof(fmtTemp), CMD_FMT_VERTEXTYPE, state.vertType, true, false, false);
-				ImGui::TextUnformatted(fmtTemp);
-				// Let's see if it's fast enough to just do all this each frame.
-				int rowCount_ = gpuDebug->GetCurrentPrimCount();
-				std::vector<GPUDebugVertex> vertices;
-				std::vector<u16> indices;
-				if (!gpuDebug->GetCurrentDrawAsDebugVertices(rowCount_, vertices, indices)) {
-					rowCount_ = 0;
-				}
-				auto buildVertexTable = [&](bool raw) {
-					// Ignore indices for now.
-					if (ImGui::BeginTable("rawverts", VERTEXLIST_COL_COUNT + 1, tableFlags)) {
-						static VertexDecoder decoder;
-						u32 vertTypeID = GetVertTypeID(state.vertType, state.getUVGenMode(), true);
-						VertexDecoderOptions options{};
-						decoder.SetVertexType(vertTypeID, options);
-
-						static const char * const colNames[] = {
-							"Index",
-							"X",
-							"Y",
-							"Z",
-							"U",
-							"V",
-							"Color",
-							"NX",
-							"NY",
-							"NZ",
-						};
-						for (int i = 0; i < ARRAY_SIZE(colNames); i++) {
-							ImGui::TableSetupColumn(colNames[i], ImGuiTableColumnFlags_WidthFixed, 0.0f, i);
+		if (ImGui::BeginTabItem("Matrices")) {
+			auto visMatrix = [](const char *name, const float *data, bool is4x4) {
+				ImGui::TextUnformatted(name);
+				int stride = (is4x4 ? 4 : 3);
+				if (ImGui::BeginTable(name, stride, ImGuiTableFlags_Borders, ImVec2(90.0f * stride, 0.0f))) {
+					for (int row = 0; row < 4; ++row) {
+						ImGui::TableNextRow();
+						for (int col = 0; col < stride; ++col) {
+							ImGui::TableSetColumnIndex(col);
+							ImGui::Text("%.4f", data[row * stride + col]);
 						}
-						ImGui::TableSetupScrollFreeze(0, 1); // Make header row always visible
-						ImGui::TableHeadersRow();
-
-						ImGuiListClipper clipper;
-						_dbg_assert_(rowCount_ >= 0);
-						clipper.Begin(rowCount_);
-						while (clipper.Step()) {
-							for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++) {
-								int index = indices.empty() ? i : indices[i];
-								ImGui::PushID(i);
-
-								ImGui::TableNextRow();
-								ImGui::TableNextColumn();
-								ImGui::Text("%d", index);
-								for (int column = 0; column < VERTEXLIST_COL_COUNT; column++) {
-									ImGui::TableNextColumn();
-									char temp[36];
-									if (raw) {
-										FormatVertColRaw(&decoder, temp, sizeof(temp), index, column);
-									} else {
-										FormatVertCol(temp, sizeof(temp), vertices[index], column);
-									}
-									ImGui::TextUnformatted(temp);
-								}
-								ImGui::PopID();
-							}
-						}
-						clipper.End();
-
-						ImGui::EndTable();
 					}
-				};
+					ImGui::EndTable();
+				}
+			};
 
-				if (ImGui::BeginTabItem("Raw")) {
-					buildVertexTable(true);
-					ImGui::EndTabItem();
+			if (ImGui::CollapsingHeader("Common", ImGuiTreeNodeFlags_DefaultOpen)) {
+				if (gstate.isModeThrough()) {
+					ImGui::PushStyleColor(ImGuiCol_Text, IM_COL32(255, 255, 255, 160));
+					ImGui::TextUnformatted("Through mode: No matrices are used");
 				}
-				if (ImGui::BeginTabItem("Transformed")) {
-					buildVertexTable(false);
-					ImGui::EndTabItem();
+				visMatrix("World", gstate.worldMatrix, false);
+				visMatrix("View", gstate.viewMatrix, false);
+				visMatrix("Proj", gstate.projMatrix, true);
+				visMatrix("Tex", gstate.tgenMatrix, false);
+				if (gstate.isModeThrough()) {
+					ImGui::PopStyleColor();
 				}
-				// TODO: Let's not include columns for which we have no data.
-				ImGui::EndTabBar();
 			}
+
+			if (ImGui::CollapsingHeader("Bone matrices")) {
+				for (int i = 0; i < 8; i++) {
+					char n[16];
+					snprintf(n, sizeof(n), "Bone %d", i);
+					visMatrix(n, gstate.boneMatrix + 12 * i, false);
+				}
+			}
+
 			ImGui::EndTabItem();
 		}
+		ImGui::EndTabBar();
+	}
+	ImGui::End();
+}
 
+void DrawImGeVertsWindow(ImConfig &cfg, ImControl &control, GPUDebugInterface *gpuDebug) {
+	ImGui::SetNextWindowSize(ImVec2(300, 500), ImGuiCond_FirstUseEver);
+	if (!ImGui::Begin("GE Vertices", &cfg.geVertsOpen)) {
+		ImGui::End();
+		return;
+	}
+	const ImGuiTableFlags tableFlags =
+		ImGuiTableFlags_Resizable | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersV | ImGuiTableFlags_NoBordersInBody | ImGuiTableFlags_ScrollY;
+	if (ImGui::BeginTabBar("vertexmode", ImGuiTabBarFlags_None)) {
+		auto state = gpuDebug->GetGState();
+		char fmtTemp[256];
+		FormatStateRow(gpuDebug, fmtTemp, sizeof(fmtTemp), CMD_FMT_VERTEXTYPE, state.vertType, true, false, false);
+		ImGui::TextUnformatted(fmtTemp);
+		// Let's see if it's fast enough to just do all this each frame.
+		int rowCount_ = gpuDebug->GetCurrentPrimCount();
+		std::vector<GPUDebugVertex> vertices;
+		std::vector<u16> indices;
+		if (!gpuDebug->GetCurrentDrawAsDebugVertices(rowCount_, vertices, indices)) {
+			rowCount_ = 0;
+		}
+		auto buildVertexTable = [&](bool raw) {
+			// Ignore indices for now.
+			if (ImGui::BeginTable("rawverts", VERTEXLIST_COL_COUNT + 1, tableFlags)) {
+				static VertexDecoder decoder;
+				u32 vertTypeID = GetVertTypeID(state.vertType, state.getUVGenMode(), true);
+				VertexDecoderOptions options{};
+				decoder.SetVertexType(vertTypeID, options);
+
+				static const char * const colNames[] = {
+					"Index",
+					"X",
+					"Y",
+					"Z",
+					"U",
+					"V",
+					"Color",
+					"NX",
+					"NY",
+					"NZ",
+				};
+				for (int i = 0; i < ARRAY_SIZE(colNames); i++) {
+					ImGui::TableSetupColumn(colNames[i], ImGuiTableColumnFlags_WidthFixed, 0.0f, i);
+				}
+				ImGui::TableSetupScrollFreeze(0, 1); // Make header row always visible
+				ImGui::TableHeadersRow();
+
+				ImGuiListClipper clipper;
+				_dbg_assert_(rowCount_ >= 0);
+				clipper.Begin(rowCount_);
+				while (clipper.Step()) {
+					for (int i = clipper.DisplayStart; i < clipper.DisplayEnd; i++) {
+						int index = indices.empty() ? i : indices[i];
+						ImGui::TableNextRow();
+						ImGui::TableNextColumn();
+
+						ImGui::PushID(i);
+						ImGui::Text("%d", index);
+						for (int column = 0; column < VERTEXLIST_COL_COUNT; column++) {
+							ImGui::TableNextColumn();
+							char temp[36];
+							if (raw) {
+								FormatVertColRaw(&decoder, temp, sizeof(temp), index, column);
+							} else {
+								FormatVertCol(temp, sizeof(temp), vertices[index], column);
+							}
+							ImGui::TextUnformatted(temp);
+						}
+						ImGui::PopID();
+					}
+				}
+				clipper.End();
+
+				ImGui::EndTable();
+			}
+		};
+
+		if (ImGui::BeginTabItem("Raw")) {
+			buildVertexTable(true);
+			ImGui::EndTabItem();
+		}
+		if (ImGui::BeginTabItem("Transformed")) {
+			buildVertexTable(false);
+			ImGui::EndTabItem();
+		}
+		// TODO: Let's not include columns for which we have no data.
 		ImGui::EndTabBar();
 	}
 	ImGui::End();

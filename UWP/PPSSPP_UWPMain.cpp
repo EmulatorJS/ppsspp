@@ -143,23 +143,25 @@ void PPSSPP_UWPMain::UpdateScreenState() {
 
 	if (g_display.rotation == DisplayRotation::ROTATE_90 || g_display.rotation == DisplayRotation::ROTATE_270) {
 		// We need to swap our width/height.
+		// TODO: This is most likely dead code, since we no longer support Windows Phone.
 		std::swap(g_display.pixel_xres, g_display.pixel_yres);
 	}
 
-	g_display.dpi = m_deviceResources->GetActualDpi();
+	// TODO: The below stuff is probably completely redundant since the UWP app elsewhere calls Native_UpdateScreenScale.
 
+	float dpi = m_deviceResources->GetActualDpi();
 	if (System_GetPropertyInt(SYSPROP_DEVICE_TYPE) == DEVICE_TYPE_MOBILE) {
 		// Boost DPI a bit to look better.
-		g_display.dpi *= 96.0f / 136.0f;
+		dpi *= 96.0f / 136.0f;
 	}
-	g_display.dpi_scale_x = 96.0f / g_display.dpi;
-	g_display.dpi_scale_y = 96.0f / g_display.dpi;
 
-	g_display.pixel_in_dps_x = 1.0f / g_display.dpi_scale_x;
-	g_display.pixel_in_dps_y = 1.0f / g_display.dpi_scale_y;
+	g_display.dpi_scale_real = 96.0f / dpi;
 
-	g_display.dp_xres = g_display.pixel_xres * g_display.dpi_scale_x;
-	g_display.dp_yres = g_display.pixel_yres * g_display.dpi_scale_y;
+	g_display.dpi_scale = g_display.dpi_scale_real;
+	g_display.pixel_in_dps = 1.0f / g_display.dpi_scale;
+
+	g_display.dp_xres = g_display.pixel_xres * g_display.dpi_scale;
+	g_display.dp_yres = g_display.pixel_yres * g_display.dpi_scale;
 
 	context->RSSetViewports(1, &viewport);
 }
@@ -266,8 +268,8 @@ void PPSSPP_UWPMain::OnTouchEvent(int touchEvent, int touchId, float x, float y,
 	// and then apply our own "dpi".
 	float dpiFactor_x = m_deviceResources->GetActualDpi() / 96.0f;
 	float dpiFactor_y = dpiFactor_x;
-	dpiFactor_x /= g_display.pixel_in_dps_x;
-	dpiFactor_y /= g_display.pixel_in_dps_y;
+	dpiFactor_x /= g_display.pixel_in_dps;
+	dpiFactor_y /= g_display.pixel_in_dps;
 
 	TouchInput input{};
 	input.id = touchId;
@@ -434,7 +436,7 @@ bool System_GetPropertyBool(SystemProperty prop) {
 		return true;
 	case SYSPROP_HAS_KEYBOARD:
 	{
-		// Do actual check 
+		// Do actual check
 		// touch devices has input pane, we need to depend on it
 		// I don't know any possible way to display input dialog in non-xaml apps
 		return isKeyboardAvailable() || isTouchAvailable();
@@ -515,13 +517,19 @@ bool System_MakeRequest(SystemRequestType type, int requestId, const std::string
 			supportedExtensions = { ".zip" };
 			break;
 		case BrowseFileType::SYMBOL_MAP:
-			supportedExtensions = { ".map" };
+			supportedExtensions = { ".ppmap" };
+			break;
+		case BrowseFileType::SYMBOL_MAP_NOCASH:
+			supportedExtensions = { ".sym" };
 			break;
 		case BrowseFileType::DB:
 			supportedExtensions = { ".db" };
 			break;
 		case BrowseFileType::SOUND_EFFECT:
 			supportedExtensions = { ".wav", ".mp3" };
+			break;
+		case BrowseFileType::ATRAC3:
+			supportedExtensions = { ".at3" };
 			break;
 		case BrowseFileType::ANY:
 			// 'ChooseFile' will added '*' by default when there are no extensions assigned

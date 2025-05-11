@@ -15,17 +15,11 @@ char *Buffer::Append(size_t length) {
 	}
 }
 
-void Buffer::Append(const std::string &str) {
+void Buffer::Append(std::string_view str) {
 	char *ptr = Append(str.size());
 	if (ptr) {
 		memcpy(ptr, str.data(), str.size());
 	}
-}
-
-void Buffer::Append(const char *str) {
-	size_t len = strlen(str);
-	char *dest = Append(len);
-	memcpy(dest, str, len);
 }
 
 void Buffer::Append(const Buffer &other) {
@@ -121,7 +115,7 @@ void Buffer::Printf(const char *fmt, ...) {
 	memcpy(ptr, buffer, retval);
 }
 
-bool Buffer::FlushToFile(const Path &filename) {
+bool Buffer::FlushToFile(const Path &filename, bool clear) {
 	FILE *f = File::OpenCFile(filename, "wb");
 	if (!f)
 		return false;
@@ -130,7 +124,9 @@ bool Buffer::FlushToFile(const Path &filename) {
 		data_.iterate_blocks([=](const char *blockData, size_t blockSize) {
 			return fwrite(blockData, 1, blockSize, f) == blockSize;
 		});
-		data_.clear();
+		if (clear) {
+			data_.clear();
+		}
 	}
 	fclose(f);
 	return true;

@@ -119,7 +119,7 @@ static int sceUsbCamSetupMic(u32 paramAddr, u32 workareaAddr, int wasize) {
 		config->micParam = *param;
 		param.NotifyRead("UsbCamSetupMic");
 	}
-	return hleLogSuccessInfoI(Log::sceMisc, 0);
+	return hleLogInfo(Log::sceMisc, 0);
 }
 
 static int sceUsbCamStartMic() {
@@ -324,7 +324,7 @@ const HLEFunction sceUsbCam[] =
 
 void Register_sceUsbCam()
 {
-	RegisterModule("sceUsbCam", ARRAY_SIZE(sceUsbCam), sceUsbCam);
+	RegisterHLEModule("sceUsbCam", ARRAY_SIZE(sceUsbCam), sceUsbCam);
 }
 
 std::vector<std::string> Camera::getDeviceList() {

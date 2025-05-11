@@ -913,7 +913,9 @@ void MIPSCompileOp(MIPSOpcode op, MIPSComp::MIPSFrontendInterface *jit) {
 		if (info & OUT_EAT_PREFIX)
 			jit->EatPrefix();
 	} else {
-		ERROR_LOG_REPORT(Log::CPU, "MIPSCompileOp: Invalid instruction %08x", op.encoding);
+		// Used to _REPORT this, but I'm confident we have all instructions now, any caught here
+		// are due to games crashing, due to cheats or bugs.
+		ERROR_LOG(Log::CPU, "MIPSCompileOp: Invalid instruction %08x", op.encoding);
 	}
 }
 
@@ -1003,7 +1005,7 @@ static void RunUntilWithChecks(u64 globalTicks) {
 			if (hasBPs && g_breakpoints.IsAddressBreakPoint(curMips->pc) && g_breakpoints.CheckSkipFirst() != curMips->pc) {
 				auto cond = g_breakpoints.GetBreakPointCondition(currentMIPS->pc);
 				if (!cond || cond->Evaluate()) {
-					Core_Break("cpu.breakpoint", curMips->pc);
+					Core_Break(BreakReason::CpuBreakpoint, curMips->pc);
 					if (g_breakpoints.IsTempBreakPoint(curMips->pc))
 						g_breakpoints.RemoveBreakPoint(curMips->pc);
 					break;

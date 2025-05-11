@@ -54,6 +54,8 @@ public:
 	MultiTouchButton *SetAngle(float angle) { angle_ = angle; bgAngle_ = angle; return this; }
 	MultiTouchButton *SetAngle(float angle, float bgAngle) { angle_ = angle; bgAngle_ = bgAngle; return this; }
 
+	bool CanGlide() const;
+
 protected:
 	uint32_t pointerDownMask_ = 0;
 	float scale_;
@@ -71,7 +73,6 @@ class BoolButton : public MultiTouchButton {
 public:
 	BoolButton(bool *value, const char *key, ImageID bgImg, ImageID bgDownImg, ImageID img, float scale, UI::LayoutParams *layoutParams)
 		: MultiTouchButton(key, bgImg, bgDownImg, img, scale, layoutParams), value_(value) {
-
 	}
 	bool Touch(const TouchInput &input) override;
 	bool IsDown() override { return *value_; }
@@ -325,6 +326,8 @@ namespace CustomKeyData {
 		{ ImageID::invalid(), VIRTKEY_AXIS_X_MAX },
 		{ ImageID::invalid(), VIRTKEY_AXIS_Y_MAX },
 		{ ImageID::invalid(), VIRTKEY_PREVIOUS_SLOT },
+		{ ImageID::invalid(), VIRTKEY_TOGGLE_TOUCH_CONTROLS },
+		{ ImageID::invalid(), VIRTKEY_TOGGLE_DEBUGGER },
 	};
 	static_assert(ARRAY_SIZE(customKeyList) <= 64, "Too many key for a uint64_t bit mask");
 };
@@ -368,6 +371,7 @@ namespace GestureKey {
 		VIRTKEY_AXIS_Y_MIN,
 		VIRTKEY_AXIS_X_MAX,
 		VIRTKEY_AXIS_Y_MAX,
+		VIRTKEY_TOGGLE_DEBUGGER,
 	};
 }
 

@@ -35,7 +35,6 @@ protected:
 
 private:
 	uintptr_t sock_ = -1;
-
 };
 
 }	// namespace net
@@ -64,14 +63,14 @@ public:
 	int GET(const RequestParams &req, Buffer *output, std::vector<std::string> &responseHeaders, net::RequestProgress *progress);
 
 	// Return value is the HTTP return code.
-	int POST(const RequestParams &req, const std::string &data, const std::string &mime, Buffer *output, net::RequestProgress *progress);
-	int POST(const RequestParams &req, const std::string &data, Buffer *output, net::RequestProgress *progress);
+	int POST(const RequestParams &req, std::string_view data, std::string_view mime, Buffer *output, net::RequestProgress *progress);
+	int POST(const RequestParams &req, std::string_view data, Buffer *output, net::RequestProgress *progress);
 
 	// HEAD, PUT, DELETE aren't implemented yet, but can be done with SendRequest.
 
 	int SendRequest(const char *method, const RequestParams &req, const char *otherHeaders, net::RequestProgress *progress);
-	int SendRequestWithData(const char *method, const RequestParams &req, const std::string &data, const char *otherHeaders, net::RequestProgress *progress);
-	int ReadResponseHeaders(net::Buffer *readbuf, std::vector<std::string> &responseHeaders, net::RequestProgress *progress);
+	int SendRequestWithData(const char *method, const RequestParams &req, std::string_view data, const char *otherHeaders, net::RequestProgress *progress);
+	int ReadResponseHeaders(net::Buffer *readbuf, std::vector<std::string> &responseHeaders, net::RequestProgress *progress, std::string *statusLine = nullptr);
 	// If your response contains a response, you must read it.
 	int ReadResponseEntity(net::Buffer *readbuf, const std::vector<std::string> &responseHeaders, Buffer *output, net::RequestProgress *progress);
 
@@ -79,19 +78,24 @@ public:
 		dataTimeout_ = t;
 	}
 
-	void SetUserAgent(const std::string &value) {
+	void SetUserAgent(std::string_view value) {
 		userAgent_ = value;
+	}
+
+	void SetHttpVersion(const char *version) {
+		httpVersion_ = version;
 	}
 
 protected:
 	std::string userAgent_;
+	const char* httpVersion_;
 	double dataTimeout_ = 900.0;
 };
 
 // Really an asynchronous request.
 class HTTPRequest : public Request {
 public:
-	HTTPRequest(RequestMethod method, const std::string &url, const std::string &postData, const std::string &postMime, const Path &outfile, ProgressBarMode progressBarMode = ProgressBarMode::DELAYED, std::string_view name = "");
+	HTTPRequest(RequestMethod method, std::string_view url, std::string_view postData, std::string_view postMime, const Path &outfile, RequestFlags flags = RequestFlags::ProgressBar | RequestFlags::ProgressBarDelayed, std::string_view name = "");
 	~HTTPRequest();
 
 	void Start() override;
@@ -100,23 +104,6 @@ public:
 	bool Done() override { return completed_; }
 	bool Failed() const override { return failed_; }
 
-	// NOTE! The value of ResultCode is INVALID until Done() returns true.
-	int ResultCode() const override { return resultCode_; }
-
-	const Path &outfile() const override { return outfile_; }
-
-	// If not downloading to a file, access this to get the result.
-	Buffer &buffer() override { return buffer_; }
-	const Buffer &buffer() const override { return buffer_; }
-
-	void Cancel() override {
-		cancelled_ = true;
-	}
-
-	bool IsCancelled() const override {
-		return cancelled_;
-	}
-
 private:
 	void Do();  // Actually does the download. Runs on thread.
 	int Perform(const std::string &url);
@@ -124,16 +111,26 @@ private:
 	void SetFailed(int code);
 
 	std::string postData_;
-	Buffer buffer_;
-	std::vector<std::string> responseHeaders_;
-	Path outfile_;
 	std::thread thread_;
 	std::string postMime_;
-	int resultCode_ = 0;
 	bool completed_ = false;
 	bool failed_ = false;
-	bool cancelled_ = false;
-	bool joined_ = false;
 };
 
-}	// http
+// Fake request for cache hits.
+// The download manager uses this when caching was requested, and a new-enough file was present in the cache directory.
+// This is simply a finished request, that can still be queried like a normal one so users don't know it came from the cache.
+class CachedRequest : public Request {
+public:
+	CachedRequest(RequestMethod method, std::string_view url, std::string_view name, bool *cancelled, RequestFlags flags, std::string_view responseData)
+		: Request(method, url, name, cancelled, flags)
+	{
+		buffer_.Append(responseData);
+	}
+	void Start() override {}
+	void Join() override {}
+	bool Done() override { return true; }
+	bool Failed() const override { return false; }
+};
+
+}  // namespace http

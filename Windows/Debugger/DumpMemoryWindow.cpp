@@ -83,7 +83,7 @@ INT_PTR CALLBACK DumpMemoryWindow::dlgFunc(HWND hwnd, UINT iMsg, WPARAM wParam, 
 				bool priorDumpWasStepping = Core_IsStepping();
 				if (!priorDumpWasStepping && PSP_IsInited()) {
 					// If emulator isn't paused force paused state, but wait before locking.
-					Core_Break("memory.access", bp->start);
+					Core_Break(BreakReason::MemoryAccess, bp->start);
 					Core_WaitInactive();
 				}
 
@@ -248,6 +248,8 @@ void DumpMemoryWindow::changeMode(HWND hwnd, Mode newMode)
 			start = PSP_GetScratchpadMemoryBase();
 			size = PSP_GetScratchpadMemoryEnd()-start;
 			defaultFileName = "Scratchpad.dump";
+			break;
+		case MODE_CUSTOM:
 			break;
 		}
 		

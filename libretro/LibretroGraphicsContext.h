@@ -89,15 +89,17 @@ public:
 	LibretroSoftwareContext() {}
 	bool Init() override { return true; }
 	void SwapBuffers() override {
-		GPUDebugBuffer buf;
-		u16 w = NATIVEWIDTH;
-		u16 h = NATIVEHEIGHT;
-		gpuDebug->GetOutputFramebuffer(buf);
-		const std::vector<u32> pixels = TranslateDebugBufferToCompare(&buf, w, h);
-		memcpy(soft_bmp, pixels.data(), SOFT_BMP_SIZE);
-		u32 offset = g_Config.bDisplayCropTo16x9 ? w << 1 : 0;
-		h -= g_Config.bDisplayCropTo16x9 ? 2 : 0;
-		video_cb(soft_bmp + offset, w, h, w << 2);
+		if (gpuDebug != nullptr) {
+			GPUDebugBuffer buf;
+			u16 w = NATIVEWIDTH;
+			u16 h = NATIVEHEIGHT;
+			gpuDebug->GetOutputFramebuffer(buf);
+			const std::vector<u32> pixels = TranslateDebugBufferToCompare(&buf, w, h);
+			memcpy(soft_bmp, pixels.data(), SOFT_BMP_SIZE);
+			u32 offset = g_Config.bDisplayCropTo16x9 ? w << 1 : 0;
+			h -= g_Config.bDisplayCropTo16x9 ? 2 : 0;
+			video_cb(soft_bmp + offset, w, h, w << 2);
+		}
     }
 	GPUCore GetGPUCore() override { return GPUCORE_SOFTWARE; }
 	const char *Ident() override { return "Software"; }

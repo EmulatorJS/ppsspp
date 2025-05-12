@@ -4,7 +4,7 @@ cd "$(dirname "$0")"
 
 cd ../../
 
-git submodule update -i --recursive
+git submodule update --init --recursive
 
 #Build emscripten ffmpeg
 

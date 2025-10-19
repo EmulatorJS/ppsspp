@@ -71,7 +71,7 @@
 
 #if defined(_MSC_VER)
 #include <cstdlib>
-#elif (PPSSPP_ARCH(X86) || PPSSPP_ARCH(AMD64))
+#elif (PPSSPP_ARCH(X86) || PPSSPP_ARCH(AMD64)) && !defined(__EMSCRIPTEN__)
 #include <x86intrin.h>
 #endif
 
@@ -90,7 +90,7 @@
 inline u32 __rotl(u32 x, int shift) {
 #if defined(_MSC_VER)
 	return _rotl(x, shift);
-#elif (PPSSPP_ARCH(X86) || PPSSPP_ARCH(AMD64))
+#elif (PPSSPP_ARCH(X86) || PPSSPP_ARCH(AMD64)) && !defined(__EMSCRIPTEN__)
 	return __rold(x, shift);
 #else
 	shift &= 31;
@@ -113,7 +113,7 @@ inline u64 __rotl64(u64 x, unsigned int shift){
 inline u32 __rotr(u32 x, int shift) {
 #if defined(_MSC_VER)
 	return _rotr(x, shift);
-#elif (PPSSPP_ARCH(X86) || PPSSPP_ARCH(AMD64))
+#elif (PPSSPP_ARCH(X86) || PPSSPP_ARCH(AMD64)) && !defined(__EMSCRIPTEN__)
 	return __rord(x, shift);
 #else
     shift &= 31;

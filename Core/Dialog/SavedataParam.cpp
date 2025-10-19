@@ -58,8 +58,7 @@ namespace
 
 	void SetStringFromSFO(ParamSFOData &sfoFile, const char *name, char *str, int strLength)
 	{
-		std::string value = sfoFile.GetValueString(name);
-		truncate_cpy(str, strLength, value.c_str());
+		truncate_cpy(str, strLength, sfoFile.GetValueString(name));
 	}
 
 	bool ReadPSPFile(const std::string &filename, u8 **data, s64 dataSize, s64 *readSize)
@@ -79,7 +78,7 @@ namespace
 
 		size_t result = pspFileSystem.ReadFile(handle, *data, dataSize);
 		pspFileSystem.CloseFile(handle);
-		if(readSize)
+		if (readSize)
 			*readSize = result;
 
 		return result != 0;
@@ -1443,7 +1442,7 @@ bool SavedataParam::GetSize(SceUtilitySavedataParam *param) {
 		// TODO: Is this after the specified files?  Probably before?
 		param->sizeInfo->freeKB = (int)(freeBytes / 1024);
 		std::string spaceTxt = SavedataParam::GetSpaceText(freeBytes, false);
-		truncate_cpy(param->sizeInfo->freeString, spaceTxt.c_str());
+		truncate_cpy(param->sizeInfo->freeString, spaceTxt);
 
 		if (writeBytes - overwriteBytes < (s64)freeBytes) {
 			param->sizeInfo->neededKB = 0;

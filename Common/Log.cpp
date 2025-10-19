@@ -45,6 +45,25 @@ static bool g_exitOnAssert;
 static AssertNoCallbackFunc g_assertCancelCallback = 0;
 static void *g_assertCancelCallbackUserData = 0;
 
+u8 g_debugCounters[8];
+
+void SetDebugValue(DebugCounter counter, int value) {
+	if (value > 15)
+		value = 15;
+	if (value < 0)
+		value = 0;
+	g_debugCounters[(int)counter] = value;
+}
+
+void IncrementDebugCounter(DebugCounter counter) {
+	int value = g_debugCounters[(int)counter] + 1;
+	if (value > 15)
+		value = 15;
+	if (value < 0)
+		value = 0;
+	g_debugCounters[(int)counter] = value;
+}
+
 void SetAssertDialogParent(void *handle) {
 #if PPSSPP_PLATFORM(WINDOWS)
 	// I thought this would be nice, but for some reason the dialog becomes invisible.
@@ -76,7 +95,6 @@ void BreakIntoPSPDebugger(const char *reason) {
 bool HandleAssert(const char *function, const char *file, int line, const char *expression, const char* format, ...) {
 	// Read message and write it to the log
 	char text[LOG_BUF_SIZE];
-	const char *caption = "Critical";
 	va_list args;
 	va_start(args, format);
 	vsnprintf(text, sizeof(text), format, args);
@@ -87,7 +105,11 @@ bool HandleAssert(const char *function, const char *file, int line, const char *
 	{
 		std::lock_guard<std::mutex> guard(g_extraAssertInfoMutex);
 		double delta = time_now_d() - g_assertInfoTime;
-		snprintf(formatted, sizeof(formatted), "(%s:%s:%d): [%s] (%s, %0.1fs) %s", file, function, line, expression, g_extraAssertInfo.c_str(), delta, text);
+		u32 debugCounters = 0;
+		for (int i = 0; i < 8; i++) {
+			debugCounters |= g_debugCounters[7 - i] << (i * 4);
+		}
+		snprintf(formatted, sizeof(formatted), "(%s:%s:%d:%08x): [%s] (%s, %0.1fs) %s", file, function, line, debugCounters, expression, g_extraAssertInfo.c_str(), delta, text);
 	}
 
 	// Normal logging (will also log to Android log)
@@ -113,7 +135,8 @@ bool HandleAssert(const char *function, const char *file, int line, const char *
 		const char *threadName = GetCurrentThreadName();
 		OutputDebugStringA(formatted);
 		printf("%s\n", formatted);
-		std::wstring wcaption = ConvertUTF8ToWString(std::string(caption) + " " + (threadName ? threadName : "(unknown thread)"));
+		static const std::string caption = "Critical";
+		std::wstring wcaption = ConvertUTF8ToWString(caption + " " + (threadName ? threadName : "(unknown thread)"));
 		switch (MessageBox(g_dialogParent, ConvertUTF8ToWString(text).c_str(), wcaption.c_str(), msgBoxStyle)) {
 		case IDYES:
 			return true;

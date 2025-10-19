@@ -100,6 +100,12 @@ enum class SystemRequestType {
 	RUN_CALLBACK_IN_WNDPROC,
 
 	MOVE_TO_TRASH,
+
+	// for iOS IAP support
+	IAP_RESTORE_PURCHASES,
+	IAP_MAKE_PURCHASE,
+
+	OPEN_DISPLAY_SETTINGS,
 };
 
 // Run a closure on the main thread. Used to safely implement UI that runs on another thread.
@@ -116,6 +122,7 @@ PermissionStatus System_GetPermissionStatus(SystemPermission permission);
 void System_AskForPermission(SystemPermission permission);
 
 // This will get muddy with multi-screen support :/ But this will always be the type of the main device.
+// These are the return values from System_GetPropertyInt(SYSPROP_DEVICE_TYPE).
 enum SystemDeviceType {
 	DEVICE_TYPE_MOBILE = 0,  // phones and pads
 	DEVICE_TYPE_TV = 1,  // Android TV and similar
@@ -224,6 +231,8 @@ enum SystemProperty {
 
 	SYSPROP_ENOUGH_RAM_FOR_FULL_ISO,
 	SYSPROP_HAS_TRASH_BIN,
+
+	SYSPROP_USE_IAP,
 };
 
 enum class SystemNotification {
@@ -273,6 +282,7 @@ enum class UIMessage {
 	APP_RESUMED,
 	REQUEST_PLAY_SOUND,
 	WINDOW_MINIMIZED,
+	WINDOW_RESTORED,
 	LOST_FOCUS,
 	GOT_FOCUS,
 	GPU_CONFIG_CHANGED,
@@ -302,7 +312,7 @@ bool System_AudioRecordingIsAvailable();
 bool System_AudioRecordingState();
 
 // This will be changed to take an enum. Replacement for the old NativeMessageReceived.
-void System_PostUIMessage(UIMessage message, const std::string &param = "");
+void System_PostUIMessage(UIMessage message, std::string_view param = "");
 
 // For these functions, most platforms will use the implementation provided in UI/AudioCommon.cpp,
 // no need to implement separately.

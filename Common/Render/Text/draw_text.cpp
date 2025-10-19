@@ -38,7 +38,7 @@ void TextDrawer::SetFontScale(float xscale, float yscale) {
 float TextDrawer::CalculateDPIScale() const {
 	if (ignoreGlobalDpi_)
 		return dpiScale_;
-	return g_display.dpi_scale;
+	return g_display.dpi_scale_y;
 }
 
 void TextDrawer::DrawString(DrawBuffer &target, std::string_view str, float x, float y, uint32_t color, int align) {
@@ -98,7 +98,7 @@ void TextDrawer::DrawString(DrawBuffer &target, std::string_view str, float x, f
 		desc.depth = 1;
 		desc.mipLevels = 1;
 		desc.tag = "TextDrawer";
-		desc.swizzle = texFormat == Draw::DataFormat::R8_UNORM ? Draw::TextureSwizzle::R8_AS_ALPHA : Draw::TextureSwizzle::DEFAULT,
+		desc.swizzle = texFormat == Draw::DataFormat::R8_UNORM ? Draw::TextureSwizzle::R8_AS_PREMUL_ALPHA : Draw::TextureSwizzle::DEFAULT,
 		entry->texture = draw_->CreateTexture(desc);
 		cache_[key] = std::unique_ptr<TextStringEntry>(entry);
 	}

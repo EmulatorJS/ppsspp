@@ -39,6 +39,7 @@
 #include "Common/File/FileUtil.h"
 #include "Common/File/DirListing.h"
 #include "Common/File/AndroidContentURI.h"
+#include "Common/Log/LogManager.h"
 #include "Common/TimeUtil.h"
 #include "Common/Thread/ThreadUtil.h"
 #include "Common/GraphicsContext.h"
@@ -53,6 +54,7 @@
 #include "Core/HLE/Plugins.h"
 #include "Core/HLE/ReplaceTables.h"
 #include "Core/HLE/sceKernel.h"
+#include "Core/HW/Display.h"
 #include "Core/Config.h"
 #include "Core/Core.h"
 #include "Core/CoreTiming.h"
@@ -79,6 +81,7 @@ enum CPUThreadState {
 
 MetaFileSystem pspFileSystem;
 ParamSFOData g_paramSFO;
+ParamSFOData g_paramSFORaw;
 static GlobalUIState globalUIState;
 CoreParameter g_CoreParameter;
 static FileLoader *g_loadedFile;
@@ -93,6 +96,7 @@ static volatile CPUThreadState cpuThreadState = CPU_THREAD_NOT_RUNNING;
 
 static GPUBackend gpuBackend;
 static std::string gpuBackendDevice;
+static bool g_fileLoggingWasEnabled;
 
 static BootState g_bootState = BootState::Off;
 
@@ -280,8 +284,8 @@ static bool CPU_Init(FileLoader *fileLoader, IdentifiedFileType type, std::strin
 	case IdentifiedFileType::PSP_ISO_NP:
 	case IdentifiedFileType::PSP_DISC_DIRECTORY:
 		// Doesn't seem to take ownership of fileLoader?
-		if (!MountGameISO(fileLoader)) {
-			*errorString = "Failed to mount ISO file - invalid format?";
+		if (!MountGameISO(fileLoader, errorString)) {
+			*errorString = "Failed to mount ISO file: " + *errorString;
 			return false;
 		}
 		if (LoadParamSFOFromDisc()) {
@@ -292,7 +296,7 @@ static bool CPU_Init(FileLoader *fileLoader, IdentifiedFileType type, std::strin
 			// TODO: Better would be to check that it was loaded successfully.
 			if (!File::Exists(g_CoreParameter.fileToStart / INDEX_FILENAME)) {
 				auto sc = GetI18NCategory(I18NCat::SCREEN);
-				g_OSD.Show(OSDType::MESSAGE_CENTERED_WARNING, sc->T("ExtractedIsoWarning", "Extracted ISOs often don't work.\nPlay the ISO file directly."), g_CoreParameter.fileToStart.ToVisualString(), 7.0f);
+				g_OSD.Show(OSDType::MESSAGE_WARNING, sc->T("ExtractedIsoWarning", "Extracted ISOs often don't work.\nPlay the ISO file directly."), g_CoreParameter.fileToStart.ToVisualString(), 7.0f);
 			} else {
 				INFO_LOG(Log::Loader, "Extracted ISO loaded without warning - %s is present.", INDEX_FILENAME.c_str());
 			}
@@ -342,6 +346,7 @@ static bool CPU_Init(FileLoader *fileLoader, IdentifiedFileType type, std::strin
 
 	auto sc = GetI18NCategory(I18NCat::SCREEN);
 
+	_dbg_assert_(!g_symbolMap);
 	g_symbolMap = new SymbolMap();
 
 	MIPSAnalyst::Reset();
@@ -350,8 +355,7 @@ static bool CPU_Init(FileLoader *fileLoader, IdentifiedFileType type, std::strin
 	g_lua.Init();
 
 	// Here we have read the PARAM.SFO, let's see if we need any compatibility overrides.
-	// Homebrew usually has an empty discID, and even if they do have a disc id, it's not
-	// likely to collide with any commercial ones.
+	// Homebrew get fake disc IDs assigned to the global paramSFO, so they shouldn't clash with real games.
 	g_CoreParameter.compat.Load(g_paramSFO.GetDiscID());
 	ShowCompatWarnings(g_CoreParameter.compat);
 
@@ -372,6 +376,32 @@ static bool CPU_Init(FileLoader *fileLoader, IdentifiedFileType type, std::strin
 		return false;
 	}
 
+	// If it was forced on the command line. We don't want to override that.
+	g_fileLoggingWasEnabled = g_logManager.GetOutputsEnabled() & LogOutput::File;
+	g_logManager.EnableOutput(LogOutput::File, g_Config.bEnableFileLogging || g_fileLoggingWasEnabled);
+
+	if ((g_logManager.GetOutputsEnabled() & LogOutput::File) && !g_logManager.GetLogFilePath().empty()) {
+		auto dev = GetI18NCategory(I18NCat::DEVELOPER);
+
+		std::string logPath = g_logManager.GetLogFilePath().ToString();
+
+		// TODO: Really need a cleaner way to make clickable path notifications.
+		char *path = new char[logPath.size() + 1];
+		strcpy(path, logPath.data());
+
+		g_OSD.Show(OSDType::MESSAGE_INFO, ApplySafeSubstitutions("%1: %2", dev->T("Log to file"), g_logManager.GetLogFilePath().ToVisualString()), 0.0f, "log_to_file");
+		if (System_GetPropertyBool(SYSPROP_CAN_SHOW_FILE)) {
+			g_OSD.SetClickCallback("log_to_file", [](bool clicked, void *userdata) {
+				char *path = (char *)userdata;
+				if (clicked) {
+					System_ShowFileInFolder(Path(path));
+				} else {
+					delete[] path;
+				}
+			}, path);
+		}
+	}
+
 	InitVFPU();
 
 	LoadSymbolsIfSupported();
@@ -379,6 +409,8 @@ static bool CPU_Init(FileLoader *fileLoader, IdentifiedFileType type, std::strin
 	mipsr4k.Reset();
 
 	CoreTiming::Init();
+
+	DisplayHWInit();
 
 	// Init all the HLE modules
 	HLEInit();
@@ -416,8 +448,9 @@ static bool CPU_Init(FileLoader *fileLoader, IdentifiedFileType type, std::strin
 	case IdentifiedFileType::PSP_PBP:
 	case IdentifiedFileType::PSP_ELF:
 	{
-		INFO_LOG(Log::Loader, "File is an ELF or loose PBP! %s", fileLoader->GetPath().c_str());
+		INFO_LOG(Log::Loader, "File is an ELF or loose PBP %s", fileLoader->GetPath().c_str());
 		if (!Load_PSP_ELF_PBP(fileLoader, errorString)) {
+			ERROR_LOG(Log::Loader, "Failed to load ELF or loose PBP: %s", errorString->c_str());
 			return false;
 		}
 		break;
@@ -467,6 +500,8 @@ void CPU_Shutdown(bool success) {
 	__KernelShutdown();
 	HLEShutdown();
 
+	DisplayHWShutdown();
+
 	pspFileSystem.Shutdown();
 	mipsr4k.Shutdown();
 	Memory::Shutdown();
@@ -481,6 +516,8 @@ void CPU_Shutdown(bool success) {
 	g_symbolMap = nullptr;
 
 	g_lua.Shutdown();
+
+	g_logManager.EnableOutput(LogOutput::File, g_fileLoggingWasEnabled);
 }
 
 // Used for UMD switching only.
@@ -511,11 +548,28 @@ void PSP_ForceDebugStats(bool enable) {
 	_assert_(coreCollectDebugStatsCounter >= 0);
 }
 
+static void InitGPU(std::string *error_string) {
+	if (!gpu) {  // should be!
+		INFO_LOG(Log::Loader, "Starting graphics...");
+		Draw::DrawContext *draw = g_CoreParameter.graphicsContext ? g_CoreParameter.graphicsContext->GetDrawContext() : nullptr;
+		// This set the `gpu` global.
+		GPUCore gpuCore = PSP_CoreParameter().gpuCore;
+		bool success = GPU_Init(gpuCore, g_CoreParameter.graphicsContext, draw);
+		if (!success) {
+			*error_string = "Unable to initialize rendering engine.";
+			CPU_Shutdown(false);
+			g_bootState = BootState::Failed;
+		}
+	}
+}
+
 bool PSP_InitStart(const CoreParameter &coreParam) {
 	if (g_bootState != BootState::Off) {
 		ERROR_LOG(Log::Loader, "Can't start loader thread - already on.");
 		return false;
 	}
+
+	IncrementDebugCounter(DebugCounter::GAME_BOOT);
 
 	g_bootState = BootState::Booting;
 
@@ -532,14 +586,14 @@ bool PSP_InitStart(const CoreParameter &coreParam) {
 
 	_assert_msg_(!g_loadingThread.joinable(), "%s", coreParam.fileToStart.c_str());
 
+	Core_NotifyLifecycle(CoreLifecycle::STARTING);
+
 	g_loadingThread = std::thread([error_string]() {
 		SetCurrentThreadName("ExecLoader");
 
 		AndroidJNIThreadContext jniContext;
 
 		NOTICE_LOG(Log::Boot, "PPSSPP %s", PPSSPP_GIT_VERSION);
-
-		Core_NotifyLifecycle(CoreLifecycle::STARTING);
 
 		Path filename = g_CoreParameter.fileToStart;
 		FileLoader *loadedFile = ResolveFileLoaderTarget(ConstructFileLoader(filename));
@@ -574,6 +628,11 @@ bool PSP_InitStart(const CoreParameter &coreParam) {
 			return;
 		}
 
+		// Initialize the GPU as far as we can here (do things like load cache files).
+		_dbg_assert_(!gpu);
+#ifndef __LIBRETRO__
+		InitGPU(error_string);
+#endif
 		g_bootState = BootState::Complete;
 	});
 
@@ -581,55 +640,53 @@ bool PSP_InitStart(const CoreParameter &coreParam) {
 }
 
 BootState PSP_InitUpdate(std::string *error_string) {
-	if (g_bootState == BootState::Booting || g_bootState == BootState::Off) {
+	const BootState bootState = g_bootState;
+
+	if (bootState == BootState::Booting || bootState == BootState::Off) {
 		// Nothing to do right now.
-		return g_bootState;
+		_dbg_assert_(bootState == BootState::Booting || !g_loadingThread.joinable());
+		return bootState;
 	}
 
-	_dbg_assert_(g_bootState == BootState::Complete || g_bootState == BootState::Failed);
+	_dbg_assert_(bootState == BootState::Complete || bootState == BootState::Failed);
 
 	// Since we load on a background thread, wait for startup to complete.
-	_assert_msg_(g_loadingThread.joinable(), "bootstate: %d", (int)g_bootState);
+	_assert_msg_(g_loadingThread.joinable(), "bootstate: %d", (int)bootState);
 	g_loadingThread.join();
 
-	if (g_bootState == BootState::Failed) {
+	if (bootState == BootState::Failed) {
 		// Failed! (Note: PSP_Shutdown was already called on the loader thread).
 		Core_NotifyLifecycle(CoreLifecycle::START_COMPLETE);
 		*error_string = g_CoreParameter.errorString;
-		return g_bootState;
+		g_bootState = BootState::Off;
+		return BootState::Failed;
 	}
 
-	// Ok, async boot completed, let's finish up things on the main thread.
-	if (!gpu) {  // should be!
-		INFO_LOG(Log::Loader, "Starting graphics...");
-		Draw::DrawContext *draw = g_CoreParameter.graphicsContext ? g_CoreParameter.graphicsContext->GetDrawContext() : nullptr;
-		// This set the `gpu` global.
-		bool success = GPU_Init(g_CoreParameter.graphicsContext, draw);
-		if (!success) {
-			*error_string = "Unable to initialize rendering engine.";
-			PSP_Shutdown(false);
-			g_bootState = BootState::Failed;
-			return g_bootState;
-		}
-	}
+#ifdef __LIBRETRO__
+	InitGPU(error_string);
+#endif
 
-	// TODO: This should all be checked during GPU_Init.
-	if (!GPU_IsStarted()) {
-		*error_string = "Unable to initialize rendering engine.";
-		PSP_Shutdown(false);
-		g_bootState = BootState::Failed;
+	// Ok, async part of the boot completed, let's finish up things on the main thread.
+	if (gpu) {
+		gpu->FinishInitOnMainThread();
+	} else {
+		_dbg_assert_(gpu);
 	}
 
 	Core_NotifyLifecycle(CoreLifecycle::START_COMPLETE);
-	return g_bootState;
+	// The thread should have set it at this point.
+	_dbg_assert_(bootState == BootState::Complete);
+	return BootState::Complete;
 }
 
 // Most platforms should not use this one, they should call PSP_InitStart and then do their thing
 // while repeatedly calling PSP_InitUpdate. This is basically just for libretro convenience.
 BootState PSP_Init(const CoreParameter &coreParam, std::string *error_string) {
 	// InitStart doesn't really fail anymore.
-	if (!PSP_InitStart(coreParam))
+	if (!PSP_InitStart(coreParam)) {
+		g_bootState = BootState::Off;
 		return BootState::Failed;
+	}
 
 	while (true) {
 		BootState state = PSP_InitUpdate(error_string);
@@ -646,8 +703,11 @@ void PSP_Shutdown(bool success) {
 
 	// Do nothing if we never inited.
 	if (g_bootState == BootState::Off) {
+		ERROR_LOG(Log::Loader, "Unexpected PSP_Shutdown");
 		return;
 	}
+
+	_assert_(g_bootState != BootState::Failed);
 
 	Core_Stop();
 
@@ -659,11 +719,13 @@ void PSP_Shutdown(bool success) {
 		// This should only happen during failures.
 		Core_NotifyLifecycle(CoreLifecycle::START_COMPLETE);
 	}
+
 	Core_NotifyLifecycle(CoreLifecycle::STOPPING);
 
 	CPU_Shutdown(success);
 	GPU_Shutdown();
 	g_paramSFO.Clear();
+	g_paramSFORaw.Clear();
 	System_SetWindowTitle("");
 
 	currentMIPS = nullptr;
@@ -675,14 +737,11 @@ void PSP_Shutdown(bool success) {
 	if (success) {
 		g_bootState = BootState::Off;
 	}
+
+	IncrementDebugCounter(DebugCounter::GAME_SHUTDOWN);
 }
 
-// Call this after handling BootState::Failed.
-void PSP_CancelBoot() {
-	_dbg_assert_(g_bootState == BootState::Failed);
-	g_bootState = BootState::Off;
-}
-
+// Do not use. Currently only used from the websocket debugger
 BootState PSP_Reboot(std::string *error_string) {
 	if (g_bootState != BootState::Complete) {
 		return g_bootState;
@@ -693,19 +752,6 @@ BootState PSP_Reboot(std::string *error_string) {
 	PSP_Shutdown(true);
 	std::string resetError;
 	return PSP_Init(PSP_CoreParameter(), error_string);
-}
-
-void PSP_BeginHostFrame() {
-	if (gpu) {
-		gpu->BeginHostFrame();
-	}
-}
-
-void PSP_EndHostFrame() {
-	if (gpu) {
-		gpu->EndHostFrame();
-	}
-	SaveState::Cleanup();
 }
 
 void PSP_RunLoopWhileState() {
@@ -906,7 +952,7 @@ void DumpFileIfEnabled(const u8 *dataPtr, const u32 length, std::string_view nam
 	fwrite(dataPtr, sizeof(u8), lengthToWrite, file);
 	fclose(file);
 
-	INFO_LOG(Log::sceModule, "Successfully wrote %s to %s", DumpFileTypeToString(type), fullPath.c_str());
+	INFO_LOG(Log::sceModule, "Successfully wrote %s to %s", DumpFileTypeToString(type), fullPath.ToVisualString().c_str());
 
 	char *path = new char[strlen(fullPath.c_str()) + 1];
 	strcpy(path, fullPath.c_str());

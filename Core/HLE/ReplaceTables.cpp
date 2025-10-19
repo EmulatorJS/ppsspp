@@ -1283,11 +1283,103 @@ static int Hook_omertachinmokunookitethelegacy_download_frame() {
 // Function at 0886665C in US version (Persona 1)
 // Function at 08807DC4 in EU version (Persona 2)
 static int Hook_persona_download_frame() {
-	const u32 fb_address = 0x04088000;  // hardcoded at 088666D8
-	// const u32 dest_address = currentMIPS->r[MIPS_REG_A1];   // not relevant
-	if (Memory::IsVRAMAddress(fb_address)) {
+	// Depending on a global (curframe kind of thing), this either reads from
+	// 0x04088000 or 0x04000000 (the two addresses are hardcoded).
+	// We'd have to do some gnarly stuff to get this address, so let's just download both.
+	for (int i = 0; i < 2; i++) {
+		const u32 fb_address = i == 0 ? 0x04000000 : 0x04088000;
 		gpu->PerformReadbackToMemory(fb_address, 0x00088000);
 		NotifyMemInfo(MemBlockFlags::WRITE, fb_address, 0x00088000, "persona1_download_frame");
+	}
+	return 0;
+}
+
+static int Hook_steinsgate_download_frame() {
+	u32 fb_offset_addr;
+	if (!GetMIPSStaticAddress(fb_offset_addr, 0x1C, 0x20)) {
+		return 0;
+	}
+	const u32 fb_address = 0x04000000 + Memory::Read_U32(fb_offset_addr);
+	if (Memory::IsVRAMAddress(fb_address)) {
+		gpu->PerformReadbackToMemory(fb_address, 0x00088000);
+		NotifyMemInfo(MemBlockFlags::WRITE, fb_address, 0x00088000, "steinsgate_download_frame");
+	}
+	return 0;
+}
+
+static int Hook_infinity_download_frame() {
+	// There are a few games that share this same function.
+	// The hash matches, but due to relocations, the addresses it references differ.
+	// Because of this, the address, even though hardcoded, has to be fetched from the function.
+	u32 magic_value_addr;
+	if (!GetMIPSStaticAddress(magic_value_addr, 0x08, 0x1C)) {
+		return 0;
+	}
+
+	// Not sure why it was done like this, but that's what the actual function does.
+	const u32 fb_address = (Memory::Read_U32(magic_value_addr) & 1) ? 0x04000000 : 0x04088000;
+
+	gpu->PerformReadbackToMemory(fb_address, 0x00088000);
+	NotifyMemInfo(MemBlockFlags::WRITE, fb_address, 0x00088000, "infinity_download_frame");
+	return 0;
+}
+
+static int Hook_takuyo_download_frame() {
+	gpu->PerformReadbackToMemory(0x04088000, 0x00088000); // The offset is hardcoded.
+	NotifyMemInfo(MemBlockFlags::WRITE, 0x04088000, 0x00088000, "takuyo_download_frame");
+	return 0;
+}
+
+// Offsets in comments are valid for the US version of "KINGDOM HEARTS Birth by Sleep".
+// Function at 0x0881EF68
+static int Hook_kingdomhearts_download_frame() {
+	const u32 fb_base = 0x04000000; // Set in 0x0880C458, doesn't seem like it's ever overwriten.
+
+	const u32 get_fb_offset = MIPSCodeUtils::GetJumpTarget(currentMIPS->pc + 0x5C); // Jump to function at 0x08821EB0. Said function returns the framebuffer offset.
+	if (get_fb_offset == INVALIDTARGET) {
+		return 0;
+	}
+	u32 fb_offset_index_addr;
+	if (!GetMIPSStaticAddress(fb_offset_index_addr, get_fb_offset - currentMIPS->pc, get_fb_offset + 0x04 - currentMIPS->pc)) {
+		return 0;
+	}
+	if (!Memory::IsValidRange(fb_offset_index_addr, 4)) {
+		return 0;
+	}
+
+	const u32 fb_offset_index = Memory::Read_U32(fb_offset_index_addr); // 0x08821E90-0x08821E98
+	if (fb_offset_index > 2) {
+		return 0;
+	}
+
+	const MIPSOpcode fb_offset_table_lui = Memory::Read_Instruction(get_fb_offset + 0x08, true); // 0x08821EB8
+	if (fb_offset_table_lui != MIPS_MAKE_LUI(MIPS_REG_A1, fb_offset_table_lui & 0xFFFF)) {
+		return 0;
+	}
+	const MIPSOpcode fb_offset_table_addiu = Memory::Read_Instruction(get_fb_offset + 0x10, true); // 0x08821EC0
+	if (fb_offset_table_addiu != MIPS_MAKE_ADDIU(MIPS_REG_A1, MIPS_REG_A1, fb_offset_table_addiu & 0xFFFF)) {
+		return 0;
+	}
+	const u32 fb_offset_table = ((fb_offset_table_lui & 0xFFFF) << 16) + (s16)(fb_offset_table_addiu & 0xFFFF);
+	if (!Memory::IsValidRange(fb_offset_table, 12)) {
+		return 0;
+	}
+	const u32 fb_offset = Memory::Read_U32(fb_offset_table + fb_offset_index*4); // 0x08821E98-0x08821EB0
+
+	u32 magic_ptr_addr;
+	if (!GetMIPSStaticAddress(magic_ptr_addr, 0x08, 0x10)) {
+		return 0;
+	}
+	const u32 magic_ptr = Memory::Read_U32(magic_ptr_addr); // 0x0881EF70, 0x0881EF78
+
+	// Function of the variable guessed.
+	const u8 bytes_per_pixel = Memory::Read_U8(magic_ptr+0x50); // 0x0881EFE0
+
+	const u32 fb_address = fb_base + fb_offset;
+	const u32 fb_size = (bytes_per_pixel == 2) ? 0x044000 : 0x088000; // Branch at 0x0881EFE8, s3 set at 0x0881EFB8
+	if (Memory::IsVRAMAddress(fb_address)) {
+		gpu->PerformReadbackToMemory(fb_address, fb_size);
+		NotifyMemInfo(MemBlockFlags::WRITE, fb_address, fb_size, "kingdomhearts_download_frame");
 	}
 	return 0;
 }
@@ -1609,6 +1701,12 @@ static const ReplacementTableEntry entries[] = {
 	{ "brian_lara_fps_hack", &Hook_brian_lara_fps_hack, 0, REPFLAG_HOOKEXIT , 0 },
 	{ "persona1_download_frame", &Hook_persona_download_frame, 0, REPFLAG_HOOKENTER, 0 },
 	{ "persona2_download_frame", &Hook_persona_download_frame, 0, REPFLAG_HOOKENTER, 0 },
+	{ "steinsgate_download_frame", &Hook_steinsgate_download_frame, 0, REPFLAG_HOOKENTER, 0 },
+	{ "infinity_download_frame", &Hook_infinity_download_frame, 0, REPFLAG_HOOKENTER, 0 },
+	{ "takuyo_1_download_frame", &Hook_takuyo_download_frame, 0, REPFLAG_HOOKENTER, 0},
+	{ "takuyo_2_download_frame", &Hook_takuyo_download_frame, 0, REPFLAG_HOOKENTER, 0},
+	{ "takuyo_3_download_frame", &Hook_takuyo_download_frame, 0, REPFLAG_HOOKENTER, 0},
+	{ "kingdomhearts_download_frame", &Hook_kingdomhearts_download_frame, 0, REPFLAG_HOOKENTER, 0},
 	{}
 };
 

@@ -7,6 +7,7 @@
 
 #include "Common/StringUtils.h"
 
+// Don't forget to update the constants in the header file if you change this.
 static const char * const g_categoryNames[(size_t)I18NCat::CATEGORY_COUNT] = {
 	"Audio",
 	"Controls",
@@ -38,7 +39,6 @@ static const char * const g_categoryNames[(size_t)I18NCat::CATEGORY_COUNT] = {
 	"TextureShaders",
 	"Themes",
 	"UI Elements",
-	"Upgrade",
 	"VR",
 	"Achievements",
 	"PSPSettings",
@@ -77,12 +77,16 @@ std::string_view I18NCategory::T(std::string_view key, std::string_view def) {
 	if (iter != map_.end()) {
 		return iter->second.text.c_str();
 	} else {
+		if (map_.empty()) {
+			// Too early. This is probably in desktop-ui translation.
+			return !def.empty() ? def : key;
+		}
 		std::lock_guard<std::mutex> guard(missedKeyLock_);
 		std::string missedKey(key);
 		if (!def.empty())
 			missedKeyLog_[missedKey] = def;
 		else
-			missedKeyLog_[missedKey] = std::string(key);
+			missedKeyLog_[missedKey] = missedKey;
 		return !def.empty() ? def : key;
 	}
 }
@@ -92,6 +96,10 @@ const char *I18NCategory::T_cstr(const char *key, const char *def) {
 	if (iter != map_.end()) {
 		return iter->second.text.c_str();
 	} else {
+		if (map_.empty()) {
+			// Too early. This is probably in desktop-ui translation.
+			return def ? def : key;
+		}
 		std::lock_guard<std::mutex> guard(missedKeyLock_);
 		std::string missedKey(key);
 		if (def)

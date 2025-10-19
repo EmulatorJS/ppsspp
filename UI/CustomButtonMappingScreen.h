@@ -39,14 +39,14 @@ protected:
 private:
 	void saveArray();
 
-	bool array[ARRAY_SIZE(CustomKeyData::customKeyList)]{};
+	bool array[ARRAY_SIZE(CustomKeyData::g_customKeyList)]{};
 	int id_;
 	UI::ScrollView *rightScroll_ = nullptr;
 
 	class ChoiceEventHandler{
 	public:
 		ChoiceEventHandler(UI::CheckBox *checkbox) : checkbox_(checkbox) {}
-		UI::EventReturn onChoiceClick(UI::EventParams &e);
+		void onChoiceClick(UI::EventParams &e);
 	private:
 		UI::CheckBox *checkbox_;
 	};

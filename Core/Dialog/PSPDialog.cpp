@@ -51,6 +51,18 @@ const char *UtilityDialogTypeToString(UtilityDialogType type) {
 	}
 }
 
+const char *UtilityDialogStatusToString(PSPDialog::DialogStatus status) {
+	switch (status) {
+	case PSPDialog::SCE_UTILITY_STATUS_NONE: return "STATUS_NONE";
+	case PSPDialog::SCE_UTILITY_STATUS_INITIALIZE: return "STATUS_INITIALIZE";
+	case PSPDialog::SCE_UTILITY_STATUS_RUNNING: return "STATUS_RUNNING";
+	case PSPDialog::SCE_UTILITY_STATUS_FINISHED: return "STATUS_FINISHED";
+	case PSPDialog::SCE_UTILITY_STATUS_SHUTDOWN: return "STATUS_SHUTDOWN";
+	case PSPDialog::SCE_UTILITY_STATUS_SCREENSHOT_UNKNOWN: return "STATUS_SCREENSHOT_UNKNOWN";
+	default: return "(unknown)";
+	}
+}
+
 void PSPDialog::InitCommon() {
 	UpdateCommon();
 
@@ -259,12 +271,6 @@ void PSPDialog::DoState(PointerWrap &p) {
 	}
 }
 
-pspUtilityDialogCommon *PSPDialog::GetCommonParam()
-{
-	// FIXME
-	return 0;
-}
-
 void PSPDialog::UpdateButtons()
 {
 	lastButtons = __CtrlPeekButtons();
@@ -323,7 +329,13 @@ void PSPDialog::DisplayButtons(int flags, std::string_view caption) {
 
 	auto di = GetI18NCategory(I18NCat::DIALOG);
 	float x1 = 183.5f, x2 = 261.5f;
-	if (GetCommonParam()->buttonSwap == 1) {
+
+	const pspUtilityDialogCommon *commonParams = GetCommonParam();
+	if (!commonParams) {
+		return;
+	}
+
+	if (commonParams->buttonSwap == 1) {
 		x1 = 261.5f;
 		x2 = 183.5f;
 	}

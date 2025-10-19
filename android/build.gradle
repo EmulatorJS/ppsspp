@@ -1,6 +1,7 @@
 plugins {
 	id 'com.gladed.androidgitversion' version '0.4.14'
 }
+
 apply plugin: 'com.android.application'
 
 androidGitVersion {
@@ -12,18 +13,16 @@ androidGitVersion {
 
 dependencies {
 	// 1.2.0 is the newest version we can use that won't complain about minSdk version.
-	def appcompat_version = "1.2.0"
-
-	implementation "androidx.appcompat:appcompat:$appcompat_version"
+	implementation "androidx.appcompat:appcompat:1.6.1"
 
 	// Convenient wrapper around DocumentContract. Might look into writing our own
 	// to see if there's some performance to squeeze at some point, but doubt it.
-	implementation "androidx.documentfile:documentfile:1.0.1"
+	implementation "androidx.documentfile:documentfile:1.1.0"
 }
 
 android {
-	flavorDimensions += "variant"
-	namespace 'org.ppsspp.ppsspp'
+	flavorDimensions "variant"
+	namespace = 'org.ppsspp.ppsspp'
 	signingConfigs {
 		debug {
 			storeFile file("debug.keystore")
@@ -40,66 +39,57 @@ android {
 				keyAlias RELEASE_KEY_ALIAS
 				keyPassword RELEASE_KEY_PASSWORD
 			}
-		} else {
-			release {
-			}
 		}
 	}
 
-	compileSdk 35
-	ndkVersion "21.4.7075529"
-	java {
-		toolchain {
-			languageVersion = JavaLanguageVersion.of(17)
-		}
+	compileSdk = 36
+
+	ndkVersion = "28.2.13676358"
+
+	compileOptions {
+		sourceCompatibility JavaVersion.VERSION_11
+		targetCompatibility JavaVersion.VERSION_11
 	}
+
+	lint {
+		baseline = file("lint-baseline.xml")
+	}
+
 	defaultConfig {
-		/*
-		configurations.all {
-			resolutionStrategy {
-				// Newer versions are not compatible with our minsdk. Should find a way to exclude it entirely
-				// since we have no use for this transitive dependency.
-				force 'androidx.emoji2:emoji2-views-helper:1.0.0'
-			}
-		}
-		*/
-
 		applicationId 'org.ppsspp.ppsspp'
-		if (androidGitVersion.name() != "unknown" && androidGitVersion.code() >= 14000000) {
-			// Start using automatic Android version numbers from version 1.4.
+		if (androidGitVersion.name() != "unknown") {
 			println "Overriding Android Version Name, Code: " + androidGitVersion.name() + " " + androidGitVersion.code()
 			versionName androidGitVersion.name()
 			versionCode androidGitVersion.code()
 		} else {
 			println "(not using these:) Android Version Name, Code: " + androidGitVersion.name() + " " + androidGitVersion.code()
 		}
+		file("versionname.txt").text = androidGitVersion.name()
+		file("versioncode.txt").text = androidGitVersion.code().toString()
 
-		new File("versionname.txt").write(androidGitVersion.name())
-		new File("versioncode.txt").write(androidGitVersion.code().toString())
-
-		minSdk 9
-		targetSdk 35
+		minSdk = 21
+		targetSdk = 36
 		if (project.hasProperty("ANDROID_VERSION_CODE") && project.hasProperty("ANDROID_VERSION_NAME")) {
-			versionCode ANDROID_VERSION_CODE
-			versionName ANDROID_VERSION_NAME
+			versionCode = ANDROID_VERSION_CODE
+			versionName = ANDROID_VERSION_NAME
 		}
-		signingConfig signingConfigs.debug
+		signingConfig = signingConfigs.debug
 	}
 	buildTypes {
 		debug {
 			minifyEnabled = false
-			jniDebuggable true
-			signingConfig signingConfigs.debug
+			jniDebuggable = true
+			signingConfig = signingConfigs.debug
 		}
 		optimized {
 			// Debug signed but optimized.
 			minifyEnabled = false
-			jniDebuggable true
-			signingConfig android.buildTypes.debug.signingConfig
+			jniDebuggable = true
+			signingConfig = android.buildTypes.debug.signingConfig
 		}
 		release {
 			minifyEnabled = false
-			signingConfig signingConfigs.release
+			signingConfig = signingConfigs.release
 		}
 	}
 	externalNativeBuild {
@@ -118,7 +108,7 @@ android {
 			aidl.srcDirs = ['src']
 			resources.srcDirs = ['src']
 			assets.srcDirs = [
-					'../assets',
+				'../assets',
 			]
 		}
 		normal {
@@ -143,10 +133,10 @@ android {
 				cmake {
 					// Available arguments listed at https://developer.android.com/ndk/guides/cmake.html
 					arguments '-DANDROID=true',
-							'-DANDROID_PLATFORM=android-16',
-							'-DANDROID_TOOLCHAIN=clang',
-							'-DANDROID_CPP_FEATURES=',
-							'-DANDROID_STL=c++_static'
+						'-DANDROID_PLATFORM=android-21',
+						'-DANDROID_TOOLCHAIN=clang',
+						'-DANDROID_CPP_FEATURES=',
+						'-DANDROID_STL=c++_static'
 				}
 			}
 			ndk {
@@ -160,12 +150,12 @@ android {
 				cmake {
 					// Available arguments listed at https://developer.android.com/ndk/guides/cmake.html
 					arguments '-DANDROID=true',
-							'-DANDROID_PLATFORM=android-16',
-							'-DANDROID_TOOLCHAIN=clang',
-							'-DANDROID_CPP_FEATURES=',
-							'-DANDROID_STL=c++_static',
-							'-DANDROID_ARM_NEON=TRUE',
-							'-DGOLD=TRUE'
+						'-DANDROID_PLATFORM=android-21',
+						'-DANDROID_TOOLCHAIN=clang',
+						'-DANDROID_CPP_FEATURES=',
+						'-DANDROID_STL=c++_static',
+						'-DANDROID_ARM_NEON=TRUE',
+						'-DGOLD=TRUE'
 				}
 			}
 			ndk {
@@ -175,12 +165,12 @@ android {
 		legacy {
 			applicationId 'org.ppsspp.ppsspplegacy'
 			dimension "variant"
-			targetSdkVersion 29  // This is the point of legacy.
+			// targetSdk is overridden in androidComponents below.
 			externalNativeBuild {
 				cmake {
 					// Available arguments listed at https://developer.android.com/ndk/guides/cmake.html
 					arguments '-DANDROID=true',
-						'-DANDROID_PLATFORM=android-16',
+						'-DANDROID_PLATFORM=android-21',
 						'-DANDROID_TOOLCHAIN=clang',
 						'-DANDROID_CPP_FEATURES=',
 						'-DANDROID_STL=c++_static',
@@ -188,35 +178,42 @@ android {
 				}
 			}
 			ndk {
+				//noinspection ChromeOsAbiSupport
 				abiFilters 'armeabi-v7a', 'arm64-v8a'
 			}
 		}
 		vr {
 			applicationId 'org.ppsspp.ppssppvr'
 			dimension "variant"
-			targetSdkVersion 29  // Do not upgrade this, we depend on not requiring scoped storage on Oculus.
+			// targetSdk is overridden in androidComponents below.
 			externalNativeBuild {
 				cmake {
 					// Available arguments listed at https://developer.android.com/ndk/guides/cmake.html
 					arguments '-DANDROID=true',
-							'-DANDROID_PLATFORM=android-16',
-							'-DANDROID_TOOLCHAIN=clang',
-							'-DANDROID_CPP_FEATURES=',
-							'-DANDROID_STL=c++_static',
-							'-DANDROID_ARM_NEON=TRUE',
-							'-DOPENXR=TRUE',
-							'-DANDROID_LEGACY=TRUE'
+						'-DANDROID_PLATFORM=android-21',
+						'-DANDROID_TOOLCHAIN=clang',
+						'-DANDROID_CPP_FEATURES=',
+						'-DANDROID_STL=c++_static',
+						'-DANDROID_ARM_NEON=TRUE',
+						'-DOPENXR=TRUE',
+						'-DANDROID_LEGACY=TRUE'
 				}
 			}
 			ndk {
+				//noinspection ChromeOsAbiSupport
 				abiFilters 'arm64-v8a'
 			}
 		}
 	}
-	// TODO: This is deprecated and needs a replacement. See https://stackoverflow.com/questions/67330818/android-gradle-plugin7-0-0-alpha15-removed-variantfilter-property-how-to-rest
-	// Though, not really that important.
-	variantFilter { variant ->
-		def needed = variant.name in [
+	buildFeatures {
+		aidl = true
+		buildConfig = true
+	}
+}
+
+androidComponents {
+	beforeVariants(selector().all()) { variantBuilder ->
+		def needed = variantBuilder.name in [
 			'normalDebug',      // for debugging
 			'normalOptimized',  // for testing/user build
 			'normalRelease',    // for Google Play releases
@@ -229,22 +226,17 @@ android {
 			'legacyOptimized',  // for legacy testing/user build
 			'legacyRelease',    // for buildbot releases
 		]
-		variant.setIgnore(!needed)
+		variantBuilder.enable = needed
+
+		// Override targetSdk for legacy and VR variants
+		if (variantBuilder.flavorName.contains("legacy")) {
+			variantBuilder.targetSdk = 29
+		} else if (variantBuilder.flavorName.contains("vr")) {
+			variantBuilder.targetSdk = 29
+		}
 	}
-	buildFeatures {
-		aidl true
-		buildConfig true
-	}
-}
-afterEvaluate {
-	android.sourceSets.main.assets.getSrcDirs().each { println it }
 }
 
-// F-Droid lite version can be created with : ./gradlew assembleOptimized -Pf_droid
-if (project.hasProperty("f_droid")) {
-	project.android.sourceSets.main.java.srcDirs += 'libs/MogaStubs'
-} else {
-	project.dependencies {
-		implementation files('libs/com.bda.controller.jar')
-	}
+afterEvaluate {
+	android.sourceSets.main.assets.getSrcDirs().each { println it }
 }

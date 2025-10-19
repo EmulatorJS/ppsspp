@@ -2,9 +2,15 @@
 #include <cmath>
 
 #include "ppsspp_config.h"
+
+#if PPSSPP_PLATFORM(WINDOWS) && PPSSPP_ARCH(ARM64)
+#include <arm64intr.h>
+#endif
+
 #include "Common/BitSet.h"
 #include "Common/BitScan.h"
 #include "Common/Common.h"
+#include "Common/CommonFuncs.h"
 #include "Common/Data/Convert/SmallDataConvert.h"
 #include "Common/Math/math_util.h"
 #include "Common/Math/SIMDHeaders.h"
@@ -21,6 +27,32 @@
 #include "Core/MIPS/IR/IRInterpreter.h"
 #include "Core/System.h"
 #include "Core/MIPS/MIPSTracer.h"
+
+#if PPSSPP_ARCH(ARM64)
+
+// TODO: This should be put in some common header.
+static inline u64 ARM64ReadFPCR() {
+#if PPSSPP_PLATFORM(WINDOWS)
+	return _ReadStatusReg(ARM64_FPCR);
+#else
+	// TODO: Try __builtin_arm_get_fpcr()
+	u64 fpcr;  // not really 64-bit, just to match the register size.
+	asm volatile ("mrs %0, fpcr" : "=r" (fpcr));
+	return fpcr;
+#endif
+}
+
+static inline void ARM64WriteFPCR(u64 fpcr) {
+#if PPSSPP_PLATFORM(WINDOWS)
+	_WriteStatusReg(ARM64_FPCR, fpcr);
+#else
+	// TODO: Try __builtin_arm_set_fpcr()
+	// Write back the modified FPCR
+	asm volatile ("msr fpcr, %0" : : "r" (fpcr));
+#endif
+}
+
+#endif
 
 #ifdef mips
 // Why do MIPS compilers define something so generic?  Try to keep defined, at least...
@@ -97,25 +129,19 @@ void IRApplyRounding(MIPSState *mips) {
 			csr |= 0x8000;
 		}
 		_mm_setcsr(csr);
-#elif PPSSPP_ARCH(ARM64) && !PPSSPP_PLATFORM(WINDOWS)
-		// On ARM64 we need to use inline assembly for a portable solution.
-		// Unfortunately we don't have this possibility on Windows with MSVC, so ifdeffed out above.
-		// Note that in the JIT, for fcvts, we use specific conversions. We could use the FCVTS variants
-		// directly through inline assembly.
-		u64 fpcr;  // not really 64-bit, just to match the register size.
-		asm volatile ("mrs %0, fpcr" : "=r" (fpcr));
-
+#elif PPSSPP_ARCH(ARM64)
+		u64 fpcr = ARM64ReadFPCR();
 		// Translate MIPS to ARM rounding mode
 		static const u8 lookup[4] = {0, 3, 1, 2};
 
 		fpcr &= ~(3 << 22);    // Clear bits [23:22]
-		fpcr |= (lookup[rmode] << 22);
+		fpcr |= ((u64)lookup[rmode] << 22);
 
 		if (ftz) {
 			fpcr |= 1 << 24;
 		}
-		// Write back the modified FPCR
-		asm volatile ("msr fpcr, %0" : : "r" (fpcr));
+
+		ARM64WriteFPCR(fpcr);
 #endif
 	}
 }
@@ -127,16 +153,14 @@ void IRRestoreRounding() {
 	u32 csr = _mm_getcsr();
 	csr &= ~(7 << 13);
 	_mm_setcsr(csr);
-#elif PPSSPP_ARCH(ARM64) && !PPSSPP_PLATFORM(WINDOWS)
-	u64 fpcr;  // not really 64-bit, just to match the regsiter size.
-	asm volatile ("mrs %0, fpcr" : "=r" (fpcr));
+#elif PPSSPP_ARCH(ARM64)
+	u64 fpcr = ARM64ReadFPCR();  // not really 64-bit, just to match the regsiter size.
 	fpcr &= ~(7 << 22);    // Clear bits [23:22] for rounding, 24 for FTZ
 	// Write back the modified FPCR
-	asm volatile ("msr fpcr, %0" : : "r" (fpcr));
+	ARM64WriteFPCR(fpcr);
 #endif
 }
 
-// We cannot use NEON on ARM32 here until we make it a hard dependency. We can, however, on ARM64.
 u32 IRInterpret(MIPSState *mips, const IRInst *inst) {
 	while (true) {
 		switch (inst->op) {
@@ -330,8 +354,11 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst) {
 			const int constant = inst->constant;
 			// 90% of calls to this is inst->constant == 7 or inst->constant == 8. Some are 1 and 4, others very rare.
 			// Could use _mm_blendv_ps (SSE4+BMI), vbslq_f32 (ARM), __riscv_vmerge_vvm (RISC-V)
+			float temp[4];
 			for (int i = 0; i < 4; i++)
-				mips->f[dest + i] = ((constant >> i) & 1) ? mips->f[src2 + i] : mips->f[src1 + i];
+				temp[i] = ((constant >> i) & 1) ? mips->f[src2 + i] : mips->f[src1 + i];
+			for (int i = 0; i < 4; i++)
+				mips->f[dest + i] = temp[i];
 			break;
 		}
 
@@ -443,8 +470,10 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst) {
 		{
 			const int dest = inst->dest;
 			const int src1 = inst->src1;
-			mips->fi[dest] = (mips->fi[src1] << 16) >> 1;
-			mips->fi[dest + 1] = (mips->fi[src1] & 0xFFFF0000) >> 1;
+			const int temp0 = (mips->fi[src1] << 16) >> 1;
+			const int temp1 = (mips->fi[src1] & 0xFFFF0000) >> 1;
+			mips->fi[dest] = temp0;
+			mips->fi[dest + 1] = temp1;
 			break;
 		}
 
@@ -452,8 +481,10 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst) {
 		{
 			const int dest = inst->dest;
 			const int src1 = inst->src1;
-			mips->fi[dest] = (mips->fi[src1] << 16);
-			mips->fi[dest + 1] = (mips->fi[src1] & 0xFFFF0000);
+			const int temp0 = (mips->fi[src1] << 16);
+			const int temp1 = (mips->fi[src1] & 0xFFFF0000);
+			mips->fi[dest] = temp0;
+			mips->fi[dest + 1] = temp1;
 			break;
 		}
 
@@ -532,10 +563,10 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst) {
 
 		case IROp::Vec2ClampToZero:
 		{
-			for (int i = 0; i < 2; i++) {
-				u32 val = mips->fi[inst->src1 + i];
-				mips->fi[inst->dest + i] = (int)val >= 0 ? val : 0;
-			}
+			const u32 temp0 = mips->fi[inst->src1];
+			const u32 temp1 = mips->fi[inst->src1 + 1];
+			mips->fi[inst->dest] = (int)temp0 >= 0 ? temp0 : 0;
+			mips->fi[inst->dest + 1] = (int)temp1 >= 0 ? temp1 : 0;
 			break;
 		}
 
@@ -562,12 +593,15 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst) {
 		{
 			const int src1 = inst->src1;
 			const int dest = inst->dest;
+			u32 temp[4];
 			for (int i = 0; i < 4; i++) {
 				u32 val = mips->fi[src1 + i];
 				val = val | (val >> 8);
 				val = val | (val >> 16);
-				val >>= 1;
-				mips->fi[dest + i] = val;
+				temp[i] = val >> 1;
+			}
+			for (int i = 0; i < 4; i++) {
+				mips->fi[dest + i] = temp[i];
 			}
 			break;
 		}
@@ -1234,9 +1268,9 @@ u32 IRInterpret(MIPSState *mips, const IRInst *inst) {
 		case IROp::Nop: // TODO: This shouldn't crash, but for now we should not emit nops, so...
 		case IROp::Bad:
 		default:
-			Crash();
+			// Unimplemented IR op. Bad. We define it as unreachable so the compiler can optimize better (remove the range check).
+			UNREACHABLE();
 			break;
-			// Unimplemented IR op. Bad.
 		}
 
 #ifdef _DEBUG

@@ -60,7 +60,7 @@ static void UseLargeMem(int memsize) {
 	}
 }
 
-bool MountGameISO(FileLoader *fileLoader) {
+bool MountGameISO(FileLoader *fileLoader, std::string *errorString) {
 	std::shared_ptr<IFileSystem> fileSystem;
 	std::shared_ptr<IFileSystem> blockSystem;
 
@@ -68,7 +68,7 @@ bool MountGameISO(FileLoader *fileLoader) {
 		fileSystem = std::make_shared<VirtualDiscFileSystem>(&pspFileSystem, fileLoader->GetPath());
 		blockSystem = fileSystem;
 	} else {
-		auto bd = constructBlockDevice(fileLoader);
+		auto bd = ConstructBlockDevice(fileLoader, errorString);
 		if (!bd) {
 			// Can only fail if the ISO is bad.
 			return false;
@@ -93,6 +93,7 @@ bool LoadParamSFOFromDisc() {
 		std::vector<u8> paramsfo;
 		pspFileSystem.ReadEntireFile(sfoPath, paramsfo);
 		if (g_paramSFO.ReadSFO(paramsfo)) {
+			g_paramSFORaw = g_paramSFO;
 			return true;
 		}
 	}
@@ -146,9 +147,15 @@ bool LoadParamSFOFromPBP(FileLoader *fileLoader) {
 			// Carefully parse param SFO for PBP files.
 			ParamSFOData paramSFO;
 			if (paramSFO.ReadSFO(sfoData)) {
+				g_paramSFORaw = paramSFO;
 				std::string title = paramSFO.GetValueString("TITLE");
 				if (g_paramSFO.GetValueString("TITLE").empty() && !title.empty()) {
 					g_paramSFO.SetValue("TITLE", title, (int)title.size());
+				}
+
+				// Copy over the MEMSIZE flag for later inspection.
+				if (paramSFO.HasKey("MEMSIZE")) {
+					g_paramSFO.SetValue("MEMSIZE", paramSFO.GetValueInt("MEMSIZE"), 4);
 				}
 
 				std::string discID = paramSFO.GetValueString("DISC_ID");
@@ -161,6 +168,8 @@ bool LoadParamSFOFromPBP(FileLoader *fileLoader) {
 				bool regionCheck = region != 'A' && region != 'E' && region != 'H' && region != 'I' && region != 'J' && region != 'K' && region != 'U' && region != 'X';
 				bool systemVerCheck = !systemVer.empty() && systemVer[0] >= '5';
 				if ((formatCheck || regionCheck || discTotalCheck || systemVerCheck) && !discID.empty()) {
+					// This is NOT a homebrew, so we set the ID. Otherwise it'll later be generated
+					// on the first access. This is kinda backwards and weird.
 					g_paramSFO.SetValue("DISC_ID", discID, (int)discID.size());
 					std::string ver = paramSFO.GetValueString("DISC_VERSION");
 					if (ver.empty())
@@ -204,7 +213,9 @@ bool Load_PSP_ISO(FileLoader *fileLoader, std::string *error_string) {
 	// Bypass Chinese translation patches, see comment above.
 	for (size_t i = 0; i < ARRAY_SIZE(altBootNames); i++) {
 		if (pspFileSystem.GetFileInfo(altBootNames[i]).exists) {
-			bootpath = altBootNames[i];			
+			WARN_LOG(Log::Boot, "Bypassing suspected translation patch. Booting '%s' instead of '%s'.", altBootNames[i], bootpath.c_str());
+			bootpath = altBootNames[i];
+			// break;  // should have a break here, but it would effectively reverse the evaluation order.
 		}
 	}
 
@@ -290,14 +301,16 @@ static Path NormalizePath(const Path &path) {
 bool Load_PSP_ELF_PBP(FileLoader *fileLoader, std::string *error_string) {
 	// This is really just for headless, might need tweaking later.
 	if (PSP_CoreParameter().mountIsoLoader != nullptr) {
-		auto bd = constructBlockDevice(PSP_CoreParameter().mountIsoLoader);
-		if (bd != NULL) {
+		auto bd = ConstructBlockDevice(PSP_CoreParameter().mountIsoLoader, error_string);
+		if (bd) {
 			auto umd2 = std::make_shared<ISOFileSystem>(&pspFileSystem, bd);
 			auto blockSystem = std::make_shared<ISOBlockSystem>(umd2);
 
 			pspFileSystem.Mount("umd1:", blockSystem);
 			pspFileSystem.Mount("disc0:", umd2);
 			pspFileSystem.Mount("umd:", blockSystem);
+		} else {
+			ERROR_LOG(Log::Loader, "mountIso failed: %s", error_string->c_str());
 		}
 	}
 

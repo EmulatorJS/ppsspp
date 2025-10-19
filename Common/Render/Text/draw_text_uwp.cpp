@@ -184,7 +184,7 @@ uint32_t TextDrawerUWP::SetFont(const char *fontName, int size, int flags) {
 		fname = L"Tahoma";
 
 	TextDrawerFontContext *font = new TextDrawerFontContext();
-	font->weight = DWRITE_FONT_WEIGHT_LIGHT;
+	font->weight = DWRITE_FONT_WEIGHT_NORMAL;
 	font->height = size;
 	font->fname = fname;
 	font->dpiScale = dpiScale_;
@@ -212,7 +212,7 @@ void TextDrawerUWP::MeasureStringInternal(std::string_view str, float *w, float 
 	}
 	if (!format) return;
 
-	std::wstring wstr = ConvertUTF8ToWString(ReplaceAll(std::string(str), "\n", "\r\n"));
+	std::wstring wstr = ConvertUTF8ToWString(ReplaceAll(str, "\n", "\r\n"));
 
 	format->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
 		
@@ -326,9 +326,9 @@ bool TextDrawerUWP::DrawStringBitmap(std::vector<uint8_t> &bitmapData, TextStrin
 				if (fullColor) {
 					if (swap)
 						v = (v & 0xFF00FF00) | ((v >> 16) & 0xFF) | ((v << 16) & 0xFF0000);
-					bitmapData32[entry.bmWidth * y + x] = v;
+					bitmapData32[entry.bmWidth * y + x] = RGBAToPremul8888(v);
 				} else {
-					bitmapData32[entry.bmWidth * y + x] = (v << 24) | 0xFFFFFF;
+					bitmapData32[entry.bmWidth * y + x] = AlphaToPremul8888(v >> 24);
 				}
 			}
 		}
@@ -338,8 +338,8 @@ bool TextDrawerUWP::DrawStringBitmap(std::vector<uint8_t> &bitmapData, TextStrin
 		uint16_t *bitmapData16 = (uint16_t *)&bitmapData[0];
 		for (int y = 0; y < entry.bmHeight; y++) {
 			for (int x = 0; x < entry.bmWidth; x++) {
-				uint8_t bAlpha = (uint8_t)((map.bits[map.pitch * y + x * 4] & 0xff) >> 4);
-				bitmapData16[entry.bmWidth * y + x] = (bAlpha) | 0xfff0;
+				uint8_t bAlpha = (uint8_t)(map.bits[map.pitch * y + x * 4] & 0xff);
+				bitmapData16[entry.bmWidth * y + x] = AlphaToPremul4444(bAlpha);
 			}
 		}
 	} else if (texFormat == Draw::DataFormat::A4R4G4B4_UNORM_PACK16) {
@@ -348,8 +348,8 @@ bool TextDrawerUWP::DrawStringBitmap(std::vector<uint8_t> &bitmapData, TextStrin
 		uint16_t *bitmapData16 = (uint16_t *)&bitmapData[0];
 		for (int y = 0; y < entry.bmHeight; y++) {
 			for (int x = 0; x < entry.bmWidth; x++) {
-				uint8_t bAlpha = (uint8_t)((map.bits[map.pitch * y + x * 4] & 0xff) >> 4);
-				bitmapData16[entry.bmWidth * y + x] = (bAlpha << 12) | 0x0fff;
+				uint8_t bAlpha = (uint8_t)(map.bits[map.pitch * y + x * 4] & 0xff);
+				bitmapData16[entry.bmWidth * y + x] = AlphaToPremul4444(bAlpha);
 			}
 		}
 	} else if (texFormat == Draw::DataFormat::R8_UNORM) {

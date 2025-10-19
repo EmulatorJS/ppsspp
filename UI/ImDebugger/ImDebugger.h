@@ -15,10 +15,12 @@
 
 #include "Core/Debugger/DisassemblyManager.h"
 #include "Core/Debugger/DebugInterface.h"
+#include "Core/Debugger/Watch.h"
 
 #include "UI/ImDebugger/ImDisasmView.h"
 #include "UI/ImDebugger/ImMemView.h"
 #include "UI/ImDebugger/ImStructViewer.h"
+#include "UI/ImDebugger/ImJitViewer.h"
 #include "UI/ImDebugger/ImGe.h"
 #include "UI/ImDebugger/ImConsole.h"
 
@@ -82,10 +84,14 @@ struct ImConfig {
 	bool internalsOpen;
 	bool sasAudioOpen;
 	bool logConfigOpen;
+	bool logOpen;
 	bool utilityModulesOpen;
 	bool atracToolOpen;
 	bool memViewOpen[4];
 	bool luaConsoleOpen;
+	bool audioOutOpen;
+	bool paramSFOOpen;
+	bool jitViewerOpen;
 
 	// HLE explorer settings
 	// bool filterByUsed = true;
@@ -101,6 +107,7 @@ struct ImConfig {
 	int selectedMemCheck = -1;
 	int selectedAtracCtx = 0;
 	int selectedMp3Ctx = 0;
+	int selectedAacCtx = 0;
 	int selectedMemoryBlock = 0;
 	u32 selectedMpegCtx = 0;
 
@@ -132,6 +139,28 @@ public:
 	std::unique_ptr<Track> track_;
 	std::string error_;
 	std::string data_;
+};
+
+class ImWatchWindow {
+public:
+	ImWatchWindow();
+	void Draw(ImConfig &cfg, ImControl &control, MIPSDebugInterface *mipsDebug);
+private:
+	std::vector<WatchInfo> watches_;
+
+	char editBuffer_[256];
+	int editingWatchIndex_ = -1;
+	int editingColumn_ = 0;
+	bool setEditFocus_ = false;
+};
+
+class ImLogWindow {
+public:
+	ImLogWindow() {}
+	void Draw(ImConfig &cfg);
+
+private:
+	bool                AutoScroll = true;  // Keep scrolling if already at the bottom.
 };
 
 enum class ImCmd {
@@ -185,8 +214,11 @@ private:
 	ImStructViewer structViewer_;
 	ImGePixelViewerWindow pixelViewer_;
 	ImMemDumpWindow memDumpWindow_;
+	ImWatchWindow watchWindow_;
 	ImAtracToolWindow atracToolWindow_;
 	ImConsole luaConsole_;
+	ImLogWindow logWindow_;
+	ImJitViewerWindow jitViewer_;
 
 	ImSnapshotState newSnapshot_;
 	ImSnapshotState snapshot_;

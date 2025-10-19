@@ -86,12 +86,15 @@ public:
 	ShaderManagerD3D11(Draw::DrawContext *draw, ID3D11Device *device, ID3D11DeviceContext *context, D3D_FEATURE_LEVEL featureLevel);
 	~ShaderManagerD3D11();
 
-	void GetShaders(int prim, VertexDecoder *decoder, D3D11VertexShader **vshader, D3D11FragmentShader **fshader, const ComputedPipelineState &pipelineState, bool useHWTransform, bool useHWTessellation, bool weightsAsFloat, bool useSkinInDecode);
+	void GetShaders(int prim, u32 vertexType, D3D11VertexShader **vshader, D3D11FragmentShader **fshader, const ComputedPipelineState &pipelineState, bool useHWTransform, bool useHWTessellation, bool weightsAsFloat, bool useSkinInDecode);
 	void ClearShaders() override;
 	void DirtyLastShader() override;
 
-	void DeviceLost() override { draw_ = nullptr; }
-	void DeviceRestore(Draw::DrawContext *draw) override { draw_ = draw; }
+	void InitDeviceObjects();
+	void DestroyDeviceObjects();
+
+	void DeviceLost() override;
+	void DeviceRestore(Draw::DrawContext *draw) override;
 	int GetNumVertexShaders() const { return (int)vsCache_.size(); }
 	int GetNumFragmentShaders() const { return (int)fsCache_.size(); }
 

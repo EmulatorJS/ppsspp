@@ -55,6 +55,7 @@
 #include "Common/Data/Encoding/Utf8.h"
 #include "Common/Buffer.h"
 #include "Common/File/Path.h"
+#include "Common/Log/LogManager.h"
 #include "Common/Math/SIMDHeaders.h"
 #include "Common/Math/CrossSIMD.h"
 // Get some more instructions for testing
@@ -111,7 +112,7 @@ bool System_GetPropertyBool(SystemProperty prop) {
 	}
 }
 void System_Notify(SystemNotification notification) {}
-void System_PostUIMessage(UIMessage message, const std::string &param) {}
+void System_PostUIMessage(UIMessage message, std::string_view param) {}
 void System_RunOnMainThread(std::function<void()>) {}
 void System_AudioGetDebugStats(char *buf, size_t bufSize) { if (buf) buf[0] = '\0'; }
 void System_AudioClear() {}
@@ -754,15 +755,15 @@ static bool TestAndroidContentURI() {
 	static const char *downloadURIString = "content://com.android.providers.downloads.documents/document/msf%3A10000000006";
 
 	AndroidContentURI treeURI;
-	EXPECT_TRUE(treeURI.Parse(std::string(treeURIString)));
+	EXPECT_TRUE(treeURI.Parse(treeURIString));
 	AndroidContentURI dirURI;
-	EXPECT_TRUE(dirURI.Parse(std::string(directoryURIString)));
+	EXPECT_TRUE(dirURI.Parse(directoryURIString));
 	AndroidContentURI fileTreeURI;
-	EXPECT_TRUE(fileTreeURI.Parse(std::string(fileTreeURIString)));
+	EXPECT_TRUE(fileTreeURI.Parse(fileTreeURIString));
 	AndroidContentURI fileTreeURICopy;
-	EXPECT_TRUE(fileTreeURICopy.Parse(std::string(fileTreeURIString)));
+	EXPECT_TRUE(fileTreeURICopy.Parse(fileTreeURIString));
 	AndroidContentURI fileURI;
-	EXPECT_TRUE(fileURI.Parse(std::string(fileNonTreeString)));
+	EXPECT_TRUE(fileURI.Parse(fileNonTreeString));
 
 	EXPECT_EQ_STR(fileTreeURI.GetLastPart(), std::string("Tekken 6.iso"));
 
@@ -1243,6 +1244,7 @@ bool TestArmEmitter();
 bool TestArm64Emitter();
 bool TestX64Emitter();
 bool TestRiscVEmitter();
+bool TestLoongArch64Emitter();
 bool TestShaderGenerators();
 bool TestSoftwareGPUJit();
 bool TestIRPassSimplify();
@@ -1261,6 +1263,9 @@ TestItem availableTests[] = {
 #endif
 #if PPSSPP_ARCH(AMD64) || PPSSPP_ARCH(X86) || PPSSPP_ARCH(RISCV64)
 	TEST_ITEM(RiscVEmitter),
+#endif
+#if PPSSPP_ARCH(AMD64) || PPSSPP_ARCH(X86) || PPSSPP_ARCH(LOONGARCH64)
+	TEST_ITEM(LoongArch64Emitter),
 #endif
 	TEST_ITEM(VertexJit),
 	TEST_ITEM(Asin),
@@ -1311,6 +1316,7 @@ int main(int argc, const char *argv[]) {
 	cpu_info.bVFPv3 = true;
 	cpu_info.bVFPv4 = true;
 	g_Config.bEnableLogging = true;
+	g_logManager.DisableOutput(LogOutput::DebugString);  // not really needed
 
 	bool allTests = false;
 	TestFunc testFunc = nullptr;
@@ -1329,7 +1335,8 @@ int main(int argc, const char *argv[]) {
 	if (allTests) {
 		int passes = 0;
 		int fails = 0;
-		for (auto f : availableTests) {
+		for (const auto &f : availableTests) {
+			printf("\n**** Running test %s ****\n", f.name);
 			if (f.func()) {
 				++passes;
 			} else {
@@ -1344,7 +1351,7 @@ int main(int argc, const char *argv[]) {
 			printf("%d tests failed!\n", fails);
 			return 2;
 		}
-	} else if (testFunc == nullptr) {
+	} else if (!testFunc) {
 		fprintf(stderr, "You may select a test to run by passing an argument, either \"all\" or one or more of the below.\n");
 		fprintf(stderr, "\n");
 		fprintf(stderr, "Available tests:\n");

@@ -45,6 +45,7 @@
 #include "Core/HLE/sceUtility.h"
 #include "Core/HLE/sceNet.h"
 
+#include "Core/Dialog/PSPDialog.h"
 #include "Core/Dialog/PSPSaveDialog.h"
 #include "Core/Dialog/PSPMsgDialog.h"
 #include "Core/Dialog/PSPPlaceholderDialog.h"
@@ -158,6 +159,7 @@ static PSPScreenshotDialog *screenshotDialog;
 static PSPGamedataInstallDialog *gamedataInstallDialog;
 static PSPNpSigninDialog *npSigninDialog;
 
+// A lot of state seems to be shared between the various dialog types.
 static int oldStatus = -1;
 static std::map<int, u32> currentlyLoadedModules;
 static int volatileUnlockEvent = -1;
@@ -473,21 +475,21 @@ static int sceUtilitySavedataGetStatus() {
 		return hleLogDebug(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
 
-	int status = saveDialog->GetStatus();
+	const PSPDialog::DialogStatus status = saveDialog->GetStatus();
 	hleEatCycles(200);
 	CleanupDialogThreads();
 	if (oldStatus != status) {
 		oldStatus = status;
-		return hleLogDebug(Log::sceUtility, status);
+		return hleLogDebug(Log::sceUtility, status, "status changed: %s", UtilityDialogStatusToString(status));
 	}
-	return hleLogVerbose(Log::sceUtility, status);
+	return hleLogVerbose(Log::sceUtility, status, "status: %s", UtilityDialogStatusToString(status));
 }
 
 static int sceUtilitySavedataUpdate(int animSpeed) {
-	if (currentDialogType != UtilityDialogType::SAVEDATA) {
+	if (currentDialogType != UtilityDialogType::SAVEDATA || !saveDialog) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
-	
+
 	int result = hleLogDebug(Log::sceUtility, saveDialog->Update(animSpeed));
 	if (result >= 0)
 		return hleDelayResult(result, "savedata update", 300);
@@ -523,8 +525,8 @@ bool __UtilityModuleGetMemoryRange(int moduleID, u32 *startPtr, u32 *sizePtr) {
 	return true;
 }
 
-static int LoadModuleInternal(u32 module);
-static int UnloadModuleInternal(u32 module);
+static int LoadModuleInternal(u32 module, bool av);
+static int UnloadModuleInternal(u32 module, bool av);
 
 // Same as sceUtilityLoadModule, just limited in categories.
 // It seems this just loads module 0x300 + module & 0xFF..
@@ -534,7 +536,7 @@ static u32 sceUtilityLoadAvModule(u32 module) {
 		return hleLogError(Log::sceUtility, SCE_ERROR_AV_MODULE_BAD_ID);
 	}
 
-	int result = LoadModuleInternal(0x300 | module);
+	int result = LoadModuleInternal(0x300 | module, true);
 	return hleDelayResult(hleLogDebugOrError(Log::sceUtility, result), "utility av module loaded", 25000);
 }
 
@@ -544,12 +546,12 @@ static u32 sceUtilityUnloadAvModule(u32 module) {
 		return hleLogError(Log::sceUtility, SCE_ERROR_AV_MODULE_BAD_ID);
 	}
 
-	int result = UnloadModuleInternal(0x300 | module);
+	int result = UnloadModuleInternal(0x300 | module, true);
 	return hleDelayResult(hleLogDebugOrError(Log::sceUtility, result), "utility av module unloaded", 800);
 }
 
 static u32 sceUtilityLoadModule(u32 module) {
-	int result = LoadModuleInternal(module);
+	int result = LoadModuleInternal(module, false);
 	// TODO: Each module has its own timing, technically, but this is a low-end.
 	if (module == 0x3FF) {
 		return hleDelayResult(hleLogDebugOrError(Log::sceUtility, result), "utility module loaded", 130);
@@ -559,7 +561,7 @@ static u32 sceUtilityLoadModule(u32 module) {
 }
 
 static u32 sceUtilityUnloadModule(u32 module) {
-	int result = UnloadModuleInternal(module);
+	int result = UnloadModuleInternal(module, false);
 	// TODO: Each module has its own timing, technically, but this is a low-end.
 	if (module == 0x3FF) {
 		return hleDelayResult(hleLogDebugOrError(Log::sceUtility, result), "utility module unloaded", 110);
@@ -568,14 +570,14 @@ static u32 sceUtilityUnloadModule(u32 module) {
 	}
 }
 
-static int LoadModuleInternal(u32 module) {
+static int LoadModuleInternal(u32 module, bool av) {
 	const ModuleLoadInfo *info = __UtilityModuleInfo(module);
 	if (!info) {
-		return SCE_ERROR_MODULE_BAD_ID;
+		return av ? SCE_ERROR_AV_MODULE_BAD_ID : SCE_ERROR_MODULE_BAD_ID;
 	}
 
 	if (currentlyLoadedModules.find(module) != currentlyLoadedModules.end()) {
-		return SCE_ERROR_MODULE_ALREADY_LOADED;
+		return av ? SCE_ERROR_AV_MODULE_ALREADY_LOADED : SCE_ERROR_MODULE_ALREADY_LOADED;
 	}
 
 	// Some games, like Kamen Rider Climax Heroes OOO, require an error if dependencies aren't loaded yet.
@@ -599,15 +601,15 @@ static int LoadModuleInternal(u32 module) {
 	return 0;
 }
 
-static int UnloadModuleInternal(u32 module) {
+static int UnloadModuleInternal(u32 module, bool av) {
 	const ModuleLoadInfo *info = __UtilityModuleInfo(module);
 	if (!info) {
-		return SCE_ERROR_MODULE_BAD_ID;
+		return av ? SCE_ERROR_AV_MODULE_BAD_ID : SCE_ERROR_MODULE_BAD_ID;
 	}
 
 	auto iter = currentlyLoadedModules.find(module);
 	if (iter == currentlyLoadedModules.end()) {
-		return SCE_ERROR_MODULE_NOT_LOADED;
+		return av ? SCE_ERROR_AV_MODULE_NOT_LOADED : SCE_ERROR_MODULE_NOT_LOADED;
 	}
 	if (iter->second != 0) {
 		userMemory.Free(iter->second);
@@ -624,7 +626,7 @@ static int sceUtilityMsgDialogInitStart(u32 paramAddr) {
 	if (currentDialogActive && currentDialogType != UtilityDialogType::MSG) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
-	
+
 	ActivateDialog(UtilityDialogType::MSG);
 	return hleLogInfo(Log::sceUtility, msgDialog->Init(paramAddr));
 }
@@ -633,7 +635,7 @@ static int sceUtilityMsgDialogShutdownStart() {
 	if (currentDialogType != UtilityDialogType::MSG) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
-	
+
 	DeactivateDialog();
 	return hleLogDebug(Log::sceUtility, msgDialog->Shutdown());
 }
@@ -642,7 +644,7 @@ static int sceUtilityMsgDialogUpdate(int animSpeed) {
 	if (currentDialogType != UtilityDialogType::MSG) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
-	
+
 	int ret = msgDialog->Update(animSpeed);
 	if (ret >= 0)
 		return hleDelayResult(hleLogDebug(Log::sceUtility, ret), "msgdialog update", 800);
@@ -655,20 +657,20 @@ static int sceUtilityMsgDialogGetStatus() {
 		return hleLogDebug(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
 
-	int status = msgDialog->GetStatus();
+	const PSPDialog::DialogStatus status = msgDialog->GetStatus();
 	CleanupDialogThreads();
 	if (oldStatus != status) {
 		oldStatus = status;
-		return hleLogDebug(Log::sceUtility, status);
+		return hleLogDebug(Log::sceUtility, status, "status changed: %s", UtilityDialogStatusToString(status));
 	}
-	return hleLogVerbose(Log::sceUtility, status);
+	return hleLogVerbose(Log::sceUtility, status, "status: %s", UtilityDialogStatusToString(status));
 }
 
 static int sceUtilityMsgDialogAbort() {
 	if (currentDialogType != UtilityDialogType::MSG) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
-	
+
 	return hleLogDebug(Log::sceUtility, msgDialog->Abort());
 }
 
@@ -678,7 +680,7 @@ static int sceUtilityOskInitStart(u32 oskPtr) {
 	if (currentDialogActive && currentDialogType != UtilityDialogType::OSK) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
-	
+
 	ActivateDialog(UtilityDialogType::OSK);
 	return hleLogInfo(Log::sceUtility, oskDialog->Init(oskPtr));
 }
@@ -687,7 +689,7 @@ static int sceUtilityOskShutdownStart() {
 	if (currentDialogType != UtilityDialogType::OSK) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
-	
+
 	DeactivateDialog();
 	return hleLogDebug(Log::sceUtility, oskDialog->Shutdown());
 }
@@ -696,7 +698,7 @@ static int sceUtilityOskUpdate(int animSpeed) {
 	if (currentDialogType != UtilityDialogType::OSK) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
-	
+
 	// This is the vblank period, plus a little slack. Needed to fix timing bug in Ghost Recon: Predator.
 	// See issue #12044.
 	hleEatCycles(msToCycles(0.7315 + 0.1));
@@ -708,13 +710,13 @@ static int sceUtilityOskGetStatus() {
 		return hleLogDebug(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
 
-	int status = oskDialog->GetStatus();
+	const PSPDialog::DialogStatus status = oskDialog->GetStatus();
 	CleanupDialogThreads();
 	if (oldStatus != status) {
 		oldStatus = status;
-		return hleLogDebug(Log::sceUtility, status);
+		return hleLogDebug(Log::sceUtility, status, "status changed: %s", UtilityDialogStatusToString(status));
 	}
-	return hleLogVerbose(Log::sceUtility, status);
+	return hleLogVerbose(Log::sceUtility, status, "status: %s", UtilityDialogStatusToString(status));
 }
 
 
@@ -722,7 +724,7 @@ static int sceUtilityNetconfInitStart(u32 paramsAddr) {
 	if (currentDialogActive && currentDialogType != UtilityDialogType::NET) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
-	
+
 	ActivateDialog(UtilityDialogType::NET);
 	return hleLogInfo(Log::sceUtility, netDialog->Init(paramsAddr));
 }
@@ -731,7 +733,7 @@ static int sceUtilityNetconfShutdownStart() {
 	if (currentDialogType != UtilityDialogType::NET) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
-	
+
 	DeactivateDialog();
 	return hleLogDebug(Log::sceUtility, netDialog->Shutdown());
 }
@@ -750,13 +752,13 @@ static int sceUtilityNetconfGetStatus() {
 		return hleLogDebug(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
 
-	int status = netDialog->GetStatus();
+	const PSPDialog::DialogStatus status = netDialog->GetStatus();
 	CleanupDialogThreads();
 	if (oldStatus != status) {
 		oldStatus = status;
-		return hleLogDebug(Log::sceUtility, status);
+		return hleLogDebug(Log::sceUtility, status, "status changed: %s", UtilityDialogStatusToString(status));
 	}
-	return hleLogVerbose(Log::sceUtility, status);
+	return hleLogVerbose(Log::sceUtility, status, "status: %s", UtilityDialogStatusToString(status));
 }
 
 /**
@@ -764,7 +766,7 @@ static int sceUtilityNetconfGetStatus() {
 *
 * @param id - id of net Configuration (1 to n)
 * @return 0 on success
-* 
+*
 * Note: some homebrew may only support a limited number of entries (ie. 10 entries)
 */
 static int sceUtilityCheckNetParam(int id)
@@ -1016,7 +1018,7 @@ static int sceUtilityScreenshotInitStart(u32 paramAddr) {
 	if (currentDialogActive && currentDialogType != UtilityDialogType::SCREENSHOT) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
-	
+
 	ActivateDialog(UtilityDialogType::SCREENSHOT);
 	return hleReportWarning(Log::sceUtility, screenshotDialog->Init(paramAddr));
 }
@@ -1025,7 +1027,7 @@ static int sceUtilityScreenshotShutdownStart() {
 	if (currentDialogType != UtilityDialogType::SCREENSHOT) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
-	
+
 	DeactivateDialog();
 	return hleLogWarning(Log::sceUtility, screenshotDialog->Shutdown());
 }
@@ -1034,7 +1036,7 @@ static int sceUtilityScreenshotUpdate(u32 animSpeed) {
 	if (currentDialogType != UtilityDialogType::SCREENSHOT) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
-	
+
 	return hleLogWarning(Log::sceUtility, screenshotDialog->Update(animSpeed));
 }
 
@@ -1043,20 +1045,20 @@ static int sceUtilityScreenshotGetStatus() {
 		return hleLogDebug(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
 
-	int status = screenshotDialog->GetStatus();
+	const PSPDialog::DialogStatus status = screenshotDialog->GetStatus();
 	CleanupDialogThreads();
 	if (oldStatus != status) {
 		oldStatus = status;
-		return hleLogWarning(Log::sceUtility, status);
+		return hleLogWarning(Log::sceUtility, status, "status changed: %s", UtilityDialogStatusToString(status));
 	}
-	return hleLogVerbose(Log::sceUtility, status);
+	return hleLogVerbose(Log::sceUtility, status, "status: %s", UtilityDialogStatusToString(status));
 }
 
 static int sceUtilityScreenshotContStart(u32 paramAddr) {
 	if (currentDialogType != UtilityDialogType::SCREENSHOT) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
-	
+
 	return hleLogWarning(Log::sceUtility, screenshotDialog->ContStart());
 }
 
@@ -1076,7 +1078,7 @@ static int sceUtilityGamedataInstallShutdownStart() {
 	if (!currentDialogActive || currentDialogType != UtilityDialogType::GAMEDATAINSTALL) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
-	
+
 	DeactivateDialog();
 	return hleLogDebug(Log::sceUtility, gamedataInstallDialog->Shutdown());
 }
@@ -1085,7 +1087,7 @@ static int sceUtilityGamedataInstallUpdate(int animSpeed) {
 	if (!currentDialogActive || currentDialogType != UtilityDialogType::GAMEDATAINSTALL) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
-	
+
 	return hleLogDebug(Log::sceUtility, gamedataInstallDialog->Update(animSpeed));
 }
 
@@ -1096,16 +1098,16 @@ static int sceUtilityGamedataInstallGetStatus() {
 		return hleLogDebug(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
 
-	int status = gamedataInstallDialog->GetStatus();
+	const PSPDialog::DialogStatus status = gamedataInstallDialog->GetStatus();
 	CleanupDialogThreads();
-	return hleLogDebug(Log::sceUtility, status);
+	return hleLogDebug(Log::sceUtility, status, "status: %s", UtilityDialogStatusToString(status));
 }
 
 static int sceUtilityGamedataInstallAbort() {
 	if (!currentDialogActive || currentDialogType != UtilityDialogType::GAMEDATAINSTALL) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
-	
+
 	DeactivateDialog();
 	return hleLogDebug(Log::sceUtility, gamedataInstallDialog->Abort());
 }
@@ -1163,10 +1165,10 @@ static u32 sceUtilityGetSystemParamInt(u32 id, u32 destaddr) {
 	case PSP_SYSTEMPARAM_ID_INT_ADHOC_CHANNEL:
 		param = g_Config.iWlanAdhocChannel;
 		if (param == PSP_SYSTEMPARAM_ADHOC_CHANNEL_AUTOMATIC) {
-			// FIXME: Actually.. it's always returning 0x800ADF4 regardless using Auto channel or Not, and regardless the connection state either, 
+			// FIXME: Actually.. it's always returning 0x800ADF4 regardless using Auto channel or Not, and regardless the connection state either,
 			//        Not sure whether this error code only returned after Adhocctl Initialized (ie. netAdhocctlInited) or also before initialized.
-			// FIXME: Outputted channel (might be unchanged?) either 0 when not connected to a group yet (ie. adhocctlState == ADHOCCTL_STATE_DISCONNECTED), 
-			//        or -1 (0xFFFFFFFF) when a scan is in progress (ie. adhocctlState == ADHOCCTL_STATE_SCANNING), 
+			// FIXME: Outputted channel (might be unchanged?) either 0 when not connected to a group yet (ie. adhocctlState == ADHOCCTL_STATE_DISCONNECTED),
+			//        or -1 (0xFFFFFFFF) when a scan is in progress (ie. adhocctlState == ADHOCCTL_STATE_SCANNING),
 			//        or 0x60 early when in connected state (ie. adhocctlState == ADHOCCTL_STATE_CONNECTED) right after Creating a group, regardless the channel settings.
 			Memory::Write_U32(param, destaddr);
 			return 0x800ADF4;
@@ -1251,13 +1253,13 @@ static int sceUtilityNpSigninGetStatus() {
 		return hleLogDebug(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
 
-	int status = npSigninDialog->GetStatus();
+	const PSPDialog::DialogStatus status = npSigninDialog->GetStatus();
 	CleanupDialogThreads();
 	if (oldStatus != status) {
 		oldStatus = status;
-		return hleLogDebug(Log::sceUtility, status);
+		return hleLogDebug(Log::sceUtility, status, "status changed: %s", UtilityDialogStatusToString(status));
 	}
-	return hleLogVerbose(Log::sceUtility, status);
+	return hleLogVerbose(Log::sceUtility, status, "status: %s", UtilityDialogStatusToString(status));
 }
 
 static void sceUtilityInstallInitStart(u32 unknown) {
@@ -1285,7 +1287,7 @@ static int sceUtilityGameSharingShutdownStart() {
 	if (currentDialogType != UtilityDialogType::GAMESHARING) {
 		return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 	}
-	
+
 	DeactivateDialog();
 	return hleLogError(Log::sceUtility, 0, "UNIMPL");
 }
@@ -1339,7 +1341,7 @@ static u32 sceUtilityUnloadUsbModule(u32 module)
 	return hleNoLog(0);
 }
 
-const HLEFunction sceUtility[] = 
+const HLEFunction sceUtility[] =
 {
 	{0X1579A159, &WrapU_U<sceUtilityLoadNetModule>,                "sceUtilityLoadNetModule",                'x', "x"  },
 	{0X64D50C56, &WrapU_U<sceUtilityUnloadNetModule>,              "sceUtilityUnloadNetModule",              'x', "x"  },

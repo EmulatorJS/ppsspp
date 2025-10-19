@@ -4,6 +4,7 @@
 #include <vector>
 #include <cstdint>
 #include <string>
+#include <functional>
 
 #include "Common/Math/geom2d.h"
 #include "Common/Math/lin/vec3.h"
@@ -42,6 +43,18 @@ struct UITransform {
 	Lin::Vec3 scale;
 	float alpha;
 };
+
+enum class AtlasChoice : int {
+	General,
+	Font,
+};
+
+struct AtlasData {
+	Atlas *atlas;
+	Draw::Texture *texture;
+};
+
+typedef std::function<AtlasData(Draw::DrawContext *, AtlasChoice, float dpiScale)> UIAtlasProviderFunc;
 
 class UIContext {
 public:
@@ -95,6 +108,7 @@ public:
 	void FillRect(const UI::Drawable &drawable, const Bounds &bounds);
 	void DrawRectDropShadow(const Bounds &bounds, float radius, float alpha, uint32_t color = 0);
 	void DrawImageVGradient(ImageID image, uint32_t color1, uint32_t color2, const Bounds &bounds);
+	void DrawImageRotated(ImageID atlas_image, float x, float y, float scale, float angle, uint32_t color, bool mirror_h);
 
 	// in dps, like dp_xres and dp_yres
 	void SetBounds(const Bounds &b) { bounds_ = b; }
@@ -110,14 +124,18 @@ public:
 	void PopTransform();
 	Bounds TransformBounds(const Bounds &bounds);
 
-	void setUIAtlas(const std::string &name);
-
-	// TODO: Move to private.
-	const UI::Theme *theme;
-
+	void SetTheme(const UI::Theme *theme) { this->theme = theme; }
+	void SetAtlasProvider(UIAtlasProviderFunc func) { atlasProvider_ = func; }
+	void InvalidateAtlas() {
+		atlasInvalid_ = true;  // will cause it to be reloaded on the next frame.
+	}
 private:
+	void GenerateUIAtlas();
+
 	Draw::DrawContext *draw_ = nullptr;
 	Bounds bounds_;
+
+	const UI::Theme *theme = nullptr;
 
 	double frameStartTime_ = 0.0;
 
@@ -137,6 +155,6 @@ private:
 	std::vector<Bounds> scissorStack_;
 	std::vector<UITransform> transformStack_;
 
-	std::string lastUIAtlas_;
-	std::string UIAtlas_ = "ui_atlas.zim";
+	UIAtlasProviderFunc atlasProvider_{};
+	bool atlasInvalid_ = true;
 };

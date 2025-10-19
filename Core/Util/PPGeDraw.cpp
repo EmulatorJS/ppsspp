@@ -263,7 +263,7 @@ void __PPGeInit() {
 		if (!g_ppge_atlas.IsMetadataLoaded()) {
 			uint8_t *atlas_data = g_VFS.ReadFile("ppge_atlas.meta", &atlas_data_size);
 			if (atlas_data)
-				g_ppge_atlas.Load(atlas_data, atlas_data_size);
+				g_ppge_atlas.LoadMeta(atlas_data, atlas_data_size);
 			delete[] atlas_data;
 		}
 	}
@@ -1329,7 +1329,7 @@ void PPGeSetTexture(u32 dataAddr, int width, int height)
 	WriteCmd(GE_CMD_TEXSIZE0, wp2 | (hp2 << 8));
 	WriteCmd(GE_CMD_TEXMAPMODE, 0 | (1 << 8));
 	WriteCmd(GE_CMD_TEXMODE, 0);
-	WriteCmd(GE_CMD_TEXFORMAT, GE_TFMT_8888);  // 4444
+	WriteCmd(GE_CMD_TEXFORMAT, GE_TFMT_8888);
 	WriteCmd(GE_CMD_TEXFILTER, (1 << 8) | 1);   // mag = LINEAR min = LINEAR
 	WriteCmd(GE_CMD_TEXWRAP, (1 << 8) | 1);  // clamp texture wrapping
 	WriteCmd(GE_CMD_TEXFUNC, (0 << 16) | (1 << 8) | 0);  // RGBA texture reads, modulate, no color doubling
@@ -1370,7 +1370,7 @@ bool PPGeImage::Load() {
 	width_ = 0;
 	height_ = 0;
 
-	unsigned char *textureData;
+	unsigned char *textureData = nullptr;
 	int success;
 	if (filename_.empty()) {
 		_dbg_assert_(size_ < MAX_VALID_IMAGE_SIZE);

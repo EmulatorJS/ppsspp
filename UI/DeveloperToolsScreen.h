@@ -23,23 +23,26 @@ private:
 	void CreateTestsTab(UI::LinearLayout *list);
 	void CreateAudioTab(UI::LinearLayout *list);
 	void CreateGraphicsTab(UI::LinearLayout *list);
+	void CreateNetworkTab(UI::LinearLayout *list);
+	void CreateUITab(UI::LinearLayout *list);
 
-	UI::EventReturn OnRunCPUTests(UI::EventParams &e);
-	UI::EventReturn OnLoggingChanged(UI::EventParams &e);
-	UI::EventReturn OnOpenTexturesIniFile(UI::EventParams &e);
-	UI::EventReturn OnLogConfig(UI::EventParams &e);
-	UI::EventReturn OnJitAffectingSetting(UI::EventParams &e);
-	UI::EventReturn OnJitDebugTools(UI::EventParams &e);
-	UI::EventReturn OnRemoteDebugger(UI::EventParams &e);
-	UI::EventReturn OnMIPSTracerEnabled(UI::EventParams &e);
-	UI::EventReturn OnMIPSTracerPathChanged(UI::EventParams &e);
-	UI::EventReturn OnMIPSTracerFlushTrace(UI::EventParams &e);
-	UI::EventReturn OnMIPSTracerClearJitCache(UI::EventParams &e);
-	UI::EventReturn OnMIPSTracerClearTracer(UI::EventParams &e);
-	UI::EventReturn OnGPUDriverTest(UI::EventParams &e);
-	UI::EventReturn OnMemstickTest(UI::EventParams &e);
-	UI::EventReturn OnTouchscreenTest(UI::EventParams &e);
-	UI::EventReturn OnCopyStatesToRoot(UI::EventParams &e);
+	void OnLoggingChanged(UI::EventParams &e);
+	void OnOpenTexturesIniFile(UI::EventParams &e);
+	void OnLogConfig(UI::EventParams &e);
+	void OnJitAffectingSetting(UI::EventParams &e);
+	void OnJitDebugTools(UI::EventParams &e);
+	void OnRemoteDebugger(UI::EventParams &e);
+	void OnMIPSTracerEnabled(UI::EventParams &e);
+	void OnMIPSTracerPathChanged(UI::EventParams &e);
+	void OnMIPSTracerFlushTrace(UI::EventParams &e);
+	void OnMIPSTracerClearJitCache(UI::EventParams &e);
+	void OnMIPSTracerClearTracer(UI::EventParams &e);
+	void OnGPUDriverTest(UI::EventParams &e);
+	void OnMemstickTest(UI::EventParams &e);
+	void OnTouchscreenTest(UI::EventParams &e);
+	void OnCopyStatesToRoot(UI::EventParams &e);
+
+	void MemoryMapTest();
 
 	bool allowDebugger_ = false;
 	bool canAllowDebugger_ = true;
@@ -53,4 +56,6 @@ private:
 	bool MIPSTracerEnabled_ = false;
 	std::string MIPSTracerPath_ = "";
 	UI::InfoItem* MIPSTracerPath = nullptr;
+
+	int testSliderValue_ = 0;
 };

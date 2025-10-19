@@ -4,12 +4,12 @@ import android.content.Context;
 import android.graphics.*;
 import android.provider.Settings;
 import android.util.Log;
-import android.view.accessibility.AccessibilityManager;
+
+import androidx.annotation.Keep;
 
 public class TextRenderer {
-	private static Paint textPaint;
-	private static Paint bg;
-	private static Typeface robotoCondensed;
+	private static final Paint textPaint;
+	private static final Paint bg;
 	private static final String TAG = "TextRenderer";
 
 	private static boolean highContrastFontsEnabled = false;
@@ -23,7 +23,7 @@ public class TextRenderer {
 
 	public static void init(Context ctx) {
 		try {
-			robotoCondensed = Typeface.createFromAsset(ctx.getAssets(), "Roboto-Condensed.ttf");
+			Typeface robotoCondensed = Typeface.createFromAsset(ctx.getAssets(), "Roboto-Condensed.ttf");
 			if (robotoCondensed != null) {
 				Log.i(TAG, "Successfully loaded Roboto Condensed");
 				textPaint.setTypeface(robotoCondensed);
@@ -37,7 +37,7 @@ public class TextRenderer {
 	}
 
 	private static Point measureLine(String string, double textSize) {
-		textPaint.setTextSize((float) textSize);
+		textPaint.setTextSize((float)textSize);
 		int w = (int) textPaint.measureText(string);
 		// Round width up to even already here to avoid annoyances from odd-width 16-bit textures
 		// which OpenGL does not like - each line must be 4-byte aligned
@@ -72,12 +72,15 @@ public class TextRenderer {
 		return total;
 	}
 
+	@Keep
 	public static int measureText(String string, double textSize) {
+		textPaint.setTextSize((float) textSize);
 		Point s = measure(string, textSize);
 		return (s.x << 16) | s.y;
 	}
 
 	public static int[] renderText(String string, double textSize) {
+		textPaint.setTextSize((float) textSize);
 		Point s = measure(string, textSize);
 
 		int w = s.x;
@@ -87,7 +90,7 @@ public class TextRenderer {
 		Canvas canvas = new Canvas(bmp);
 		canvas.drawRect(0.0f, 0.0f, w, h, bg);
 
-		String lines[] = string.replaceAll("\\r", "").split("\n");
+		String [] lines = string.replaceAll("\\r", "").split("\n");
 		float y = 1.0f;
 
 		Path path = null;

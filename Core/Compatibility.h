@@ -113,6 +113,9 @@ struct CompatFlags {
 	bool UseFFMPEGFindStreamInfo;
 	bool SoftwareRasterDepth;
 	bool DisableHLESceFont;
+	bool ForceHLEPsmf;
+	bool SaveStatesNotRecommended;
+	bool IgnoreEnqueue;
 };
 
 struct VRCompat {

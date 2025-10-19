@@ -25,7 +25,6 @@
 #include "Common/Log.h"
 #include "Windows/RawInput.h"
 #include "Windows/MainWindow.h"
-#include "Windows/WindowsHost.h"
 #include "Common/CommonFuncs.h"
 #include "Common/SysError.h"
 #include "Core/Config.h"
@@ -177,7 +176,7 @@ namespace WindowsRawInput {
 		{ VK_MBUTTON, NKCODE_EXT_MOUSEBUTTON_3 },
 		{ VK_XBUTTON1, NKCODE_EXT_MOUSEBUTTON_4 },
 		{ VK_XBUTTON2, NKCODE_EXT_MOUSEBUTTON_5 },
-		{ VK_SNAPSHOT, NKCODE_EXT_PRINTSCREEN },
+		{ VK_SNAPSHOT, NKCODE_PRINTSCREEN },
 	};
 
 	void Init() {
@@ -341,7 +340,7 @@ namespace WindowsRawInput {
 		};
 
 		for (int i = 0; i < 5; i++) {
-			if (i > 0 || (g_Config.bMouseControl && (GetUIState() == UISTATE_INGAME || g_Config.bMapMouse))) {
+			if (i > 0 || (g_Config.bMouseControl && (GetUIState() == UISTATE_INGAME || g_IsMappingMouseInput))) {
 				if (raw->data.mouse.usButtonFlags & rawInputDownID[i]) {
 					key.flags = KEY_DOWN;
 					key.keyCode = windowsTransTable[vkInputID[i]];

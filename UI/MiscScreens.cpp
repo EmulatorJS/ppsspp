@@ -64,20 +64,6 @@
 #pragma execution_character_set("utf-8")
 #endif
 
-static const ImageID symbols[4] = {
-	ImageID("I_CROSS"),
-	ImageID("I_CIRCLE"),
-	ImageID("I_SQUARE"),
-	ImageID("I_TRIANGLE"),
-};
-
-static const uint32_t colors[4] = {
-	0xC0FFFFFF,
-	0xC0FFFFFF,
-	0xC0FFFFFF,
-	0xC0FFFFFF,
-};
-
 static Draw::Texture *bgTexture;
 
 class Animation {
@@ -85,13 +71,6 @@ public:
 	virtual ~Animation() = default;
 	virtual void Draw(UIContext &dc, double t, float alpha, float x, float y, float z) = 0;
 };
-
-static constexpr float XFAC = 0.3f;
-static constexpr float YFAC = 0.3f;
-static constexpr float ZFAC = 0.12f;
-static constexpr float XSPEED = 0.05f;
-static constexpr float YSPEED = 0.05f;
-static constexpr float ZSPEED = 0.1f;
 
 class MovingBackground : public Animation {
 public:
@@ -123,6 +102,13 @@ public:
 	}
 
 private:
+	static constexpr float XFAC = 0.3f;
+	static constexpr float YFAC = 0.3f;
+	static constexpr float ZFAC = 0.12f;
+	static constexpr float XSPEED = 0.05f;
+	static constexpr float YSPEED = 0.05f;
+	static constexpr float ZSPEED = 0.1f;
+
 	float lastX_ = 0.0f;
 	float lastY_ = 0.0f;
 	float lastZ_ = 1.0f + std::max(XFAC, YFAC);
@@ -154,8 +140,8 @@ public:
 			dc.Draw()->RectVGradient(x, wave1*bounds.h, nextX, bounds.h, color, 0x00000000);
 
 			// Add some "antialiasing"
-			dc.Draw()->RectVGradient(x, wave0*bounds.h-3.0f * g_display.pixel_in_dps, nextX, wave0 * bounds.h, 0x00000000, color);
-			dc.Draw()->RectVGradient(x, wave1*bounds.h-3.0f * g_display.pixel_in_dps, nextX, wave1 * bounds.h, 0x00000000, color);
+			dc.Draw()->RectVGradient(x, wave0*bounds.h-3.0f * g_display.pixel_in_dps_y, nextX, wave0 * bounds.h, 0x00000000, color);
+			dc.Draw()->RectVGradient(x, wave1*bounds.h-3.0f * g_display.pixel_in_dps_y, nextX, wave1 * bounds.h, 0x00000000, color);
 		}
 
 		dc.Flush();
@@ -165,6 +151,10 @@ public:
 
 class FloatingSymbolsAnimation : public Animation {
 public:
+	FloatingSymbolsAnimation(bool is_colored) {
+		this->is_colored = is_colored;
+	}
+
 	void Draw(UIContext &dc, double t, float alpha, float x, float y, float z) override {
 		dc.Flush();
 		dc.Begin();
@@ -179,14 +169,19 @@ public:
 			float y = ybase[i] + dc.GetBounds().y + 40 * cosf(i * 7.2f + t * 1.3f);
 			float angle = (float)sin(i + t);
 			int n = i & 3;
-			ui_draw2d.DrawImageRotated(symbols[n], x, y, 1.0f, angle, colorAlpha(colors[n], alpha * 0.1f));
+			Color color = is_colored ? colorAlpha(COLORS[n], alpha * 0.25f) : colorAlpha(DEFAULT_COLOR, alpha * 0.1f);
+			ui_draw2d.DrawImageRotated(SYMBOLS[n], x, y, 1.0f, angle, color);
 		}
 		dc.Flush();
 	}
 
 private:
 	static constexpr int COUNT = 100;
+	static constexpr Color DEFAULT_COLOR = 0xC0FFFFFF;
+	static constexpr Color COLORS[4] = { 0xFFE3B56F, 0xFF615BFF, 0xFFAA88F3, 0xFFC2CC7A, }; // X O D A
+	static const ImageID SYMBOLS[4];
 
+	bool is_colored = false;
 	float xbase[COUNT]{};
 	float ybase[COUNT]{};
 	float last_xres = 0;
@@ -202,6 +197,13 @@ private:
 		last_xres = xres;
 		last_yres = yres;
 	}
+};
+
+const ImageID FloatingSymbolsAnimation::SYMBOLS[4] = {
+	ImageID("I_CROSS"),
+	ImageID("I_CIRCLE"),
+	ImageID("I_SQUARE"),
+	ImageID("I_TRIANGLE"),
 };
 
 class RecentGamesAnimation : public Animation {
@@ -244,11 +246,11 @@ private:
 			}
 
 			std::shared_ptr<GameInfo> ginfo = GetInfo(dc, index);
-			if (ginfo && !ginfo->Ready(GameInfoFlags::BG)) {
+			if (ginfo && !ginfo->Ready(GameInfoFlags::PIC1)) {
 				// Wait for it to load.  It might be the next one.
 				break;
 			}
-			if (ginfo && (ginfo->pic1.texture || ginfo->pic0.texture)) {
+			if (ginfo && ginfo->pic1.texture) {
 				nextIndex_ = index;
 				nextT_ = t + INTERVAL;
 				break;
@@ -265,13 +267,13 @@ private:
 		const auto recentIsos = g_recentFiles.GetRecentFiles();
 		if (index >= (int)recentIsos.size())
 			return std::shared_ptr<GameInfo>();
-		return g_gameInfoCache->GetInfo(dc.GetDrawContext(), Path(recentIsos[index]), GameInfoFlags::BG);
+		return g_gameInfoCache->GetInfo(dc.GetDrawContext(), Path(recentIsos[index]), GameInfoFlags::PIC1);
 	}
 
 	static void DrawTex(UIContext &dc, std::shared_ptr<GameInfo> &ginfo, float amount) {
 		if (!ginfo || amount <= 0.0f)
 			return;
-		GameInfoTex *pic = ginfo->GetBGPic();
+		GameInfoTex *pic = ginfo->GetPIC1();
 		if (!pic)
 			return;
 
@@ -305,8 +307,8 @@ class BouncingIconAnimation : public Animation {
 			// Draw the image.
 			float xpos = xbase + dc.GetBounds().x;
 			float ypos = ybase + dc.GetBounds().y;
-			ImageID icon = !color_ix && System_GetPropertyBool(SYSPROP_APP_GOLD) ? ImageID("I_ICONGOLD") : ImageID("I_ICON");
-			ui_draw2d.DrawImage(icon, xpos, ypos, scale, colors[color_ix], ALIGN_CENTER);
+			ImageID icon = !color_ix && System_GetPropertyBool(SYSPROP_APP_GOLD) ? ImageID("I_ICON_GOLD") : ImageID("I_ICON");
+			ui_draw2d.DrawImage(icon, xpos, ypos, scale, COLORS[color_ix], ALIGN_CENTER);
 			dc.Flush();
 
 			// Switch direction if within border.
@@ -338,7 +340,7 @@ class BouncingIconAnimation : public Animation {
 
 	private:
 		static constexpr int COLOR_COUNT = 11;
-		static constexpr Color colors[COLOR_COUNT] = { 0xFFFFFFFF, 0xFFFFFF00, 0xFFFF0000, 0xFF00FF00, 0xFF0000FF,
+		static constexpr Color COLORS[COLOR_COUNT] = { 0xFFFFFFFF, 0xFFFFFF00, 0xFFFF0000, 0xFF00FF00, 0xFF0000FF,
 				0xFF00FFFF, 0xFFFF00FF, 0xFF4111D1, 0xFF3577F3, 0xFFAA77FF, 0xFF623B84 };
 
 		float xbase = 0.0f;
@@ -420,7 +422,7 @@ void DrawBackground(UIContext &dc, float alpha, float x, float y, float z) {
 
 		switch (g_CurBackgroundAnimation) {
 		case BackgroundAnimation::FLOATING_SYMBOLS:
-			g_Animation.reset(new FloatingSymbolsAnimation());
+			g_Animation.reset(new FloatingSymbolsAnimation(false));
 			break;
 		case BackgroundAnimation::RECENT_GAMES:
 			g_Animation.reset(new RecentGamesAnimation());
@@ -433,6 +435,9 @@ void DrawBackground(UIContext &dc, float alpha, float x, float y, float z) {
 			break;
 		case BackgroundAnimation::BOUNCING_ICON:
 			g_Animation.reset(new BouncingIconAnimation());
+			break;
+		case BackgroundAnimation::FLOATING_SYMBOLS_COLORED:
+			g_Animation.reset(new FloatingSymbolsAnimation(true));
 			break;
 		default:
 			g_Animation.reset(nullptr);
@@ -453,7 +458,7 @@ void DrawBackground(UIContext &dc, float alpha, float x, float y, float z) {
 		// I_BG original color: 0xFF754D24
 		ImageID img = ImageID("I_BG");
 		dc.Begin();
-		dc.Draw()->DrawImageStretch(img, dc.GetBounds(), bgColor & dc.theme->backgroundColor);
+		dc.Draw()->DrawImageStretch(img, dc.GetBounds(), bgColor & dc.GetTheme().backgroundColor);
 		dc.Flush();
 	}
 
@@ -483,10 +488,10 @@ void DrawGameBackground(UIContext &dc, const Path &gamePath, float x, float y, f
 
 	std::shared_ptr<GameInfo> ginfo;
 	if (!gamePath.empty()) {
-		ginfo = g_gameInfoCache->GetInfo(dc.GetDrawContext(), gamePath, GameInfoFlags::BG);
+		ginfo = g_gameInfoCache->GetInfo(dc.GetDrawContext(), gamePath, GameInfoFlags::PIC1);
 	}
 
-	GameInfoTex *pic = (ginfo && ginfo->Ready(GameInfoFlags::BG)) ? ginfo->GetBGPic() : nullptr;
+	GameInfoTex *pic = (ginfo && ginfo->Ready(GameInfoFlags::PIC1)) ? ginfo->GetPIC1() : nullptr;
 	if (pic) {
 		dc.GetDrawContext()->BindTexture(0, pic->texture);
 		uint32_t color = whiteAlpha(ease((time_now_d() - pic->timeLoaded) * 3)) & 0xFFc0c0c0;
@@ -526,7 +531,6 @@ void HandleCommonMessages(UIMessage message, const char *value, ScreenManager *m
 		langScreen->OnChoice.Add([](UI::EventParams &) {
 			System_PostUIMessage(UIMessage::RECREATE_VIEWS);
 			System_Notify(SystemNotification::UI);
-			return UI::EVENT_DONE;
 		});
 		manager->push(langScreen);
 	} else if (message == UIMessage::WINDOW_MINIMIZED) {
@@ -603,7 +607,7 @@ void UIScreenWithBackground::sendMessage(UIMessage message, const char *value) {
 void UIDialogScreenWithBackground::AddStandardBack(UI::ViewGroup *parent) {
 	using namespace UI;
 	auto di = GetI18NCategory(I18NCat::DIALOG);
-	parent->Add(new Choice(di->T("Back"), "", false, new AnchorLayoutParams(150, 64, 10, NONE, NONE, 10)))->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
+	parent->Add(new Choice(di->T("Back"), "", false, new AnchorLayoutParams(190, WRAP_CONTENT, 10, NONE, NONE, 10)))->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
 }
 
 void UIDialogScreenWithBackground::sendMessage(UIMessage message, const char *value) {
@@ -612,9 +616,8 @@ void UIDialogScreenWithBackground::sendMessage(UIMessage message, const char *va
 
 PromptScreen::PromptScreen(const Path &gamePath, std::string_view message, std::string_view yesButtonText, std::string_view noButtonText, std::function<void(bool)> callback)
 	: UIDialogScreenWithGameBackground(gamePath), message_(message), callback_(callback) {
-	auto di = GetI18NCategory(I18NCat::DIALOG);
-	yesButtonText_ = di->T(yesButtonText);
-	noButtonText_ = di->T(noButtonText);
+	yesButtonText_ = yesButtonText;
+	noButtonText_ = noButtonText;
 }
 
 void PromptScreen::CreateViews() {
@@ -623,28 +626,39 @@ void PromptScreen::CreateViews() {
 	// Scrolling action menu to the right.
 	using namespace UI;
 
+	const bool vertical = UseVerticalLayout();
+
 	root_ = new AnchorLayout();
+	ViewGroup *rightColumnItems;
 
-	root_->Add(new TextView(message_, ALIGN_LEFT | FLAG_WRAP_TEXT, false, new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, 15, 105, 330, 10)))->SetClip(false);
+	if (!vertical) {
+		// Horizontal layout.
+		root_->Add(new TextView(message_, ALIGN_LEFT | FLAG_WRAP_TEXT, false, new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, 15, 105, 330, 10)))->SetClip(false);
+		rightColumnItems = new LinearLayout(ORIENT_VERTICAL, new AnchorLayoutParams(300, WRAP_CONTENT, NONE, 105, 15, NONE));
+		root_->Add(rightColumnItems);
+	} else {
+		// Vertical layout
+		root_->Add(new TextView(message_, ALIGN_LEFT | FLAG_WRAP_TEXT, false, new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, 15, 15, 55, NONE)))->SetClip(false);
+		// Leave space for the version at the bottom.
+		rightColumnItems = new LinearLayout(ORIENT_HORIZONTAL, new AnchorLayoutParams(FILL_PARENT, WRAP_CONTENT, 15, NONE, 15, 65));
+		root_->Add(rightColumnItems);
+	}
 
-	ViewGroup *rightColumnItems = new LinearLayout(ORIENT_VERTICAL, new AnchorLayoutParams(300, WRAP_CONTENT, NONE, 105, 15, NONE));
-	root_->Add(rightColumnItems);
-
-	Choice *yesButton = rightColumnItems->Add(new Choice(yesButtonText_));
+	Choice *yesButton = rightColumnItems->Add(new Choice(yesButtonText_, vertical ? new LinearLayoutParams(1.0f) : nullptr));
+	yesButton->SetCentered(vertical);
 	yesButton->OnClick.Add([this](UI::EventParams &e) {
 		TriggerFinish(DR_OK);
-		return UI::EVENT_DONE;
 	});
 	if (!noButtonText_.empty()) {
-		Choice *noButton = rightColumnItems->Add(new Choice(noButtonText_));
+		Choice *noButton = rightColumnItems->Add(new Choice(noButtonText_, vertical ? new LinearLayoutParams(1.0f) : nullptr));
+		noButton->SetCentered(vertical);
 		noButton->OnClick.Add([this](UI::EventParams &e) {
 			TriggerFinish(DR_CANCEL);
-			return UI::EVENT_DONE;
 		});
 		root_->SetDefaultFocusView(noButton);
 	} else {
 		// This is an information screen, not a question.
-		// Sneak in the version of PPSSPP in the corner, for debug-reporting user screenshots.
+		// Sneak in the version of PPSSPP in the bottom left corner, for debug-reporting user screenshots.
 		std::string version = System_GetProperty(SYSPROP_BUILD_VERSION);
 		root_->Add(new TextView(version, 0, true, new AnchorLayoutParams(10.0f, NONE, NONE, 10.0f)));
 		root_->SetDefaultFocusView(yesButton);
@@ -856,7 +870,7 @@ void LogoScreen::DrawForeground(UIContext &dc) {
 	float alphaText = alpha;
 	if (t > 2.0f)
 		alphaText = 3.0f - t;
-	uint32_t textColor = colorAlpha(dc.theme->infoStyle.fgColor, alphaText);
+	uint32_t textColor = colorAlpha(dc.GetTheme().infoStyle.fgColor, alphaText);
 
 	auto cr = GetI18NCategory(I18NCat::PSPCREDITS);
 	auto gr = GetI18NCategory(I18NCat::GRAPHICS);
@@ -864,14 +878,15 @@ void LogoScreen::DrawForeground(UIContext &dc) {
 	// Manually formatting UTF-8 is fun.  \xXX doesn't work everywhere.
 	snprintf(temp, sizeof(temp), "%s Henrik Rydg%c%crd", cr->T_cstr("created", "Created by"), 0xC3, 0xA5);
 	if (System_GetPropertyBool(SYSPROP_APP_GOLD)) {
-		dc.Draw()->DrawImage(ImageID("I_ICONGOLD"), bounds.centerX() - 120, bounds.centerY() - 30, 1.2f, 0xFFFFFFFF, ALIGN_CENTER);
+		UI::DrawIconShine(dc, Bounds::FromCenter(bounds.centerX() - 125, bounds.centerY() - 30, 60.0f), 0.7f, true);
+		dc.Draw()->DrawImage(ImageID("I_ICON_GOLD"), bounds.centerX() - 125, bounds.centerY() - 30, 1.2f, 0xFFFFFFFF, ALIGN_CENTER);
 	} else {
-		dc.Draw()->DrawImage(ImageID("I_ICON"), bounds.centerX() - 120, bounds.centerY() - 30, 1.2f, 0xFFFFFFFF, ALIGN_CENTER);
+		dc.Draw()->DrawImage(ImageID("I_ICON"), bounds.centerX() - 125, bounds.centerY() - 30, 1.2f, 0xFFFFFFFF, ALIGN_CENTER);
 	}
-	dc.Draw()->DrawImage(ImageID("I_LOGO"), bounds.centerX() + 40, bounds.centerY() - 30, 1.5f, 0xFFFFFFFF, ALIGN_CENTER);
+	dc.Draw()->DrawImage(ImageID("I_LOGO"), bounds.centerX() + 45, bounds.centerY() - 30, 1.5f, 0xFFFFFFFF, ALIGN_CENTER);
 	//dc.Draw()->DrawTextShadow(UBUNTU48, "PPSSPP", bounds.w / 2, bounds.h / 2 - 30, textColor, ALIGN_CENTER);
 	dc.SetFontScale(1.0f, 1.0f);
-	dc.SetFontStyle(dc.theme->uiFont);
+	dc.SetFontStyle(dc.GetTheme().uiFont);
 	dc.DrawText(temp, bounds.centerX(), bounds.centerY() + 40, textColor, ALIGN_CENTER);
 	dc.DrawText(cr->T_cstr("license", "Free Software under GPL 2.0+"), bounds.centerX(), bounds.centerY() + 70, textColor, ALIGN_CENTER);
 
@@ -880,13 +895,13 @@ void LogoScreen::DrawForeground(UIContext &dc) {
 
 #if !PPSSPP_PLATFORM(UWP) || defined(_DEBUG)
 	// Draw the graphics API, except on UWP where it's always D3D11
-	std::string apiName = screenManager()->getDrawContext()->GetInfoString(InfoField::APINAME);
+	std::string apiName(gr->T(screenManager()->getDrawContext()->GetInfoString(InfoField::APINAME)));
 #ifdef _DEBUG
 	apiName += ", debug build ";
 	// Add some emoji for testing.
 	apiName += CodepointToUTF8(0x1F41B) + CodepointToUTF8(0x1F41C) + CodepointToUTF8(0x1F914);
 #endif
-	dc.DrawText(gr->T(apiName.c_str()), bounds.centerX(), ppsspp_org_y + 50, textColor, ALIGN_CENTER);
+	dc.DrawText(apiName, bounds.centerX(), ppsspp_org_y + 50, textColor, ALIGN_CENTER);
 #endif
 
 	dc.Flush();
@@ -903,11 +918,16 @@ void CreditsScreen::CreateViews() {
 	back->OnClick.Handle<UIScreen>(this, &UIScreen::OnOK);
 	root_->SetDefaultFocusView(back);
 
+	const bool gold = System_GetPropertyBool(SYSPROP_APP_GOLD);
+
 	// Really need to redo this whole layout with some linear layouts...
 
 	int rightYOffset = 0;
 	if (!System_GetPropertyBool(SYSPROP_APP_GOLD)) {
-		root_->Add(new Button(mm->T("Buy PPSSPP Gold"), new AnchorLayoutParams(260, 64, NONE, NONE, 10, 84, false)))->OnClick.Handle(this, &CreditsScreen::OnSupport);
+		ScreenManager *sm = screenManager();
+		root_->Add(new Button(mm->T("Buy PPSSPP Gold"), new AnchorLayoutParams(260, 64, NONE, NONE, 10, 84, false)))->OnClick.Add([sm](UI::EventParams) {
+			LaunchBuyGold(sm);
+		});
 		rightYOffset = 74;
 	}
 	root_->Add(new Button(cr->T("PPSSPP Forums"), new AnchorLayoutParams(260, 64, 10, NONE, NONE, 158, false)))->OnClick.Handle(this, &CreditsScreen::OnForums);
@@ -919,52 +939,38 @@ void CreditsScreen::CreateViews() {
 #if PPSSPP_PLATFORM(ANDROID) || PPSSPP_PLATFORM(IOS)
 	root_->Add(new Button(cr->T("Share PPSSPP"), new AnchorLayoutParams(260, 64, NONE, NONE, 10, rightYOffset + 158, false)))->OnClick.Handle(this, &CreditsScreen::OnShare);
 #endif
+
 	if (System_GetPropertyBool(SYSPROP_APP_GOLD)) {
-		root_->Add(new ImageView(ImageID("I_ICONGOLD"), "", IS_DEFAULT, new AnchorLayoutParams(100, 64, 10, 10, NONE, NONE, false)));
+		root_->Add(new ShinyIcon(ImageID("I_ICON_GOLD"), new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, 10, 10, NONE, NONE, false)))->SetScale(1.5f);
 	} else {
-		root_->Add(new ImageView(ImageID("I_ICON"), "", IS_DEFAULT, new AnchorLayoutParams(100, 64, 10, 10, NONE, NONE, false)));
+		root_->Add(new ImageView(ImageID("I_ICON"), "", IS_DEFAULT, new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, 10, 10, NONE, NONE, false)))->SetScale(1.5f);
 	}
 }
 
-UI::EventReturn CreditsScreen::OnSupport(UI::EventParams &e) {
-#ifdef __ANDROID__
-	System_LaunchUrl(LaunchUrlType::BROWSER_URL, "market://details?id=org.ppsspp.ppssppgold");
-#else
-	System_LaunchUrl(LaunchUrlType::BROWSER_URL, "https://www.ppsspp.org/buygold");
-#endif
-	return UI::EVENT_DONE;
-}
-
-UI::EventReturn CreditsScreen::OnX(UI::EventParams &e) {
+void CreditsScreen::OnX(UI::EventParams &e) {
 	// Not sure we should change to x.com here, given various platform URL handlers etc. We can probably change it soon.
 	System_LaunchUrl(LaunchUrlType::BROWSER_URL, "https://twitter.com/PPSSPP_emu");
-	return UI::EVENT_DONE;
 }
 
-UI::EventReturn CreditsScreen::OnPPSSPPOrg(UI::EventParams &e) {
+void CreditsScreen::OnPPSSPPOrg(UI::EventParams &e) {
 	System_LaunchUrl(LaunchUrlType::BROWSER_URL, "https://www.ppsspp.org");
-	return UI::EVENT_DONE;
 }
 
-UI::EventReturn CreditsScreen::OnPrivacy(UI::EventParams &e) {
+void CreditsScreen::OnPrivacy(UI::EventParams &e) {
 	System_LaunchUrl(LaunchUrlType::BROWSER_URL, "https://www.ppsspp.org/privacy");
-	return UI::EVENT_DONE;
 }
 
-UI::EventReturn CreditsScreen::OnForums(UI::EventParams &e) {
+void CreditsScreen::OnForums(UI::EventParams &e) {
 	System_LaunchUrl(LaunchUrlType::BROWSER_URL, "https://forums.ppsspp.org");
-	return UI::EVENT_DONE;
 }
 
-UI::EventReturn CreditsScreen::OnDiscord(UI::EventParams &e) {
+void CreditsScreen::OnDiscord(UI::EventParams &e) {
 	System_LaunchUrl(LaunchUrlType::BROWSER_URL, "https://discord.gg/5NJB6dD");
-	return UI::EVENT_DONE;
 }
 
-UI::EventReturn CreditsScreen::OnShare(UI::EventParams &e) {
+void CreditsScreen::OnShare(UI::EventParams &e) {
 	auto cr = GetI18NCategory(I18NCat::PSPCREDITS);
 	System_ShareText(cr->T("CheckOutPPSSPP", "Check out PPSSPP, the awesome PSP emulator: https://www.ppsspp.org/"));
-	return UI::EVENT_DONE;
 }
 
 CreditsScreen::CreditsScreen() {
@@ -975,6 +981,26 @@ void CreditsScreen::update() {
 	UIScreen::update();
 	UpdateUIState(UISTATE_MENU);
 }
+
+void CreditsScreen::touch(const TouchInput &touch) {
+	UIScreen::touch(touch);
+	if (touch.id != 0)
+		return;
+
+	if (touch.flags & TOUCH_DOWN) {
+		dragYStart_ = touch.y;
+		dragYOffsetStart_ = dragOffset_;
+	}
+	if (touch.flags & TOUCH_UP) {
+		dragYStart_ = -1.0f;
+	}
+	if (touch.flags & TOUCH_MOVE) {
+		if (dragYStart_ >= 0.0f) {
+			dragOffset_ = dragYOffsetStart_ + (touch.y - dragYStart_);
+		}
+	}
+}
+
 
 void CreditsScreen::DrawForeground(UIContext &dc) {
 	auto cr = GetI18NCategory(I18NCat::PSPCREDITS);
@@ -1142,10 +1168,10 @@ void CreditsScreen::DrawForeground(UIContext &dc) {
 
 	float t = (float)(time_now_d() - startTime_) * 60.0;
 
-	float y = bounds.y2() - fmodf(t, (float)totalHeight);
+	float y = bounds.y2() - fmodf(t - dragOffset_, (float)totalHeight);
 	for (int i = 0; i < numItems; i++) {
 		float alpha = linearInOut(y+32, 64, bounds.y2() - 192, 64);
-		uint32_t textColor = colorAlpha(dc.theme->infoStyle.fgColor, alpha);
+		uint32_t textColor = colorAlpha(dc.GetTheme().infoStyle.fgColor, alpha);
 
 		if (alpha > 0.0f) {
 			dc.SetFontScale(ease(alpha), ease(alpha));
@@ -1179,7 +1205,9 @@ void SettingInfoMessage::Show(std::string_view text, const UI::View *refView) {
 			}
 		}
 	}
-	text_->SetText(text);
+	if (text_) {
+		text_->SetText(text);
+	}
 	timeShown_ = time_now_d();
 }
 
@@ -1199,7 +1227,7 @@ void SettingInfoMessage::Draw(UIContext &dc) {
 		alpha = MAX_ALPHA - MAX_ALPHA * (float)((sinceShow - timeToShow) / FADE_TIME);
 	}
 
-	UI::Style style = dc.theme->tooltipStyle;
+	UI::Style style = dc.GetTheme().tooltipStyle;
 
 	if (alpha >= 0.001f) {
 		uint32_t bgColor = alphaMul(style.background.color, alpha);
@@ -1214,4 +1242,9 @@ void SettingInfoMessage::Draw(UIContext &dc) {
 
 std::string SettingInfoMessage::GetText() const {
 	return (showing_ && text_) ? text_->GetText() : "";
+}
+
+void ShinyIcon::Draw(UIContext &dc) {
+	UI::DrawIconShine(dc, bounds_, 1.0f, animated_);
+	UI::ImageView::Draw(dc);
 }

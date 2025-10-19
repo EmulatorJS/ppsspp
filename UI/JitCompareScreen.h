@@ -16,21 +16,21 @@ private:
 	// Uses the current ListType
 	void FillBlockList();
 
-	UI::LinearLayout *comparisonView_;
-	UI::LinearLayout *leftDisasm_;
-	UI::LinearLayout *rightDisasm_;
+	UI::LinearLayout *comparisonView_ = nullptr;
+	UI::LinearLayout *leftDisasm_ = nullptr;
+	UI::LinearLayout *rightDisasm_ = nullptr;
 
-	UI::LinearLayout *blockListView_;
-	UI::LinearLayout *blockListContainer_;
+	UI::LinearLayout *blockListView_ = nullptr;
+	UI::LinearLayout *blockListContainer_ = nullptr;
 
-	UI::LinearLayout *statsView_;
-	UI::LinearLayout *statsContainer_;
+	UI::LinearLayout *statsView_ = nullptr;
+	UI::LinearLayout *statsContainer_ = nullptr;
 
-	UI::EventReturn OnSelectBlock(UI::EventParams &e);
-	UI::EventReturn OnBlockAddress(UI::EventParams &e);
-	UI::EventReturn OnAddressChange(UI::EventParams &e);
-	UI::EventReturn OnShowStats(UI::EventParams &e);
-	UI::EventReturn OnBlockClick(UI::EventParams &e);
+	void OnSelectBlock(UI::EventParams &e);
+	void OnBlockAddress(UI::EventParams &e);
+	void OnAddressChange(UI::EventParams &e);
+	void OnShowStats(UI::EventParams &e);
+	void OnBlockClick(UI::EventParams &e);
 
 	// To switch, change the below things and call RecreateViews();
 	enum class ViewMode {
@@ -60,9 +60,9 @@ private:
 	int64_t sumExecutions_ = 0;
 	std::vector<int> blockList_;  // for BLOCK_LIST mode
 
-	UI::TextView *blockName_;
-	UI::TextEdit *blockAddr_;
-	UI::TextView *blockStats_;
+	UI::TextView *blockName_ = nullptr;
+	UI::TextEdit *blockAddr_ = nullptr;
+	UI::TextView *blockStats_ = nullptr;
 };
 
 class AddressPromptScreen : public PopupScreen {
@@ -78,8 +78,8 @@ public:
 protected:
 	void CreatePopupContents(UI::ViewGroup *parent) override;
 	void OnCompleted(DialogResult result) override;
-	UI::EventReturn OnDigitButton(UI::EventParams &e);
-	UI::EventReturn OnBackspace(UI::EventParams &e);
+	void OnDigitButton(UI::EventParams &e);
+	void OnBackspace(UI::EventParams &e);
 
 private:
 	void AddDigit(int n);

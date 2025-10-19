@@ -4,6 +4,7 @@
 #include <memory>
 #include <thread>
 #include <cstdint>
+#include <string>
 
 #include "Common/File/Path.h"
 #include "Common/Net/NetBuffer.h"
@@ -12,9 +13,13 @@
 
 namespace net {
 
+typedef std::function<std::string(const std::string &)> ResolveFunc;
+
 class Connection {
 public:
 	virtual ~Connection();
+
+	explicit Connection(ResolveFunc func) : customResolve_(func) {}
 
 	// Inits the sockaddr_in.
 	bool Resolve(const char *host, int port, DNSType type = DNSType::ANY);
@@ -35,13 +40,14 @@ protected:
 
 private:
 	uintptr_t sock_ = -1;
+	ResolveFunc customResolve_;
 };
 
-}	// namespace net
+}  // namespace net
 
 namespace http {
 
-bool GetHeaderValue(const std::vector<std::string> &responseHeaders, const std::string &header, std::string *value);
+bool GetHeaderValue(const std::vector<std::string> &responseHeaders, std::string_view header, std::string *value);
 
 class RequestParams {
 public:
@@ -55,7 +61,7 @@ public:
 
 class Client : public net::Connection {
 public:
-	Client();
+	Client(net::ResolveFunc func);
 	~Client();
 
 	// Return value is the HTTP return code. 200 means OK. < 0 means some local error.
@@ -95,7 +101,7 @@ protected:
 // Really an asynchronous request.
 class HTTPRequest : public Request {
 public:
-	HTTPRequest(RequestMethod method, std::string_view url, std::string_view postData, std::string_view postMime, const Path &outfile, RequestFlags flags = RequestFlags::ProgressBar | RequestFlags::ProgressBarDelayed, std::string_view name = "");
+	HTTPRequest(RequestMethod method, std::string_view url, std::string_view postData, std::string_view postMime, const Path &outfile, RequestFlags flags, net::ResolveFunc customResolve, std::string_view name = "");
 	~HTTPRequest();
 
 	void Start() override;
@@ -115,6 +121,7 @@ private:
 	std::string postMime_;
 	bool completed_ = false;
 	bool failed_ = false;
+	net::ResolveFunc customResolve_;
 };
 
 // Fake request for cache hits.

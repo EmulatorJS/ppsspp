@@ -239,6 +239,23 @@ void ScrollView::Draw(UIContext &dc) {
 	// For debugging layout issues, this can be useful.
 	// dc.FillRect(Drawable(0x60FF00FF), bounds_);
 	views_[0]->Draw(dc);
+
+	// If not anchored at the top of the screen exactly, and not scrolled to the top,
+	// draw a subtle drop shadow to indicate scrollability.
+	if (bounds_.y > 0.0f && orientation_ == ORIENT_VERTICAL) {
+		float radius = 20.0f;
+
+		Bounds shadowBounds = bounds_;
+		shadowBounds.x -= radius;
+		shadowBounds.w += radius * 2;
+		shadowBounds.y -= radius * 2;
+		shadowBounds.h = radius * 2;
+
+		float fade = std::clamp(scrollPos_ * 0.1f, 0.0f, 0.6f);
+
+		dc.DrawRectDropShadow(shadowBounds, radius, fade);
+	}
+
 	dc.PopScissor();
 
 	// Vertical scroll bob. We don't support a horizontal yet.
@@ -535,14 +552,13 @@ std::string ListView::DescribeText() const {
 	return DescribeListOrdered(u->T("List:"));
 }
 
-EventReturn ListView::OnItemCallback(int num, EventParams &e) {
+void ListView::OnItemCallback(int num, EventParams &e) {
 	EventParams ev{};
 	ev.v = nullptr;
 	ev.a = num;
 	adaptor_->SetSelected(num);
 	OnChoice.Trigger(ev);
 	CreateAllItems();
-	return EVENT_DONE;
 }
 
 View *ChoiceListAdaptor::CreateItemView(int index, ImageID *optionalImageID) {
@@ -553,12 +569,10 @@ View *ChoiceListAdaptor::CreateItemView(int index, ImageID *optionalImageID) {
 	return choice;
 }
 
-bool ChoiceListAdaptor::AddEventCallback(View *view, std::function<EventReturn(EventParams &)> callback) {
+void ChoiceListAdaptor::AddEventCallback(View *view, std::function<void(EventParams &)> callback) {
 	Choice *choice = (Choice *)view;
 	choice->OnClick.Add(callback);
-	return EVENT_DONE;
 }
-
 
 View *StringVectorListAdaptor::CreateItemView(int index, ImageID *optionalImageID) {
 	Choice *choice = new Choice(items_[index], "", index == selected_);
@@ -568,10 +582,9 @@ View *StringVectorListAdaptor::CreateItemView(int index, ImageID *optionalImageI
 	return choice;
 }
 
-bool StringVectorListAdaptor::AddEventCallback(View *view, std::function<EventReturn(EventParams &)> callback) {
+void StringVectorListAdaptor::AddEventCallback(View *view, std::function<void(EventParams &)> callback) {
 	Choice *choice = (Choice *)view;
 	choice->OnClick.Add(callback);
-	return EVENT_DONE;
 }
 
 }  // namespace

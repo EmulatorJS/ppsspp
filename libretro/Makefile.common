@@ -270,25 +270,21 @@ COREFLAGS += -DHTTPS_NOT_AVAILABLE
 
 ifneq ($(platform), emscripten)
 
-COREFLAGS += -D_7ZIP_ST
-INCFLAGS += -I$(EXTDIR)/libchdr/deps/lzma-22.01/include
+COREFLAGS += -DZ7_ST
+INCFLAGS += -I$(EXTDIR)/libchdr/deps/lzma-24.05/include
 
 SOURCES_C += \
-	$(EXTDIR)/libchdr/deps/lzma-22.01/src/Alloc.c \
-	$(EXTDIR)/libchdr/deps/lzma-22.01/src/Bcj2.c \
-	$(EXTDIR)/libchdr/deps/lzma-22.01/src/Bcj2Enc.c \
-	$(EXTDIR)/libchdr/deps/lzma-22.01/src/Bra.c \
-	$(EXTDIR)/libchdr/deps/lzma-22.01/src/Bra86.c \
-	$(EXTDIR)/libchdr/deps/lzma-22.01/src/CpuArch.c \
-	$(EXTDIR)/libchdr/deps/lzma-22.01/src/Delta.c \
-	$(EXTDIR)/libchdr/deps/lzma-22.01/src/LzFind.c \
-	$(EXTDIR)/libchdr/deps/lzma-22.01/src/LzFindOpt.c \
-	$(EXTDIR)/libchdr/deps/lzma-22.01/src/LzmaDec.c \
-	$(EXTDIR)/libchdr/deps/lzma-22.01/src/LzmaEnc.c \
-	$(EXTDIR)/libchdr/deps/lzma-22.01/src/Lzma86Dec.c \
-	$(EXTDIR)/libchdr/deps/lzma-22.01/src/Lzma86Enc.c \
-	$(EXTDIR)/libchdr/deps/lzma-22.01/src/LzmaLib.c \
-	$(EXTDIR)/libchdr/deps/lzma-22.01/src/Sort.c
+	$(EXTDIR)/libchdr/deps/lzma-24.05/src/Alloc.c \
+	$(EXTDIR)/libchdr/deps/lzma-24.05/src/Bra.c \
+	$(EXTDIR)/libchdr/deps/lzma-24.05/src/Bra86.c \
+	$(EXTDIR)/libchdr/deps/lzma-24.05/src/BraIA64.c \
+	$(EXTDIR)/libchdr/deps/lzma-24.05/src/CpuArch.c \
+	$(EXTDIR)/libchdr/deps/lzma-24.05/src/Delta.c \
+	$(EXTDIR)/libchdr/deps/lzma-24.05/src/LzFind.c \
+	$(EXTDIR)/libchdr/deps/lzma-24.05/src/LzmaDec.c \
+	$(EXTDIR)/libchdr/deps/lzma-24.05/src/LzmaEnc.c \
+	$(EXTDIR)/libchdr/deps/lzma-24.05/src/Lzma86Dec.c \
+	$(EXTDIR)/libchdr/deps/lzma-24.05/src/Sort.c
 
 INCFLAGS += -I$(EXTDIR)/libchdr/include
 
@@ -313,6 +309,64 @@ SOURCES_CXX += \
 	${EXTDIR}/at3_standalone/compat.cpp \
 	${EXTDIR}/at3_standalone/fft.cpp \
 	${EXTDIR}/at3_standalone/mem.cpp
+
+COREFLAGS += -DARMIPS_USE_STD_FILESYSTEM
+SOURCES_CXX += \
+	$(EXTDIR)/armips/Util/ByteArray.cpp \
+	$(EXTDIR)/armips/Util/CRC.cpp \
+	$(EXTDIR)/armips/Util/EncodingTable.cpp \
+	$(EXTDIR)/armips/Util/FileClasses.cpp \
+	$(EXTDIR)/armips/Util/Util.cpp \
+	$(EXTDIR)/armips/Core/ELF/ElfRelocator.cpp \
+	$(EXTDIR)/armips/Core/ELF/ElfFile.cpp \
+	$(EXTDIR)/armips/Core/Assembler.cpp \
+	$(EXTDIR)/armips/Core/Allocations.cpp \
+	$(EXTDIR)/armips/Core/Common.cpp \
+	$(EXTDIR)/armips/Core/Expression.cpp \
+	$(EXTDIR)/armips/Core/ExpressionFunctions.cpp \
+	$(EXTDIR)/armips/Core/ExpressionFunctionHandler.cpp \
+	$(EXTDIR)/armips/Core/FileManager.cpp \
+	$(EXTDIR)/armips/Core/Misc.cpp \
+	$(EXTDIR)/armips/Core/SymbolData.cpp \
+	$(EXTDIR)/armips/Core/SymbolTable.cpp \
+	$(EXTDIR)/armips/Core/Types.cpp \
+	$(EXTDIR)/armips/Commands/CAssemblerCommand.cpp \
+	$(EXTDIR)/armips/Commands/CAssemblerLabel.cpp \
+	$(EXTDIR)/armips/Commands/CDirectiveArea.cpp \
+	$(EXTDIR)/armips/Commands/CDirectiveConditional.cpp \
+	$(EXTDIR)/armips/Commands/CDirectiveData.cpp \
+	$(EXTDIR)/armips/Commands/CDirectiveFile.cpp \
+	$(EXTDIR)/armips/Commands/CDirectiveMessage.cpp \
+	$(EXTDIR)/armips/Commands/CommandSequence.cpp \
+	$(EXTDIR)/armips/Archs/Architecture.cpp \
+	$(EXTDIR)/armips/Archs/ARM/Arm.cpp \
+	$(EXTDIR)/armips/Archs/ARM/ArmOpcodes.cpp \
+	$(EXTDIR)/armips/Archs/ARM/ArmParser.cpp \
+	$(EXTDIR)/armips/Archs/ARM/ArmElfRelocator.cpp \
+	$(EXTDIR)/armips/Archs/ARM/ArmExpressionFunctions.cpp \
+	$(EXTDIR)/armips/Archs/ARM/CArmInstruction.cpp \
+	$(EXTDIR)/armips/Archs/ARM/CThumbInstruction.cpp \
+	$(EXTDIR)/armips/Archs/ARM/Pool.cpp \
+	$(EXTDIR)/armips/Archs/ARM/ThumbOpcodes.cpp \
+	$(EXTDIR)/armips/Archs/MIPS/CMipsInstruction.cpp \
+	$(EXTDIR)/armips/Archs/MIPS/Mips.cpp \
+	$(EXTDIR)/armips/Archs/MIPS/MipsElfFile.cpp \
+	$(EXTDIR)/armips/Archs/MIPS/MipsElfRelocator.cpp \
+	$(EXTDIR)/armips/Archs/MIPS/MipsExpressionFunctions.cpp \
+	$(EXTDIR)/armips/Archs/MIPS/MipsMacros.cpp \
+	$(EXTDIR)/armips/Archs/MIPS/MipsOpcodes.cpp \
+	$(EXTDIR)/armips/Archs/MIPS/MipsParser.cpp \
+	$(EXTDIR)/armips/Archs/MIPS/PsxRelocator.cpp \
+	$(EXTDIR)/armips/Archs/SuperH/CShInstruction.cpp \
+	$(EXTDIR)/armips/Archs/SuperH/ShElfRelocator.cpp \
+	$(EXTDIR)/armips/Archs/SuperH/ShExpressionFunctions.cpp \
+	$(EXTDIR)/armips/Archs/SuperH/ShOpcodes.cpp \
+	$(EXTDIR)/armips/Archs/SuperH/ShParser.cpp \
+	$(EXTDIR)/armips/Archs/SuperH/SuperH.cpp \
+	$(EXTDIR)/armips/Parser/DirectivesParser.cpp \
+	$(EXTDIR)/armips/Parser/ExpressionParser.cpp \
+	$(EXTDIR)/armips/Parser/Parser.cpp \
+	$(EXTDIR)/armips/Parser/Tokenizer.cpp
 
 ifeq ($(PLATFORM_EXT), android)
 COREFLAGS += -DHAVE_DLFCN_H
@@ -376,9 +430,6 @@ SOURCES_CXX += \
 	$(EXTDIR)/imgui/imgui_impl_platform.cpp \
 	$(EXTDIR)/imgui/imgui_tables.cpp \
 	$(EXTDIR)/imgui/imgui_widgets.cpp
-
-SOURCES_CXX += \
-	$(EXTDIR)/armips/Core/Types.cpp
 
 SOURCES_CXX += \
 	$(COMMONDIR)/Crypto/md5.cpp \
@@ -747,6 +798,7 @@ SOURCES_CXX += \
 	       $(COREDIR)/HLE/sceMpeg.cpp \
 	       $(COREDIR)/HLE/sceNet.cpp \
 	       $(COREDIR)/HLE/sceNet_lib.cpp \
+	       $(COREDIR)/HLE/NetAdhocCommon.cpp \
 	       $(COREDIR)/HLE/sceNetAdhoc.cpp \
 	       $(COREDIR)/HLE/sceNetAdhocMatching.cpp \
 	       $(COREDIR)/HLE/sceNetApctl.cpp \
@@ -993,14 +1045,6 @@ SOURCES_CXX += \
 
 ifeq ($(PLATFORM_EXT), win32)
 SOURCES_CXX += \
-	$(GPUDIR)/Directx9/DrawEngineDX9.cpp \
-	$(GPUDIR)/Directx9/FramebufferManagerDX9.cpp \
-	$(GPUDIR)/Directx9/GPU_DX9.cpp \
-	$(GPUDIR)/Directx9/ShaderManagerDX9.cpp \
-	$(GPUDIR)/Directx9/StateMappingDX9.cpp \
-	$(GPUDIR)/Directx9/TextureCacheDX9.cpp
-
-SOURCES_CXX += \
 	$(GPUDIR)/D3D11/DrawEngineD3D11.cpp \
 	$(GPUDIR)/D3D11/FramebufferManagerD3D11.cpp \
 	$(GPUDIR)/D3D11/GPU_D3D11.cpp \
@@ -1011,15 +1055,8 @@ SOURCES_CXX += \
    $(LIBRETRODIR)/LibretroD3D11Context.cpp
 
 SOURCES_CXX += \
-	$(COMMONDIR)/GPU/D3D9/D3D9ShaderCompiler.cpp \
-	$(COMMONDIR)/GPU/D3D9/D3D9StateCache.cpp \
-	$(COMMONDIR)/GPU/D3D9/D3DCompilerLoader.cpp \
-	$(COMMONDIR)/GPU/D3D9/thin3d_d3d9.cpp \
 	$(COMMONDIR)/GPU/D3D11/D3D11Loader.cpp \
 	$(COMMONDIR)/GPU/D3D11/thin3d_d3d11.cpp
-
-INCFLAGS += -I$(CORE_DIR)/dx9sdk/Include -I$(CORE_DIR)/dx9sdk/Include/DX11
-
 endif
 
 SOURCES_CXX += \
@@ -1048,6 +1085,7 @@ SOURCES_C +=   $(ZSTDDIR)/common/debug.c \
                $(ZSTDDIR)/compress/zstd_lazy.c \
                $(ZSTDDIR)/compress/zstd_ldm.c \
                $(ZSTDDIR)/compress/zstd_opt.c \
+               $(ZSTDDIR)/compress/zstd_preSplit.c \
                $(ZSTDDIR)/compress/zstdmt_compress.c \
                $(ZSTDDIR)/decompress/huf_decompress.c \
                $(ZSTDDIR)/decompress/zstd_ddict.c \

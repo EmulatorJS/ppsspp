@@ -46,6 +46,7 @@ static const DefMappingStruct defaultQwertyKeyboardKeyMap[] = {
 	{VIRTKEY_REWIND      , NKCODE_DEL},
 	{VIRTKEY_ANALOG_LIGHTLY, NKCODE_SHIFT_RIGHT},
 	{VIRTKEY_TOGGLE_DEBUGGER, NKCODE_F12},
+	{VIRTKEY_PAUSE_NO_MENU, NKCODE_F8},
 };
 
 static const DefMappingStruct defaultAzertyKeyboardKeyMap[] = {
@@ -276,8 +277,11 @@ static const DefMappingStruct defaultPadMap[] = {
 	{VIRTKEY_AXIS_X_MAX, JOYSTICK_AXIS_X, +1},
 	{VIRTKEY_AXIS_Y_MIN, JOYSTICK_AXIS_Y, +1},
 	{VIRTKEY_AXIS_Y_MAX, JOYSTICK_AXIS_Y, -1},
+	{VIRTKEY_PAUSE       , NKCODE_BUTTON_THUMBL},
 	{VIRTKEY_PAUSE       , NKCODE_BUTTON_SELECT },
 	{VIRTKEY_PAUSE       , NKCODE_BUTTON_L2 },
+	{VIRTKEY_PAUSE       , JOYSTICK_AXIS_LTRIGGER, +1},
+	{VIRTKEY_SPEED_ANALOG, JOYSTICK_AXIS_RTRIGGER, +1},
 };
 
 static const DefMappingStruct defaultPadMapIOS[] = {

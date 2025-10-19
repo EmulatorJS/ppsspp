@@ -198,7 +198,8 @@ u64 GameInfo::GetSizeUncompressedInBytes() {
 		return File::ComputeRecursiveDirectorySize(GetFileLoader()->GetPath());
 	default:
 	{
-		BlockDevice *blockDevice = constructBlockDevice(GetFileLoader().get());
+		std::string errorString;
+		BlockDevice *blockDevice = ConstructBlockDevice(GetFileLoader().get(), &errorString);
 		if (blockDevice) {
 			u64 size = blockDevice->GetUncompressedSize();
 			delete blockDevice;
@@ -366,34 +367,7 @@ void GameInfo::ParseParamSFO() {
 	disc_total = paramSFO.GetValueInt("DISC_TOTAL");
 	disc_number = paramSFO.GetValueInt("DISC_NUMBER");
 	// region = paramSFO.GetValueInt("REGION");  // Always seems to be 32768?
-
-	region = GAMEREGION_OTHER;
-	if (id_version.size() >= 4) {
-		std::string regStr = id_version.substr(0, 4);
-
-		// Guesswork
-		switch (regStr[2]) {
-		case 'E': region = GAMEREGION_EUROPE; break;
-		case 'U': region = GAMEREGION_USA; break;
-		case 'J': region = GAMEREGION_JAPAN; break;
-		case 'H': region = GAMEREGION_HONGKONG; break;
-		case 'A': region = GAMEREGION_ASIA; break;
-		case 'K': region = GAMEREGION_KOREA; break;
-		}
-		/*
-		if (regStr == "NPEZ" || regStr == "NPEG" || regStr == "ULES" || regStr == "UCES" ||
-			  regStr == "NPEX") {
-			region = GAMEREGION_EUROPE;
-		} else if (regStr == "NPUG" || regStr == "NPUZ" || regStr == "ULUS" || regStr == "UCUS") {
-			region = GAMEREGION_USA;
-		} else if (regStr == "NPJH" || regStr == "NPJG" || regStr == "ULJM"|| regStr == "ULJS") {
-			region = GAMEREGION_JAPAN;
-		} else if (regStr == "NPHG") {
-			region = GAMEREGION_HONGKONG;
-		} else if (regStr == "UCAS") {
-			region = GAMEREGION_CHINA;
-		}*/
-	}
+	region = DetectGameRegionFromID(id);
 }
 
 std::string GameInfo::GetTitle() {
@@ -601,7 +575,7 @@ public:
 							&& info_->fileType == IdentifiedFileType::PSP_PBP_DIRECTORY) {
 							info_->id = g_paramSFO.GenerateFakeID(gamePath_);
 							info_->id_version = info_->id + "_1.00";
-							info_->region = GAMEREGION_COUNT + 1; // Homebrew
+							info_->region = GameRegion::HOMEBREW; // Homebrew
 						}
 						info_->MarkReadyNoLock(GameInfoFlags::PARAM_SFO);
 					}
@@ -630,7 +604,7 @@ public:
 					info_->icon.dataLoaded = true;
 				}
 
-				if (flags_ & GameInfoFlags::BG) {
+				if (flags_ & GameInfoFlags::PIC0) {
 					if (pbp.GetSubFileSize(PBP_PIC0_PNG) > 0) {
 						std::string data;
 						pbp.GetSubFileAsString(PBP_PIC0_PNG, &data);
@@ -638,6 +612,8 @@ public:
 						info_->pic0.data = std::move(data);
 						info_->pic0.dataLoaded = true;
 					}
+				}
+				if (flags_ & GameInfoFlags::PIC1) {
 					if (pbp.GetSubFileSize(PBP_PIC1_PNG) > 0) {
 						std::string data;
 						pbp.GetSubFileAsString(PBP_PIC1_PNG, &data);
@@ -664,7 +640,7 @@ handleELF:
 			if (flags_ & GameInfoFlags::PARAM_SFO) {
 				info_->id = g_paramSFO.GenerateFakeID(gamePath_);
 				info_->id_version = info_->id + "_1.00";
-				info_->region = GAMEREGION_COUNT + 1; // Homebrew
+				info_->region = GameRegion::HOMEBREW; // Homebrew
 			}
 
 			if (flags_ & GameInfoFlags::ICON) {
@@ -705,7 +681,7 @@ handleELF:
 				ReadFileToString(&umd, "/ICON0.PNG", &info_->icon.data, &info_->lock);
 				info_->icon.dataLoaded = true;
 			}
-			if (flags_ & GameInfoFlags::BG) {
+			if (flags_ & GameInfoFlags::PIC1) {
 				ReadFileToString(&umd, "/PIC1.PNG", &info_->pic1.data, &info_->lock);
 				info_->pic1.dataLoaded = true;
 			}
@@ -735,7 +711,7 @@ handleELF:
 			if (flags_ & GameInfoFlags::ICON) {
 				Path screenshotPath = gamePath_.WithReplacedExtension(".ppdmp", ".png");
 				// Let's use the comparison screenshot as an icon, if it exists.
-				if (ReadLocalFileToString(screenshotPath, &info_->icon.data, &info_->lock)) {
+				if (screenshotPath.IsLocalType() && ReadLocalFileToString(screenshotPath, &info_->icon.data, &info_->lock)) {
 					info_->icon.dataLoaded = true;
 				}
 			}
@@ -761,9 +737,11 @@ handleELF:
 					ReadFileToString(&umd, "/PSP_GAME/ICON0.PNG", &info_->icon.data, &info_->lock);
 					info_->icon.dataLoaded = true;
 				}
-				if (flags_ & GameInfoFlags::BG) {
+				if (flags_ & GameInfoFlags::PIC0) {
 					ReadFileToString(&umd, "/PSP_GAME/PIC0.PNG", &info_->pic0.data, &info_->lock);
 					info_->pic0.dataLoaded = true;
+				}
+				if (flags_ & GameInfoFlags::PIC1) {
 					ReadFileToString(&umd, "/PSP_GAME/PIC1.PNG", &info_->pic1.data, &info_->lock);
 					info_->pic1.dataLoaded = true;
 				}
@@ -789,9 +767,9 @@ handleELF:
 					info_->MarkReadyNoLock(flags_);
 					return;
 				}
-				BlockDevice *bd = constructBlockDevice(info_->GetFileLoader().get());
+				BlockDevice *bd = ConstructBlockDevice(info_->GetFileLoader().get(), &errorString);
 				if (!bd) {
-					ERROR_LOG(Log::Loader, "Failed constructing block device for ISO %s", info_->GetFilePath().ToVisualString().c_str());
+					ERROR_LOG(Log::Loader, "Failed constructing block device for ISO %s: %s", info_->GetFilePath().ToVisualString().c_str(), errorString.c_str());
 					std::unique_lock<std::mutex> lock(info_->lock);
 					info_->MarkReadyNoLock(flags_);
 					return;
@@ -813,8 +791,11 @@ handleELF:
 					}
 				}
 
-				if (flags_ & GameInfoFlags::BG) {
+				if (flags_ & GameInfoFlags::PIC0) {
 					info_->pic0.dataLoaded = ReadFileToString(&umd, "/PSP_GAME/PIC0.PNG", &info_->pic0.data, &info_->lock);
+				}
+
+				if (flags_ & GameInfoFlags::PIC1) {
 					info_->pic1.dataLoaded = ReadFileToString(&umd, "/PSP_GAME/PIC1.PNG", &info_->pic1.data, &info_->lock);
 				}
 
@@ -914,15 +895,12 @@ private:
 };
 
 GameInfoCache::GameInfoCache() {
-	Init();
 }
 
 GameInfoCache::~GameInfoCache() {
 	Clear();
 	Shutdown();
 }
-
-void GameInfoCache::Init() {}
 
 void GameInfoCache::Shutdown() {
 	CancelAll();
@@ -959,7 +937,7 @@ void GameInfoCache::FlushBGs() {
 			iter->second->sndFileData.clear();
 			iter->second->sndDataLoaded = false;
 		}
-		iter->second->hasFlags &= ~(GameInfoFlags::BG | GameInfoFlags::SND);
+		iter->second->hasFlags &= ~(GameInfoFlags::PIC0 | GameInfoFlags::PIC1 | GameInfoFlags::SND);
 	}
 }
 
@@ -1003,7 +981,7 @@ void GameInfoCache::PurgeType(IdentifiedFileType fileType) {
 
 // Call on the main thread ONLY - that is from stuff called from NativeFrame.
 // Can also be called from the audio thread for menu background music, but that cannot request images!
-std::shared_ptr<GameInfo> GameInfoCache::GetInfo(Draw::DrawContext *draw, const Path &gamePath, GameInfoFlags wantFlags) {
+std::shared_ptr<GameInfo> GameInfoCache::GetInfo(Draw::DrawContext *draw, const Path &gamePath, GameInfoFlags wantFlags, GameInfoFlags *outHasFlags) {
 	const std::string &pathStr = gamePath.ToString();
 
 	// _dbg_assert_(gamePath != GetSysDirectory(DIRECTORY_SAVEDATA));
@@ -1025,9 +1003,12 @@ std::shared_ptr<GameInfo> GameInfoCache::GetInfo(Draw::DrawContext *draw, const 
 		{
 			// Careful now!
 			std::unique_lock<std::mutex> lock(info->lock);
-			GameInfoFlags hasFlags = info->hasFlags | info->pendingFlags;  // We don't want to re-fetch data that we have, so or in pendingFlags.
-			wanted = (GameInfoFlags)((int)wantFlags & ~(int)hasFlags);  // & is reserved for testing. ugh.
+			GameInfoFlags willHaveFlags = info->hasFlags | info->pendingFlags;  // We don't want to re-fetch data that we have, so or in pendingFlags.
+			wanted = (GameInfoFlags)((int)wantFlags & ~(int)willHaveFlags);  // & is reserved for testing so we have to cast to int. ugh.
 			info->pendingFlags |= wanted;
+			if (outHasFlags) {
+				*outHasFlags = info->hasFlags;
+			}
 		}
 		if (wanted != (GameInfoFlags)0) {
 			// We're missing info that we want. Go get it!
@@ -1041,6 +1022,9 @@ std::shared_ptr<GameInfo> GameInfoCache::GetInfo(Draw::DrawContext *draw, const 
 	info->pendingFlags = wantFlags;
 	info->lastAccessedTime = time_now_d();
 	info_.insert(std::make_pair(pathStr, info));
+	if (outHasFlags) {
+		*outHasFlags = info->hasFlags;
+	}
 	mapLock_.unlock();
 
 	// Just get all the stuff we wanted.

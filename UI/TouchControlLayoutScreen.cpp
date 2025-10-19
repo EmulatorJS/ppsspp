@@ -321,8 +321,8 @@ public:
 			float xOffset = bounds_.x;
 			float yOffset = bounds_.y;
 
-			dc.Draw()->Rect((x1+x2)/2 + xOffset - g_display.pixel_in_dps, y1 + yOffset, 3.0f * g_display.pixel_in_dps, y2-y1, col);
-			dc.Draw()->Rect(x1 + xOffset, (y1+y2)/2 + yOffset - g_display.pixel_in_dps, x2-x1, 3.0f * g_display.pixel_in_dps, col);
+			dc.Draw()->Rect((x1+x2)/2 + xOffset - g_display.pixel_in_dps_x, y1 + yOffset, 3.0f * g_display.pixel_in_dps_x, y2-y1, col);
+			dc.Draw()->Rect(x1 + xOffset, (y1+y2)/2 + yOffset - g_display.pixel_in_dps_y, x2-x1, 3.0f * g_display.pixel_in_dps_y, col);
 
 			for (int x = x1 + (x1+x2)/2 % g_Config.iTouchSnapGridSize; x < x2; x += g_Config.iTouchSnapGridSize)
 				dc.Draw()->vLine(x + xOffset, y1 + yOffset, y2 + yOffset, col);
@@ -581,30 +581,27 @@ void TouchControlLayoutScreen::onFinish(DialogResult reason) {
 	g_Config.Save("TouchControlLayoutScreen::onFinish");
 }
 
-UI::EventReturn TouchControlLayoutScreen::OnVisibility(UI::EventParams &e) {
+void TouchControlLayoutScreen::OnVisibility(UI::EventParams &e) {
 	screenManager()->push(new TouchControlVisibilityScreen(gamePath_));
-	return UI::EVENT_DONE;
 }
 
-UI::EventReturn TouchControlLayoutScreen::OnReset(UI::EventParams &e) {
+void TouchControlLayoutScreen::OnReset(UI::EventParams &e) {
 	INFO_LOG(Log::G3D, "Resetting touch control layout");
 	g_Config.ResetControlLayout();
 	const Bounds &bounds = screenManager()->getUIContext()->GetBounds();
 	InitPadLayout(bounds.w, bounds.h);
 	RecreateViews();
-	return UI::EVENT_DONE;
 };
 
 void TouchControlLayoutScreen::dialogFinished(const Screen *dialog, DialogResult result) {
 	RecreateViews();
 }
 
-UI::EventReturn TouchControlLayoutScreen::OnMode(UI::EventParams &e) {
+void TouchControlLayoutScreen::OnMode(UI::EventParams &e) {
 	int mode = mode_->GetSelection();
 	if (layoutView_) {
 		layoutView_->mode_ = mode;
 	}
-	return UI::EVENT_DONE;
 }
 
 void TouchControlLayoutScreen::update() {
@@ -622,10 +619,10 @@ void TouchControlLayoutScreen::update() {
 
 	Bounds bounds = layoutView_->GetBounds();
 	// Convert virtual pixels to real pixels.
-	bounds.x /= g_display.dpi_scale;
-	bounds.y /= g_display.dpi_scale;
-	bounds.w /= g_display.dpi_scale;
-	bounds.h /= g_display.dpi_scale;
+	bounds.x /= g_display.dpi_scale_x;
+	bounds.y /= g_display.dpi_scale_y;
+	bounds.w /= g_display.dpi_scale_x;
+	bounds.h /= g_display.dpi_scale_y;
 	SetOverrideScreenFrame(&bounds);
 }
 

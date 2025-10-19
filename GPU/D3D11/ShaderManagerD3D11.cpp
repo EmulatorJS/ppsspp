@@ -27,6 +27,7 @@
 #include "Common/CommonTypes.h"
 #include "GPU/GPUState.h"
 #include "GPU/Common/VertexShaderGenerator.h"
+#include "GPU/Common/VertexDecoderCommon.h"
 #include "GPU/D3D11/ShaderManagerD3D11.h"
 #include "GPU/D3D11/D3D11Util.h"
 
@@ -87,7 +88,18 @@ ShaderManagerD3D11::ShaderManagerD3D11(Draw::DrawContext *draw, ID3D11Device *de
 	static_assert(sizeof(ub_lights) <= 512, "ub_lights grew too big");
 	static_assert(sizeof(ub_bones) <= 384, "ub_bones grew too big");
 
-	D3D11_BUFFER_DESC desc{sizeof(ub_base), D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE };
+	InitDeviceObjects();
+}
+
+ShaderManagerD3D11::~ShaderManagerD3D11() {
+	ClearShaders();
+	delete[] codeBuffer_;
+	DestroyDeviceObjects();
+}
+
+void ShaderManagerD3D11::InitDeviceObjects() {
+
+	D3D11_BUFFER_DESC desc{sizeof(ub_base), D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE};
 	ASSERT_SUCCESS(device_->CreateBuffer(&desc, nullptr, &push_base));
 	desc.ByteWidth = sizeof(ub_lights);
 	ASSERT_SUCCESS(device_->CreateBuffer(&desc, nullptr, &push_lights));
@@ -95,9 +107,21 @@ ShaderManagerD3D11::ShaderManagerD3D11(Draw::DrawContext *draw, ID3D11Device *de
 	ASSERT_SUCCESS(device_->CreateBuffer(&desc, nullptr, &push_bones));
 }
 
-ShaderManagerD3D11::~ShaderManagerD3D11() {
-	ClearShaders();
-	delete[] codeBuffer_;
+void ShaderManagerD3D11::DestroyDeviceObjects() {
+	push_base.Reset();
+	push_lights.Reset();
+	push_bones.Reset();
+	Clear();
+}
+
+void ShaderManagerD3D11::DeviceLost() {
+	DestroyDeviceObjects();
+	draw_ = nullptr;
+}
+
+void ShaderManagerD3D11::DeviceRestore(Draw::DrawContext *draw) {
+	draw_ = draw;
+	InitDeviceObjects();
 }
 
 void ShaderManagerD3D11::Clear() {
@@ -162,13 +186,13 @@ void ShaderManagerD3D11::BindUniforms() {
 	context_->PSSetConstantBuffers(0, 1, ps_cbs);
 }
 
-void ShaderManagerD3D11::GetShaders(int prim, VertexDecoder *decoder, D3D11VertexShader **vshader, D3D11FragmentShader **fshader, const ComputedPipelineState &pipelineState, bool useHWTransform, bool useHWTessellation, bool weightsAsFloat, bool useSkinInDecode) {
+void ShaderManagerD3D11::GetShaders(int prim, u32 vertexType, D3D11VertexShader **vshader, D3D11FragmentShader **fshader, const ComputedPipelineState &pipelineState, bool useHWTransform, bool useHWTessellation, bool weightsAsFloat, bool useSkinInDecode) {
 	VShaderID VSID;
 	FShaderID FSID;
 
 	if (gstate_c.IsDirty(DIRTY_VERTEXSHADER_STATE)) {
 		gstate_c.Clean(DIRTY_VERTEXSHADER_STATE);
-		ComputeVertexShaderID(&VSID, decoder, useHWTransform, useHWTessellation, weightsAsFloat, useSkinInDecode);
+		ComputeVertexShaderID(&VSID, vertexType, useHWTransform, useHWTessellation, weightsAsFloat, useSkinInDecode);
 	} else {
 		VSID = lastVSID_;
 	}

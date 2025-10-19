@@ -49,7 +49,8 @@ void GamepadUpdateOpacity(float force) {
 		g_gamepadOpacity = force;
 		return;
 	}
-	if (coreState != CORE_RUNNING_CPU) {
+	if (coreState == CORE_RUNTIME_ERROR || coreState == CORE_POWERDOWN || coreState == CORE_STEPPING_GE) {
+		// No need to show the controls.
 		g_gamepadOpacity = 0.0f;
 		return;
 	}
@@ -227,18 +228,18 @@ bool CustomButton::Touch(const TouchInput &input) {
 			System_Vibrate(HAPTIC_VIRTUAL_KEY);
 
 		if (!repeat_) {
-			for (int i = 0; i < ARRAY_SIZE(customKeyList); i++) {
+			for (int i = 0; i < ARRAY_SIZE(g_customKeyList); i++) {
 				if (pspButtonBit_ & (1ULL << i)) {
-					controlMapper_->PSPKey(DEVICE_ID_TOUCH, customKeyList[i].c, (on_ && toggle_) ? KEY_UP : KEY_DOWN);
+					controlMapper_->PSPKey(DEVICE_ID_TOUCH, g_customKeyList[i].c, (on_ && toggle_) ? KEY_UP : KEY_DOWN);
 				}
 			}
 		}
 		on_ = toggle_ ? !on_ : true;
 	} else if (!toggle_ && lastDown && !down) {
 		if (!repeat_) {
-			for (int i = 0; i < ARRAY_SIZE(customKeyList); i++) {
+			for (int i = 0; i < ARRAY_SIZE(g_customKeyList); i++) {
 				if (pspButtonBit_ & (1ULL << i)) {
-					controlMapper_->PSPKey(DEVICE_ID_TOUCH, customKeyList[i].c, KEY_UP);
+					controlMapper_->PSPKey(DEVICE_ID_TOUCH, g_customKeyList[i].c, KEY_UP);
 				}
 			}
 		}
@@ -258,15 +259,15 @@ void CustomButton::Update() {
 		if (pressedFrames_ == 2*DOWN_FRAME) {
 			pressedFrames_ = 0;
 		} else if (pressedFrames_ == DOWN_FRAME) {
-			for (int i = 0; i < ARRAY_SIZE(customKeyList); i++) {
+			for (int i = 0; i < ARRAY_SIZE(g_customKeyList); i++) {
 				if (pspButtonBit_ & (1ULL << i)) {
-					controlMapper_->PSPKey(DEVICE_ID_TOUCH, customKeyList[i].c, KEY_UP);
+					controlMapper_->PSPKey(DEVICE_ID_TOUCH, g_customKeyList[i].c, KEY_UP);
 				}
 			}
 		} else if (on_ && pressedFrames_ == 0) {
-			for (int i = 0; i < ARRAY_SIZE(customKeyList); i++) {
+			for (int i = 0; i < ARRAY_SIZE(g_customKeyList); i++) {
 				if (pspButtonBit_ & (1ULL << i)) {
-					controlMapper_->PSPKey(DEVICE_ID_TOUCH, customKeyList[i].c, KEY_DOWN);
+					controlMapper_->PSPKey(DEVICE_ID_TOUCH, g_customKeyList[i].c, KEY_DOWN);
 				}
 			}
 			pressedFrames_ = 1;
@@ -939,7 +940,6 @@ UI::ViewGroup *CreatePadLayout(float xres, float yres, bool *pause, bool showPau
 			if (e.a && coreState == CORE_STEPPING_CPU) {
 				Core_Resume();
 			}
-			return UI::EVENT_DONE;
 		});
 	}
 
@@ -1021,8 +1021,8 @@ bool GestureGamepad::Touch(const TouchInput &input) {
 
 			if (g_Config.bAnalogGesture) {
 				const float k = g_Config.fAnalogGestureSensibility * 0.02;
-				float dx = (input.x - downX_) * g_display.dpi_scale * k;
-				float dy = (input.y - downY_) * g_display.dpi_scale * k;
+				float dx = (input.x - downX_)*g_display.dpi_scale_x * k;
+				float dy = (input.y - downY_)*g_display.dpi_scale_y * k;
 				dx = std::min(1.0f, std::max(-1.0f, dx));
 				dy = std::min(1.0f, std::max(-1.0f, dy));
 				__CtrlSetAnalogXY(0, dx, -dy);
@@ -1062,8 +1062,8 @@ void GestureGamepad::Draw(UIContext &dc) {
 
 void GestureGamepad::Update() {
 	const float th = 1.0f;
-	float dx = deltaX_ * g_display.dpi_scale * g_Config.fSwipeSensitivity;
-	float dy = deltaY_ * g_display.dpi_scale * g_Config.fSwipeSensitivity;
+	float dx = deltaX_ * g_display.dpi_scale_x * g_Config.fSwipeSensitivity;
+	float dy = deltaY_ * g_display.dpi_scale_y * g_Config.fSwipeSensitivity;
 	if (g_Config.iSwipeRight != 0) {
 		if (dx > th) {
 			controlMapper_->PSPKey(DEVICE_ID_TOUCH, GestureKey::keyList[g_Config.iSwipeRight-1], KEY_DOWN);

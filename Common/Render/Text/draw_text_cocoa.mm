@@ -32,7 +32,7 @@ enum {
 	MAX_TEXT_HEIGHT = 512
 };
 
-#define APPLE_FONT "Roboto-Condensed"
+#define APPLE_FONT "RobotoCondensed-Regular"
 
 // for future OpenEmu support
 #ifndef PPSSPP_FONT_BUNDLE
@@ -51,8 +51,35 @@ public:
 		static dispatch_once_t onceToken;
 		dispatch_once(&onceToken, ^{
 			NSURL *fontURL = [PPSSPP_FONT_BUNDLE URLForResource:@"Roboto-Condensed" withExtension:@"ttf" subdirectory:@"assets"];
+			if (!fontURL) {
+				NSLog(@"Font URL not found!");
+				return;
+			}
+			CFArrayRef descs = CTFontManagerCreateFontDescriptorsFromURL((__bridge CFURLRef)fontURL);
+			if (descs) {
+				CFIndex count = CFArrayGetCount(descs);
+				NSLog(@"Found %ld font descriptor(s)", count);
+
+				for (CFIndex i = 0; i < count; ++i) {
+					CTFontDescriptorRef desc = (CTFontDescriptorRef)CFArrayGetValueAtIndex(descs, i);
+					CFTypeRef attr = CTFontDescriptorCopyAttribute(desc, kCTFontNameAttribute);
+					if (attr && CFGetTypeID(attr) == CFStringGetTypeID()) {
+						CFStringRef name = (CFStringRef)attr;
+						NSLog(@"Descriptor #%ld: %@", i, name);
+						CFRelease(name);
+					} else {
+						NSLog(@"Descriptor #%ld: Unknown or non-string attribute", i);
+						if (attr) CFRelease(attr);
+					}
+				}
+
+				CFRelease(descs);
+			} else {
+				NSLog(@"Failed to retrieve font descriptors");
+			}
 			CTFontManagerRegisterFontsForURL((CFURLRef)fontURL, kCTFontManagerScopeProcess, NULL);
 		});
+
 		// Create an attributed string with string and font information
 		CGFloat fontSize = ceilf((height / dpiScale) * 1.25f);
 		INFO_LOG(Log::G3D, "Creating cocoa typeface '%s' size %d (effective size %0.1f)", APPLE_FONT, height, fontSize);
@@ -245,10 +272,10 @@ bool TextDrawerCocoa::DrawStringBitmap(std::vector<uint8_t> &bitmapData, TextStr
 			for (int x = 0; x < entry.bmWidth; x++) {
 				uint32_t color = bitmap[bmWidth * y + x];
 				if (fullColor) {
-					bitmapData32[entry.bmWidth * y + x] = color;
+					bitmapData32[entry.bmWidth * y + x] = RGBAToPremul8888(color);
 				} else {
 					// Don't know why we'd end up here, but let's support it.
-					bitmapData32[entry.bmWidth * y + x] = (color << 24) | 0xFFFFFF;
+					bitmapData32[entry.bmWidth * y + x] = AlphaToPremul8888(color);
 				}
 			}
 		}
@@ -258,8 +285,8 @@ bool TextDrawerCocoa::DrawStringBitmap(std::vector<uint8_t> &bitmapData, TextStr
 		uint16_t *bitmapData16 = (uint16_t *)&bitmapData[0];
 		for (int y = 0; y < entry.bmHeight; y++) {
 			for (int x = 0; x < entry.bmWidth; x++) {
-				uint8_t bAlpha = (uint8_t)((bitmap[bmWidth * y + x] & 0xff) >> 4);
-				bitmapData16[entry.bmWidth * y + x] = (bAlpha) | 0xfff0;
+				uint8_t bAlpha = (uint8_t)(bitmap[bmWidth * y + x] & 0xff);
+				bitmapData16[entry.bmWidth * y + x] = AlphaToPremul4444(bAlpha);
 			}
 		}
 	} else if (texFormat == Draw::DataFormat::A4R4G4B4_UNORM_PACK16) {
@@ -268,8 +295,8 @@ bool TextDrawerCocoa::DrawStringBitmap(std::vector<uint8_t> &bitmapData, TextStr
 		uint16_t *bitmapData16 = (uint16_t *)&bitmapData[0];
 		for (int y = 0; y < entry.bmHeight; y++) {
 			for (int x = 0; x < entry.bmWidth; x++) {
-				uint8_t bAlpha = (uint8_t)((bitmap[bmWidth * y + x] & 0xff) >> 4);
-				bitmapData16[entry.bmWidth * y + x] = (bAlpha << 12) | 0x0fff;
+				uint8_t bAlpha = (uint8_t)(bitmap[bmWidth * y + x] & 0xff);
+				bitmapData16[entry.bmWidth * y + x] = AlphaToPremul4444(bAlpha);
 			}
 		}
 	} else if (texFormat == Draw::DataFormat::R8_UNORM) {

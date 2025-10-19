@@ -49,13 +49,9 @@ void OpenSLContext::BqPlayerCallback(SLAndroidSimpleBufferQueueItf bq) {
 		return;
 	}
 
-	int renderedFrames = audioCallback(buffer[curBuffer], framesPerBuffer, SampleRate());
+	audioCallback(buffer[curBuffer], framesPerBuffer, SampleRate(), nullptr);
 
-	int sizeInBytes = framesPerBuffer * 2 * sizeof(short);
-	int byteCount = (framesPerBuffer - renderedFrames) * 4;
-	if (byteCount > 0) {
-		memset(buffer[curBuffer] + renderedFrames * 2, 0, byteCount);
-	}
+	const int sizeInBytes = framesPerBuffer * 2 * sizeof(short);
 	SLresult result = (*bqPlayerBufferQueue)->Enqueue(bqPlayerBufferQueue, buffer[curBuffer], sizeInBytes);
 	
 	// TODO: get rid of this snprintf too
@@ -64,7 +60,7 @@ void OpenSLContext::BqPlayerCallback(SLAndroidSimpleBufferQueueItf bq) {
 	// the most likely other result is SL_RESULT_BUFFER_INSUFFICIENT,
 	// which for this code example would indicate a programming error
 	if (result != SL_RESULT_SUCCESS) {
-		ERROR_LOG(Log::Audio, "OpenSL: Failed to enqueue! %i %i", renderedFrames, sizeInBytes);
+		ERROR_LOG(Log::Audio, "OpenSL: Failed to enqueue! %i", sizeInBytes);
 	}
 
 	curBuffer += 1; // Switch buffer
@@ -275,7 +271,7 @@ OpenSLContext::~OpenSLContext() {
 		CheckResult(result, "SetPlayState(stopped) failed");
 	}
 
-	INFO_LOG(Log::Audio, "OpenSL: Shutdown - deleting player object");
+	DEBUG_LOG(Log::Audio, "OpenSL: Shutdown - deleting player object");
 
 	if (bqPlayerObject) {
 		(*bqPlayerObject)->Destroy(bqPlayerObject);
@@ -285,7 +281,7 @@ OpenSLContext::~OpenSLContext() {
 		bqPlayerVolume = nullptr;
 	}
 
-	INFO_LOG(Log::Audio, "OpenSL: Shutdown - deleting mix object");
+	DEBUG_LOG(Log::Audio, "OpenSL: Shutdown - deleting mix object");
 
 	if (outputMixObject) {
 		(*outputMixObject)->Destroy(outputMixObject);
@@ -293,7 +289,7 @@ OpenSLContext::~OpenSLContext() {
 	}
 	OpenSLContext::AudioRecord_Stop();
 
-	INFO_LOG(Log::Audio, "OpenSL: Shutdown - deleting engine object");
+	DEBUG_LOG(Log::Audio, "OpenSL: Shutdown - deleting engine object");
 
 	if (engineObject) {
 		(*engineObject)->Destroy(engineObject);

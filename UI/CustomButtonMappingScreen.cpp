@@ -47,7 +47,6 @@ public:
 			c->OnClick.Add([=](UI::EventParams &e) {
 				*setting_ = i;
 				TriggerFinish(DR_OK);
-				return UI::EVENT_DONE;
 			});
 		}
 
@@ -77,7 +76,6 @@ public:
 			c->OnClick.Add([=](UI::EventParams &e) {
 				*setting_ = i;
 				TriggerFinish(DR_OK);
-				return UI::EVENT_DONE;
 			});
 		}
 
@@ -133,7 +131,7 @@ void CustomButtonMappingScreen::CreateViews() {
 	memset(array, 0, sizeof(array));
 	cfg = &g_Config.CustomButton[id_];
 	show = &g_Config.touchCustom[id_].show;
-	for (int i = 0; i < ARRAY_SIZE(customKeyList); i++)
+	for (int i = 0; i < ARRAY_SIZE(g_customKeyList); i++)
 		array[i] = (0x01 == ((g_Config.CustomButton[id_].key >> i) & 0x01));
 
 	leftColumn->Add(new ButtonPreview(g_Config.iTouchButtonStyle == 0 ? customKeyShapes[cfg->shape].i : customKeyShapes[cfg->shape].l, 
@@ -159,7 +157,6 @@ void CustomButtonMappingScreen::CreateViews() {
 			iconScreen->SetPopupOrigin(e.v);
 
 		screenManager()->push(iconScreen);
-		return UI::EVENT_DONE;
 	});
 
 	Choice *shape = vertLayout->Add(new Choice(co->T("Shape")));
@@ -170,7 +167,6 @@ void CustomButtonMappingScreen::CreateViews() {
 			shape->SetPopupOrigin(e.v);
 
 		screenManager()->push(shape);
-		return UI::EVENT_DONE;
 	});
 
 	vertLayout->Add(new ItemHeader(co->T("Button Binding")));
@@ -183,7 +179,7 @@ void CustomButtonMappingScreen::CreateViews() {
 	GridLayout *grid = vertLayout->Add(new GridLayout(gridsettings, new LayoutParams(FILL_PARENT, WRAP_CONTENT)));
 
 	// Button image and action are defined in GamepadEmu.h
-	for (int i = 0; i < ARRAY_SIZE(customKeyList); ++i) {
+	for (int i = 0; i < ARRAY_SIZE(g_customKeyList); ++i) {
 		LinearLayout *row = new LinearLayout(ORIENT_HORIZONTAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT));
 		row->SetSpacing(0);
 
@@ -191,10 +187,10 @@ void CustomButtonMappingScreen::CreateViews() {
 		row->Add(checkbox);
 
 		Choice *choice;
-		if (customKeyList[i].i.isValid()) {
-			choice = new Choice(customKeyList[i].i, new LinearLayoutParams(1.0f));
+		if (g_customKeyList[i].i.isValid()) {
+			choice = new Choice(g_customKeyList[i].i, new LinearLayoutParams(1.0f));
 		} else {
-			choice = new Choice(mc->T(KeyMap::GetPspButtonNameCharPointer(customKeyList[i].c)), new LinearLayoutParams(1.0f));
+			choice = new Choice(mc->T(KeyMap::GetPspButtonNameCharPointer(g_customKeyList[i].c)), new LinearLayoutParams(1.0f));
 		}
 
 		ChoiceEventHandler *choiceEventHandler = new ChoiceEventHandler(checkbox);
@@ -207,9 +203,9 @@ void CustomButtonMappingScreen::CreateViews() {
 	}
 }
 
-static uint64_t arrayToInt(const bool ary[ARRAY_SIZE(CustomKeyData::customKeyList)]) {
+static uint64_t arrayToInt(const bool ary[ARRAY_SIZE(CustomKeyData::g_customKeyList)]) {
 	uint64_t value = 0;
-	for (int i = ARRAY_SIZE(CustomKeyData::customKeyList)-1; i >= 0; i--) {
+	for (int i = ARRAY_SIZE(CustomKeyData::g_customKeyList)-1; i >= 0; i--) {
 		value |= ary[i] ? 1 : 0;
 		if (i > 0) {
 			value = value << 1;
@@ -234,7 +230,6 @@ void CustomButtonMappingScreen::onFinish(DialogResult result) {
 	g_Config.Save("CustomButtonMappingScreen::onFinish");
 }
 
-UI::EventReturn CustomButtonMappingScreen::ChoiceEventHandler::onChoiceClick(UI::EventParams &e){
+void CustomButtonMappingScreen::ChoiceEventHandler::onChoiceClick(UI::EventParams &e){
 	checkbox_->Toggle();
-	return UI::EVENT_DONE;
 };

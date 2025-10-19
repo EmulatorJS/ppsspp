@@ -38,10 +38,10 @@ public:
 	void dialogFinished(const Screen *dialog, DialogResult result) override;
 
 protected:
-	UI::EventReturn OnJitCompare(UI::EventParams &e);
-	UI::EventReturn OnShaderView(UI::EventParams &e);
-	UI::EventReturn OnDeveloperTools(UI::EventParams &e);
-	UI::EventReturn OnResetLimitedLogging(UI::EventParams &e);
+	void OnJitCompare(UI::EventParams &e);
+	void OnShaderView(UI::EventParams &e);
+	void OnDeveloperTools(UI::EventParams &e);
+	void OnResetLimitedLogging(UI::EventParams &e);
 
 private:
 	Path gamePath_;
@@ -55,8 +55,8 @@ public:
 	const char *tag() const override { return "JitDebug"; }
 
 private:
-	UI::EventReturn OnEnableAll(UI::EventParams &e);
-	UI::EventReturn OnDisableAll(UI::EventParams &e);
+	void OnEnableAll(UI::EventParams &e);
+	void OnDisableAll(UI::EventParams &e);
 };
 
 class LogConfigScreen : public UIDialogScreenWithBackground {
@@ -67,11 +67,11 @@ public:
 	const char *tag() const override { return "LogConfig"; }
 
 private:
-	UI::EventReturn OnToggleAll(UI::EventParams &e);
-	UI::EventReturn OnEnableAll(UI::EventParams &e);
-	UI::EventReturn OnDisableAll(UI::EventParams &e);
-	UI::EventReturn OnLogLevel(UI::EventParams &e);
-	UI::EventReturn OnLogLevelChange(UI::EventParams &e);
+	void OnToggleAll(UI::EventParams &e);
+	void OnEnableAll(UI::EventParams &e);
+	void OnDisableAll(UI::EventParams &e);
+	void OnLogLevel(UI::EventParams &e);
+	void OnLogLevelChange(UI::EventParams &e);
 };
 
 class LogViewScreen : public UIDialogScreenWithBackground {
@@ -99,32 +99,6 @@ private:
 	void OnCompleted(DialogResult result) override;
 };
 
-class SystemInfoScreen : public TabbedUIDialogScreenWithGameBackground {
-public:
-	SystemInfoScreen(const Path &filename) : TabbedUIDialogScreenWithGameBackground(filename) {}
-
-	const char *tag() const override { return "SystemInfo"; }
-
-	void CreateTabs() override;
-	void update() override;
-
-protected:
-	UI::EventReturn CopySummaryToClipboard(UI::EventParams &e);
-	bool ShowSearchControls() const override { return false; }
-
-private:
-	void CreateDeviceInfoTab(UI::LinearLayout *deviceInfo);
-	void CreateStorageTab(UI::LinearLayout *storage);
-	void CreateBuildConfigTab(UI::LinearLayout *storage);
-	void CreateCPUExtensionsTab(UI::LinearLayout *storage);
-	void CreateDriverBugsTab(UI::LinearLayout *storage);
-	void CreateInternalsTab(UI::ViewGroup *internals);
-	void CreateOpenGLExtsTab(UI::LinearLayout *gpuExtensions);
-	void CreateVulkanExtsTab(UI::LinearLayout *gpuExtensions);
-
-	int testSliderValue_ = 0;
-};
-
 class GPIGPOScreen : public PopupScreen {
 public:
 	GPIGPOScreen(std::string_view title) : PopupScreen(title, "OK") {}
@@ -143,7 +117,7 @@ public:
 private:
 	int ListShaders(DebugShaderType shaderType, UI::LinearLayout *view);
 
-	UI::EventReturn OnShaderClick(UI::EventParams &e);
+	void OnShaderClick(UI::EventParams &e);
 
 	UI::TabHolder *tabs_;
 };
@@ -174,7 +148,7 @@ public:
 	const char *tag() const override { return "FrameDumpTest"; }
 
 private:
-	UI::EventReturn OnLoadDump(UI::EventParams &e);
+	void OnLoadDump(UI::EventParams &e);
 
 	std::vector<std::string> files_;
 	std::shared_ptr<http::Request> listing_;
@@ -217,9 +191,9 @@ protected:
 	void CreateViews() override;
 	void UpdateLogView();
 
-	UI::EventReturn OnImmersiveModeChange(UI::EventParams &e);
-	UI::EventReturn OnRenderingBackend(UI::EventParams &e);
-	UI::EventReturn OnRecreateActivity(UI::EventParams &e);
+	void OnImmersiveModeChange(UI::EventParams &e);
+	void OnRenderingBackend(UI::EventParams &e);
+	void OnRecreateActivity(UI::EventParams &e);
 };
 
 void DrawProfile(UIContext &ui);

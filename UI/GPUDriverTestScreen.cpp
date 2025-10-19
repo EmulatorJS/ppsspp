@@ -306,7 +306,7 @@ void GPUDriverTestScreen::CreateViews() {
 	tabHolder_->AddTab("Discard", new LinearLayout(ORIENT_VERTICAL));
 	tabHolder_->AddTab("Shader", new LinearLayout(ORIENT_VERTICAL));
 
-	Choice *back = new Choice(di->T("Back"), "", false, new AnchorLayoutParams(100, WRAP_CONTENT, 10, NONE, NONE, 10));
+	Choice *back = new Choice(di->T("Back"), "", false, new AnchorLayoutParams(190, WRAP_CONTENT, 10, NONE, NONE, 10));
 	back->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
 	anchor->Add(back);
 }
@@ -480,7 +480,7 @@ void GPUDriverTestScreen::DiscardTest(UIContext &dc) {
 
 	float testW = 170.f;
 	float padding = 20.0f;
-	UI::Style style = dc.theme->itemStyle;
+	UI::Style style = dc.GetTheme().itemStyle;
 
 	float y = 150;
 	for (int j = 0; j < numWriteModes; j++, y += 120.f + padding) {

@@ -51,11 +51,11 @@ static ImColor scaleColor(ImColor color, float factor) {
 	return color;
 }
 
-bool ImDisasmView::getDisasmAddressText(u32 address, char* dest, bool abbreviateLabels, bool showData) {
+bool ImDisasmView::getDisasmAddressText(u32 address, char *dest, size_t bufSize, bool abbreviateLabels, bool showData) {
 	if (PSP_GetBootState() != BootState::Complete)
 		return false;
 
-	return GetDisasmAddressText(address, dest, abbreviateLabels, showData, displaySymbols_);
+	return GetDisasmAddressText(address, dest, bufSize, abbreviateLabels, showData, displaySymbols_);
 }
 
 void ImDisasmView::assembleOpcode(u32 address, const std::string &defaultText) {
@@ -358,7 +358,7 @@ void ImDisasmView::Draw(ImDrawList *drawList, ImControl &control) {
 		}
 
 		char addressText[64];
-		getDisasmAddressText(address, addressText, true, line.type == DISTYPE_OPCODE);
+		getDisasmAddressText(address, addressText, sizeof(addressText), true, line.type == DISTYPE_OPCODE);
 		drawList->AddText(ImVec2(bounds.x + pixelPositions_.addressStart, bounds.y + rowY1 + 2), textColor, addressText);
 
 		if (isInInterval(address, line.totalSize, pc)) {
@@ -780,7 +780,7 @@ void ImDisasmView::PopupMenu(ImControl &control) {
 		if (ImGui::MenuItem("Rename function")) {
 			funcBegin_ = g_symbolMap->GetFunctionStart(curAddress_);
 			if (funcBegin_ != -1) {
-				truncate_cpy(funcNameTemp_, g_symbolMap->GetLabelString(funcBegin_).c_str());
+				truncate_cpy(funcNameTemp_, g_symbolMap->GetLabelString(funcBegin_));
 				renameFunctionPopup = true;
 				statusBarText_ = funcNameTemp_;
 			} else {
@@ -1013,7 +1013,7 @@ void ImDisasmView::SearchNext(bool forward) {
 		g_disassemblyManager.getLine(searchAddress, displaySymbols_, lineInfo, debugger_);
 
 		char addressText[64];
-		getDisasmAddressText(searchAddress, addressText, true, lineInfo.type == DISTYPE_OPCODE);
+		getDisasmAddressText(searchAddress, addressText, sizeof(addressText), true, lineInfo.type == DISTYPE_OPCODE);
 
 		const char* opcode = lineInfo.name.c_str();
 		const char* arguments = lineInfo.params.c_str();
@@ -1075,7 +1075,7 @@ std::string ImDisasmView::disassembleRange(u32 start, u32 size) {
 		char addressText[64], buffer[512];
 
 		g_disassemblyManager.getLine(disAddress, displaySymbols_, line, debugger_);
-		bool isLabel = getDisasmAddressText(disAddress, addressText, false, line.type == DISTYPE_OPCODE);
+		bool isLabel = getDisasmAddressText(disAddress, addressText, sizeof(addressText), false, line.type == DISTYPE_OPCODE);
 
 		if (isLabel) {
 			if (!previousLabel) result += "\r\n";
@@ -1205,7 +1205,7 @@ void ImDisasmWindow::Draw(MIPSDebugInterface *mipsDebug, ImConfig &cfg, ImContro
 	ImGui::Text("Step: ");
 	ImGui::SameLine();
 
-	if (ImGui::SmallButton("Into")) {
+	if (ImGui::RepeatButtonShift("Into")) {
 		u32 stepSize = disasmView_.getInstructionSizeAt(mipsDebug->GetPC());
 		Core_RequestCPUStep(CPUStepType::Into, stepSize);
 	}
@@ -1237,12 +1237,6 @@ void ImDisasmWindow::Draw(MIPSDebugInterface *mipsDebug, ImConfig &cfg, ImContro
 	if (ImGui::SmallButton("Syscall")) {
 		hleDebugBreak();
 		Core_Resume();
-	}
-
-	ImGui::SameLine();
-	if (ImGui::RepeatButton("Skim")) {
-		u32 stepSize = disasmView_.getInstructionSizeAt(mipsDebug->GetPC());
-		Core_RequestCPUStep(CPUStepType::Into, stepSize);
 	}
 
 	ImGui::EndDisabled();
@@ -1333,7 +1327,7 @@ void ImDisasmWindow::Draw(MIPSDebugInterface *mipsDebug, ImConfig &cfg, ImContro
 					if (ImGui::Selectable(symCache_[i].name.c_str(), selectedSymbol_ == i)) {
 						disasmView_.gotoAddr(symCache_[i].address);
 						disasmView_.scrollAddressIntoView();
-						truncate_cpy(selectedSymbolName_, symCache_[i].name.c_str());
+						truncate_cpy(selectedSymbolName_, symCache_[i].name);
 						selectedSymbol_ = i;
 					}
 				}

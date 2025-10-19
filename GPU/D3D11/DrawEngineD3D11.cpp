@@ -90,19 +90,6 @@ void DrawEngineD3D11::InitDeviceObjects() {
 	draw_->SetInvalidationCallback(std::bind(&DrawEngineD3D11::Invalidate, this, std::placeholders::_1));
 }
 
-void DrawEngineD3D11::ClearInputLayoutMap() {
-	inputLayoutMap_.Iterate([&](const InputLayoutKey &key, ComPtr<ID3D11InputLayout> il) {
-		if (il)
-			il.Reset();
-	});
-	inputLayoutMap_.Clear();
-}
-
-void DrawEngineD3D11::NotifyConfigChanged() {
-	DrawEngineCommon::NotifyConfigChanged();
-	ClearInputLayoutMap();
-}
-
 void DrawEngineD3D11::DestroyDeviceObjects() {
 	if (draw_) {
 		draw_->SetInvalidationCallback(InvalidationCallback());
@@ -114,6 +101,57 @@ void DrawEngineD3D11::DestroyDeviceObjects() {
 	tessDataTransfer = nullptr;
 	delete pushVerts_;
 	delete pushInds_;
+	pushVerts_ = nullptr;
+	pushInds_ = nullptr;
+
+	// Clear state caches.
+	blendCache_.Iterate([&](const uint64_t &key, ID3D11BlendState *state) {
+		state->Release();
+	});
+	blendCache_.Clear();
+	blendCache1_.Iterate([&](const uint64_t &key, ID3D11BlendState1 *state) {
+		state->Release();
+	});
+	blendCache1_.Clear();
+	depthStencilCache_.Iterate([&](const uint64_t &key, ID3D11DepthStencilState *state) {
+		state->Release();
+	});
+	depthStencilCache_.Clear();
+	rasterCache_.Iterate([&](const uint32_t &key, ID3D11RasterizerState *state) {
+		state->Release();
+	});
+	rasterCache_.Clear();
+	inputLayoutMap_.Iterate([&](const InputLayoutKey &key, ID3D11InputLayout *state) {
+		state->Release();
+	});
+	inputLayoutMap_.Clear();
+
+	blendState_ = nullptr;
+	blendState1_ = nullptr;
+	rasterState_ = nullptr;
+	depthStencilState_ = nullptr;
+}
+
+void DrawEngineD3D11::DeviceLost() {
+	DestroyDeviceObjects();
+	draw_ = nullptr;
+}
+
+void DrawEngineD3D11::DeviceRestore(Draw::DrawContext *draw) {
+	draw_ = draw;
+	InitDeviceObjects();
+}
+
+void DrawEngineD3D11::ClearInputLayoutMap() {
+	inputLayoutMap_.Iterate([&](const InputLayoutKey &key, ID3D11InputLayout *il) {
+		il->Release();
+	});
+	inputLayoutMap_.Clear();
+}
+
+void DrawEngineD3D11::NotifyConfigChanged() {
+	DrawEngineCommon::NotifyConfigChanged();
+	ClearInputLayoutMap();
 }
 
 struct DeclTypeInfo {
@@ -154,9 +192,9 @@ HRESULT DrawEngineD3D11::SetupDecFmtForDraw(D3D11VertexShader *vshader, const De
 	// TODO: Instead of one for each vshader, we can reduce it to one for each type of shader
 	// that reads TEXCOORD or not, etc. Not sure if worth it.
 	const InputLayoutKey key{ vshader, decFmt.id };
-	ComPtr<ID3D11InputLayout> inputLayout;
+	ID3D11InputLayout *inputLayout;
 	if (inputLayoutMap_.Get(key, &inputLayout)) {
-		*ppInputLayout = inputLayout.Detach();
+		*ppInputLayout = inputLayout;
 		return S_OK;
 	} else {
 		D3D11_INPUT_ELEMENT_DESC VertexElements[8];
@@ -212,7 +250,7 @@ HRESULT DrawEngineD3D11::SetupDecFmtForDraw(D3D11VertexShader *vshader, const De
 
 		// Add it to map
 		inputLayoutMap_.Insert(key, inputLayout);
-		*ppInputLayout = inputLayout.Detach();
+		*ppInputLayout = inputLayout;
 		return hr;
 	}
 }
@@ -284,15 +322,15 @@ void DrawEngineD3D11::Flush() {
 
 		D3D11VertexShader *vshader;
 		D3D11FragmentShader *fshader;
-		shaderManager_->GetShaders(prim, dec_, &vshader, &fshader, pipelineState_, useHWTransform, useHWTessellation_, decOptions_.expandAllWeightsToFloat, applySkinInDecode_);
-		ComPtr<ID3D11InputLayout> inputLayout;
+		shaderManager_->GetShaders(prim, dec_->VertexType(), &vshader, &fshader, pipelineState_, useHWTransform, useHWTessellation_, decOptions_.expandAllWeightsToFloat, applySkinInDecode_);
+		ID3D11InputLayout *inputLayout;
 		SetupDecFmtForDraw(vshader, dec_->GetDecVtxFmt(), dec_->VertexType(), &inputLayout);
 		context_->PSSetShader(fshader->GetShader(), nullptr, 0);
 		context_->VSSetShader(vshader->GetShader(), nullptr, 0);
 		shaderManager_->UpdateUniforms(framebufferManager_->UseBufferedRendering());
 		shaderManager_->BindUniforms();
 
-		context_->IASetInputLayout(inputLayout.Get());
+		context_->IASetInputLayout(inputLayout);
 		UINT stride = dec_->GetDecVtxFmt().stride;
 		context_->IASetPrimitiveTopology(d3d11prim[prim]);
 
@@ -331,7 +369,7 @@ void DrawEngineD3D11::Flush() {
 		}
 	} else {
 		PROFILE_THIS_SCOPE("soft");
-		VertexDecoder *swDec = dec_;
+		const VertexDecoder *swDec = dec_;
 		if (swDec->nweights != 0) {
 			u32 withSkinning = lastVType_ | (1 << 26);
 			if (withSkinning != lastVType_) {
@@ -420,7 +458,7 @@ void DrawEngineD3D11::Flush() {
 		if (result.action == SW_DRAW_INDEXED) {
 			D3D11VertexShader *vshader;
 			D3D11FragmentShader *fshader;
-			shaderManager_->GetShaders(prim, swDec, &vshader, &fshader, pipelineState_, false, false, decOptions_.expandAllWeightsToFloat, true);
+			shaderManager_->GetShaders(prim, swDec->VertexType(), &vshader, &fshader, pipelineState_, false, false, decOptions_.expandAllWeightsToFloat, true);
 			context_->PSSetShader(fshader->GetShader(), nullptr, 0);
 			context_->VSSetShader(vshader->GetShader(), nullptr, 0);
 			shaderManager_->UpdateUniforms(framebufferManager_->UseBufferedRendering());
@@ -429,12 +467,12 @@ void DrawEngineD3D11::Flush() {
 			// We really do need a vertex layout for each vertex shader (or at least check its ID bits for what inputs it uses)!
 			// Some vertex shaders ignore one of the inputs, and then the layout created from it will lack it, which will be a problem for others.
 			InputLayoutKey key{ vshader, 0xFFFFFFFF };  // Let's use 0xFFFFFFFF to signify TransformedVertex
-			ComPtr<ID3D11InputLayout> layout;
+			ID3D11InputLayout *layout;
 			if (!inputLayoutMap_.Get(key, &layout)) {
 				ASSERT_SUCCESS(device_->CreateInputLayout(TransformedVertexElements, ARRAY_SIZE(TransformedVertexElements), vshader->bytecode().data(), vshader->bytecode().size(), &layout));
 				inputLayoutMap_.Insert(key, layout);
 			}
-			context_->IASetInputLayout(layout.Get());
+			context_->IASetInputLayout(layout);
 			context_->IASetPrimitiveTopology(d3d11prim[prim]);
 
 			UINT stride = sizeof(TransformedVertex);

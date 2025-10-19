@@ -120,10 +120,12 @@ void JitBlockCache::Shutdown() {
 // This clears the JIT cache. It's called from JitCache.cpp when the JIT cache
 // is full and when saving and loading states.
 void JitBlockCache::Clear() {
+	// Note: We intentionally clear the block_map_ first to avoid O(N^2) behavior in RemoveBlockMap
 	block_map_.clear();
-	proxyBlockMap_.clear();
-	for (int i = 0; i < num_blocks_; i++)
+	for (int i = 0; i < num_blocks_; i++) {
 		DestroyBlock(i, DestroyType::CLEAR);
+	}
+	proxyBlockMap_.clear();
 	links_to_.clear();
 	num_blocks_ = 0;
 
@@ -234,8 +236,10 @@ void JitBlockCache::RemoveBlockMap(int block_num) {
 		block_map_.erase(it);
 	} else {
 		// It wasn't in there, or it has the wrong key.  Let's search...
+		// TODO: This is O(n), so O(n^2) when called for every block.
 		for (auto it = block_map_.begin(); it != block_map_.end(); ++it) {
 			if (it->second == (u32)block_num) {
+				_dbg_assert_(false);
 				block_map_.erase(it);
 				break;
 			}
@@ -658,6 +662,9 @@ int JitBlockCache::GetBlockExitSize() {
 #elif PPSSPP_ARCH(RISCV64)
 	// Will depend on the sequence found to encode the destination address.
 	return 0;
+#elif PPSSPP_ARCH(LOONGARCH64)
+	// Will depend on the sequence found to encode the destination address.
+	return 0;
 #else
 #warning GetBlockExitSize unimplemented
 	return 0;
@@ -711,6 +718,8 @@ JitBlockDebugInfo JitBlockCache::GetBlockDebugInfo(int blockNum) const {
 	debugInfo.targetDisasm = DisassembleX86(block->normalEntry, block->codeSize);
 #elif PPSSPP_ARCH(RISCV64)
 	debugInfo.targetDisasm = DisassembleRV64(block->normalEntry, block->codeSize);
+#elif PPSSPP_ARCH(LOONGARCH64)
+	debugInfo.targetDisasm = DisassembleLA64(block->normalEntry, block->codeSize);
 #endif
 	return debugInfo;
 }

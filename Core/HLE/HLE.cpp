@@ -202,6 +202,9 @@ static DisableHLEFlags GetDisableHLEFlags() {
 	if (PSP_CoreParameter().compat.flags().DisableHLESceFont) {
 		flags |= DisableHLEFlags::sceFont;
 	}
+	if (PSP_CoreParameter().compat.flags().ForceHLEPsmf) {
+		flags &= ~(DisableHLEFlags::scePsmf | DisableHLEFlags::scePsmfPlayer);
+	}
 
 	flags &= ~(DisableHLEFlags)g_Config.iForceEnableHLE;
 	return flags;
@@ -902,7 +905,7 @@ const HLEFunction *GetSyscallFuncPointer(MIPSOpcode op) {
 	int funcnum = callno & 0xFFF;
 	int modulenum = (callno & 0xFF000) >> 12;
 	if (funcnum == 0xfff) {
-		std::string_view modName = modulenum > (int)moduleDB.size() ? "(unknown)" : moduleDB[modulenum].name;
+		std::string_view modName = modulenum >= (int)moduleDB.size() ? "(unknown)" : moduleDB[modulenum].name;
 		ERROR_LOG(Log::HLE, "Unknown syscall: Module: '%.*s' (module: %d func: %d)", (int)modName.size(), modName.data(), modulenum, funcnum);
 		return NULL;
 	}

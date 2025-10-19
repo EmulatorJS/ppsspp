@@ -94,7 +94,6 @@ GameLogNotes.txt
 screenshots
 android/assets/lang
 android/assets/flash0
-ui_atlas.zim.png
 font_atlas.zim.png
 asciifont_atlas.zim.png
 ppge_atlas.zim.png
@@ -104,6 +103,9 @@ Windows/compileData*
 Windows/*.ipch
 Windows/imgui.ini
 imgui.ini
+
+# debug file
+ui_atlas_gen.png
 
 # For vim
 *.swp

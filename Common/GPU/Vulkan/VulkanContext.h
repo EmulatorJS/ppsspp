@@ -25,10 +25,6 @@
 
 enum class VulkanInitFlags : uint32_t {
 	VALIDATE = (1 << 0),
-	PRESENT_MAILBOX = (1 << 1),
-	PRESENT_IMMEDIATE = (1 << 2),
-	PRESENT_FIFO_RELAXED = (1 << 3),
-	PRESENT_FIFO = (1 << 4),
 	DISABLE_IMPLICIT_LAYERS = (1 << 5),
 };
 ENUM_CLASS_BITOPS(VulkanInitFlags);
@@ -184,6 +180,8 @@ public:
 		const char *app_name;
 		int app_ver;
 		VulkanInitFlags flags;
+		std::string customDriver;
+		VkPresentModeKHR presentMode;
 	};
 
 	VkResult CreateInstance(const CreateInfo &info);
@@ -207,8 +205,10 @@ public:
 
 	VkDevice GetDevice() const { return device_; }
 	VkInstance GetInstance() const { return instance_; }
-	VulkanInitFlags GetInitFlags() const { return flags_; }
-	void UpdateInitFlags(VulkanInitFlags flags) { flags_ = flags; }
+	VulkanInitFlags GetInitFlags() const { return createInfo_.flags; }
+
+	// Of course, this won't update things that can only change on first init.
+	void UpdateCreateInfo(const VulkanContext::CreateInfo &info) { createInfo_ = info; }
 
 	VulkanDeleteList &Delete() { return globalDeleteList_; }
 
@@ -231,9 +231,6 @@ public:
 	// Utility functions for shorter code
 	VkFence CreateFence(bool presignalled);
 	bool CreateShaderModule(const std::vector<uint32_t> &spirv, VkShaderModule *shaderModule, const char *tag);
-
-	int GetBackbufferWidth() { return (int)swapChainExtent_.width; }
-	int GetBackbufferHeight() { return (int)swapChainExtent_.height; }
 
 	void BeginFrame(VkCommandBuffer firstCommandBuffer);
 	void EndFrame();
@@ -373,12 +370,13 @@ public:
 		return curFrame_;
 	}
 
-	VkSwapchainKHR GetSwapchain() const {
-		return swapchain_;
-	}
-	VkFormat GetSwapchainFormat() const {
-		return swapchainFormat_;
-	}
+	VkSwapchainKHR GetSwapchain() const { return swapchain_; }
+	VkFormat GetSwapchainFormat() const { return swapchainFormat_; }
+	bool IsSwapchainInited() const { return swapchainInited_; }
+	bool HasRealSwapchain() const { return swapChainExtent_.width > 0; }
+
+	int GetBackbufferWidth() { return (int)swapChainExtent_.width; }
+	int GetBackbufferHeight() { return (int)swapChainExtent_.height; }
 
 	void SetProfilerEnabledPtr(bool *enabled) {
 		for (auto &frame : frame_) {
@@ -414,6 +412,15 @@ public:
 
 	std::vector<VkPresentModeKHR> GetAvailablePresentModes() const {
 		return availablePresentModes_;
+	}
+
+	bool PresentModeSupported(VkPresentModeKHR mode) const {
+		for (const auto &m : availablePresentModes_) {
+			if (m == mode) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	int GetLastDeleteCount() const {
@@ -488,7 +495,8 @@ private:
 	// Swap chain extent
 	VkExtent2D swapChainExtent_{};
 
-	VulkanInitFlags flags_{};
+	VulkanContext::CreateInfo createInfo_{};
+
 	PerfClass devicePerfClass_ = PerfClass::SLOW;
 
 	int inflightFrames_ = MAX_INFLIGHT_FRAMES;
@@ -511,6 +519,7 @@ private:
 	VkFormat swapchainFormat_ = VK_FORMAT_UNDEFINED;
 
 	uint32_t queue_count = 0;
+	bool swapchainInited_ = false;
 
 	PhysicalDeviceFeatures deviceFeatures_;
 

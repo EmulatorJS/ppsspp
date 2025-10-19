@@ -19,7 +19,10 @@ import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
 import android.content.res.Configuration;
 import android.database.Cursor;
-import android.graphics.PixelFormat;
+import android.hardware.Sensor;
+import android.hardware.SensorEvent;
+import android.hardware.SensorEventListener;
+import android.hardware.SensorManager;
 import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Build;
@@ -29,7 +32,10 @@ import android.os.PowerManager;
 import android.os.Vibrator;
 import android.provider.MediaStore;
 
+import androidx.activity.OnBackPressedCallback;
 import androidx.annotation.NonNull;
+import androidx.annotation.RequiresApi;
+import androidx.appcompat.app.AppCompatActivity;
 import androidx.documentfile.provider.DocumentFile;
 import android.text.InputType;
 import android.util.Log;
@@ -50,14 +56,13 @@ import android.widget.FrameLayout;
 import android.widget.Toast;
 import java.io.File;
 import java.lang.reflect.Field;
-import java.util.List;
 import java.util.ArrayList;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 @SuppressWarnings("ConstantConditions")
-public abstract class NativeActivity extends Activity {
+public abstract class NativeActivity extends AppCompatActivity implements SensorEventListener {
 	// Remember to loadLibrary your JNI .so in a static {} block
 
 	// Adjust these as necessary
@@ -69,19 +74,23 @@ public abstract class NativeActivity extends Activity {
 	// False to use Vulkan, queried from C++ after NativeApp.init.
 	private static boolean javaGL = true;
 
+	// Lifecycle tracker, to detect erroneous states.
+	private final LifeCycle lifeCycle = new LifeCycle();
+
 	// Graphics and audio interfaces for Vulkan (javaGL = false)
 	private NativeSurfaceView mSurfaceView;
 	private Surface mSurface;
 
 	// Graphics and audio interfaces for Java EGL (javaGL = true)
-	private NativeGLView mGLSurfaceView;
+	private NativeGLSurfaceView mGLSurfaceView;
 	protected NativeRenderer nativeRenderer;
+
+	// For accelerometer sensing.
+	private SensorManager mSensorManager;
+	private Sensor mAccelerometer;
 
 	private String shortcutParam = "";
 	private static String overrideShortcutParam = null;
-
-	public static String runCommand;
-	public static String commandParameter;
 
 	// Remember settings for best audio latency
 	private int optimalFramesPerBuffer;
@@ -107,7 +116,7 @@ public abstract class NativeActivity extends Activity {
 
 	// Allow for multiple connected gamepads but just consider them the same for now.
 	// Actually this is not entirely true, see the code.
-	private ArrayList<InputDeviceState> inputPlayers = new ArrayList<InputDeviceState>();
+	private final ArrayList<InputDeviceState> inputPlayers = new ArrayList<>();
 
 	private PowerSaveModeReceiver mPowerSaveModeReceiver = null;
 	private SizeManager sizeManager = null;
@@ -148,11 +157,6 @@ public abstract class NativeActivity extends Activity {
 	public native void registerCallbacks();
 	public native void unregisterCallbacks();
 
-	NativeRenderer getRenderer() {
-		return nativeRenderer;
-	}
-
-	@TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
 	private void detectOptimalAudioSettings() {
 		try {
 			optimalFramesPerBuffer = Integer.parseInt(this.audioManager.getProperty(AudioManager.PROPERTY_OUTPUT_FRAMES_PER_BUFFER));
@@ -172,10 +176,9 @@ public abstract class NativeActivity extends Activity {
 			// Starting from Android 2.3, nativeLibraryDir is available:
 			Field field = ApplicationInfo.class.getField("nativeLibraryDir");
 			libdir = (String) field.get(application);
-		} catch (SecurityException e1) {
-		} catch (NoSuchFieldException e1) {
-		} catch (IllegalArgumentException e) {
-		} catch (IllegalAccessException e) {
+		} catch (SecurityException | NoSuchFieldException | IllegalArgumentException |
+				 IllegalAccessException e1) {
+			Log.e(TAG, e1.toString());
 		}
 		if (libdir == null) {
 			// Fallback for Android < 2.3:
@@ -184,7 +187,6 @@ public abstract class NativeActivity extends Activity {
 		return libdir;
 	}
 
-	@TargetApi(Build.VERSION_CODES.M)
 	boolean askForPermissions(String[] permissions, int requestCode) {
 		boolean shouldAsk = false;
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -200,7 +202,6 @@ public abstract class NativeActivity extends Activity {
 		return shouldAsk;
 	}
 
-	@TargetApi(Build.VERSION_CODES.M)
 	public void sendInitialGrants() {
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
 			// Let's start out granted if it was granted already.
@@ -222,6 +223,7 @@ public abstract class NativeActivity extends Activity {
 
 	@Override
 	public void onRequestPermissionsResult(int requestCode, @NonNull String [] permissions, @NonNull int[] grantResults) {
+		super.onRequestPermissionsResult(requestCode, permissions, grantResults);
 		switch (requestCode) {
 		case REQUEST_CODE_STORAGE_PERMISSION:
 			if (permissionsGranted(permissions, grantResults)) {
@@ -257,7 +259,7 @@ public abstract class NativeActivity extends Activity {
 	private static ArrayList<String> getSdCardPaths(final Context context) {
 		// Q is the last version that will support normal file access.
 		ArrayList<String> list = null;
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT && Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
+		if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
 			Log.i(TAG, "getSdCardPaths: Trying KitKat method");
 			list = getSdCardPaths19(context);
 		}
@@ -265,8 +267,7 @@ public abstract class NativeActivity extends Activity {
 		if (list == null) {
 			Log.i(TAG, "getSdCardPaths: Attempting fallback");
 			// Try another method.
-			String removableStoragePath;
-			list = new ArrayList<String>();
+			list = new ArrayList<>();
 			File[] fileList = new File("/storage/").listFiles();
 			if (fileList != null) {
 				for (File file : fileList) {
@@ -283,7 +284,7 @@ public abstract class NativeActivity extends Activity {
 				Log.i(TAG, "getSdCardPaths: Checking env " + var);
 				String secStore = System.getenv("SECONDARY_STORAGE");
 				if (secStore != null && !secStore.isEmpty()) {
-					list = new ArrayList<String>();
+					list = new ArrayList<>();
 					list.add(secStore);
 					break;
 				}
@@ -291,15 +292,13 @@ public abstract class NativeActivity extends Activity {
 		}
 
 		if (list == null) {
-			return new ArrayList<String>();
+			return new ArrayList<>();
 		} else {
 			return list;
 		}
 	}
 
-	@TargetApi(Build.VERSION_CODES.KITKAT)
-	private static ArrayList<String> getSdCardPaths19(final Context context)
-	{
+	private static ArrayList<String> getSdCardPaths19(final Context context) {
 		final File[] externalCacheDirs = context.getExternalCacheDirs();
 		if (externalCacheDirs == null || externalCacheDirs.length==0)
 			return null;
@@ -334,8 +333,7 @@ public abstract class NativeActivity extends Activity {
 	}
 
 	/** Given any file/folder inside an sd card, this will return the path of the sd card */
-	private static String getRootOfInnerSdCardFolder(File file)
-	{
+	private static String getRootOfInnerSdCardFolder(File file) {
 		if (file == null)
 			return null;
 		final long totalSpace = file.getTotalSpace();
@@ -355,16 +353,26 @@ public abstract class NativeActivity extends Activity {
 		return file.getAbsolutePath();
 	}
 
+	private boolean detectOpenGLES20() {
+		ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+		ConfigurationInfo info = am.getDeviceConfigurationInfo();
+		return info.reqGlEsVersion >= 0x20000;
+	}
+
+	private boolean detectOpenGLES30() {
+		ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+		ConfigurationInfo info = am.getDeviceConfigurationInfo();
+		return info.reqGlEsVersion >= 0x30000;
+	}
+
 	public void Initialize() {
 		// Initialize audio classes. Do this here since detectOptimalAudioSettings()
 		// needs audioManager
 		this.audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
 		this.audioFocusChangeListener = new AudioFocusChangeListener();
 
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-			// Get the optimal buffer sz
-			detectOptimalAudioSettings();
-		}
+		// Get the optimal buffer sz
+		detectOptimalAudioSettings();
 		PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
 		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
 			if (powerManager != null && powerManager.isSustainedPerformanceModeSupported()) {
@@ -477,23 +485,19 @@ public abstract class NativeActivity extends Activity {
 		}
 
 		vibrator = (Vibrator) getSystemService(VIBRATOR_SERVICE);
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB) {
-			checkForVibrator();
+		if (vibrator != null && !vibrator.hasVibrator()) {
+			vibrator = null;
 		}
 
 		mLocationHelper = new LocationHelper(this);
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-			try {
-				mInfraredHelper = new InfraredHelper(this);
-			} catch (Exception e) {
-				mInfraredHelper = null;
-				Log.i(TAG, "InfraredHelper exception: " + e);
-			}
+		try {
+			mInfraredHelper = new InfraredHelper(this);
+		} catch (Exception e) {
+			mInfraredHelper = null;
+			Log.i(TAG, "InfraredHelper exception: " + e);
 		}
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB) {
-			// android.graphics.SurfaceTexture is not available before version 11.
-			mCameraHelper = new CameraHelper(this);
-		}
+		// android.graphics.SurfaceTexture is not available before version 11.
+		mCameraHelper = new CameraHelper(this);
 	}
 
 	@TargetApi(Build.VERSION_CODES.N)
@@ -545,18 +549,13 @@ public abstract class NativeActivity extends Activity {
 	}
 
 	private boolean useImmersive() {
-		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.KITKAT)
-			return false;
 		String immersive = NativeApp.queryConfig("immersiveMode");
 		return immersive.equals("1");
 	}
 
 	@SuppressLint("InlinedApi")
-	@TargetApi(Build.VERSION_CODES.ICE_CREAM_SANDWICH)
 	private void updateSystemUiVisibility() {
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-			setupSystemUiCallback();
-		}
+		setupSystemUiCallback();
 
 		// Compute our _desired_ systemUiVisibility
 		int flags = View.SYSTEM_UI_FLAG_LOW_PROFILE;
@@ -570,17 +569,9 @@ public abstract class NativeActivity extends Activity {
 		if (decorView != null) {
 			decorView.setSystemUiVisibility(flags);
 		} else {
-			Log.e(TAG, "updateSystemUiVisibility: decor view not yet created, ignoring for now");
+			Log.i(TAG, "updateSystemUiVisibility: decor view not yet created, ignoring for now");
 		}
 		sizeManager.checkDisplayMeasurements();
-	}
-
-	// Need API 11 to check for existence of a vibrator? Zany.
-	@TargetApi(Build.VERSION_CODES.HONEYCOMB)
-	public void checkForVibrator() {
-		if (!vibrator.hasVibrator()) {
-			vibrator = null;
-		}
 	}
 
 	public native boolean runVulkanRenderLoop(Surface surface);
@@ -590,6 +581,12 @@ public abstract class NativeActivity extends Activity {
 	@Override
 	public void onCreate(Bundle savedInstanceState) {
 		super.onCreate(savedInstanceState);
+
+		lifeCycle.onCreate();
+
+		mSensorManager = (SensorManager)getSystemService(Activity.SENSOR_SERVICE);
+		mAccelerometer = mSensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER);
+
 		sizeManager = new SizeManager(this);
 		TextRenderer.init(this);
 		shuttingDown = false;
@@ -600,7 +597,6 @@ public abstract class NativeActivity extends Activity {
 		// whether to start at 1x or 2x.
 		sizeManager.updateDisplayMeasurements();
 
-		boolean wasInitialized = initialized;
 		if (!initialized) {
 			Initialize();
 			initialized = true;
@@ -620,9 +616,10 @@ public abstract class NativeActivity extends Activity {
 		NativeApp.audioInit();
 
 		if (javaGL) {
-			mGLSurfaceView = new NativeGLView(this);
-			nativeRenderer = new NativeRenderer(this);
+			mGLSurfaceView = new NativeGLSurfaceView(this);
+			nativeRenderer = new NativeRenderer();
 			mGLSurfaceView.setEGLContextClientVersion(isVRDevice() ? 3 : 2);
+
 			sizeManager.setSurfaceView(mGLSurfaceView);
 
 			// Setup the GLSurface and ask android for the correct
@@ -651,53 +648,74 @@ public abstract class NativeActivity extends Activity {
 			mGLSurfaceView.setRenderer(nativeRenderer);
 			setContentView(mGLSurfaceView);
 		} else {
-			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
-				updateSystemUiVisibility();
-			}
+			updateSystemUiVisibility();
 
-			mSurfaceView = new NativeSurfaceView(NativeActivity.this);
+			mSurfaceView = new NativeSurfaceView(this);
 			sizeManager.setSurfaceView(mSurfaceView);
-			Log.i(TAG, "setcontentview before");
 			setContentView(mSurfaceView);
-			Log.i(TAG, "setcontentview after");
 			startRenderLoopThread();
 		}
 
-		if (shortcutParam != null && shortcutParam.length() > 0) {
+		if (shortcutParam != null && !shortcutParam.isEmpty()) {
 			Log.i(TAG, "Got shortcutParam in onCreate on secondary run: " + shortcutParam);
 			// Make sure we only send it once.
 			NativeApp.sendMessageFromJava("shortcutParam", shortcutParam);
 			shortcutParam = null;
 		}
+
+		// Set up the back key handling to be future-compatible
+		OnBackPressedCallback callback = new OnBackPressedCallback(true) {
+			// Note: For "pretty" back handling internally, we could handle things like handleOnBackProgressed etc
+			// if we want to implement our own back previews.
+			@Override
+			public void handleOnBackPressed() {
+				if (NativeApp.isAtTopLevel()) {
+					// Pass through to normal logic, allowing backing out of the main screen.
+					// The setEnabled dance seems to be the normal way of handling this, to avoid recursive loops.
+					setEnabled(false);
+					NativeActivity.this.getOnBackPressedDispatcher().onBackPressed();
+					setEnabled(true);
+				} else {
+					// Pass straight into the native code.
+					NativeApp.keyDown(NativeApp.DEVICE_ID_DEFAULT, KeyEvent.KEYCODE_BACK, false);
+					NativeApp.keyUp(NativeApp.DEVICE_ID_DEFAULT, KeyEvent.KEYCODE_BACK);
+				}
+			}
+		};
+
+		// Add the callback to the dispatcher
+		getOnBackPressedDispatcher().addCallback(this, callback);
+
+		Log.i(TAG, "onCreate end");
 	}
 
 	@Override
 	public void onWindowFocusChanged(boolean hasFocus) {
+		Log.i(TAG, "onWindowFocusChanged");
 		super.onWindowFocusChanged(hasFocus);
 		updateSustainedPerformanceMode();
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
-			updateSystemUiVisibility();
-		}
+		updateSystemUiVisibility();
 	}
 
 	private void applyFrameRate(Surface surface, float frameRateHz) {
+		Log.i(TAG, "applyFramerate");
 		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R)
 			return;
-		if (mSurface != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+		if (surface != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
 			try {
 				int method = NativeApp.getDisplayFramerateMode();
 				if (method > 0) {
 					Log.i(TAG, "Setting desired framerate to " + frameRateHz + " Hz method=" + method);
 					switch (method) {
 						case 1:
-							mSurface.setFrameRate(frameRateHz, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT);
+							surface.setFrameRate(frameRateHz, Surface.FRAME_RATE_COMPATIBILITY_DEFAULT);
 							break;
 						case 2:
-							mSurface.setFrameRate(frameRateHz, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);
+							surface.setFrameRate(frameRateHz, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);
 							break;
 						case 3:
 							if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-								mSurface.setFrameRate(frameRateHz, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE, Surface.CHANGE_FRAME_RATE_ALWAYS);
+								surface.setFrameRate(frameRateHz, Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE, Surface.CHANGE_FRAME_RATE_ALWAYS);
 							}
 							break;
 						default:
@@ -706,30 +724,32 @@ public abstract class NativeActivity extends Activity {
 
 				}
 			} catch (Exception e) {
-				Log.e(TAG, "Failed to set framerate: " + e);
+				Log.e(TAG, "Failed to request framerate: " + e);
 			}
 		}
 	}
 
 	public void notifySurface(Surface surface) {
+		Log.i(TAG, "notifySurface begin");
 		mSurface = surface;
 
-		if (!initialized) {
-			Log.e(TAG, "Can't deal with surfaces while not initialized");
-			return;
-		}
-
 		if (!javaGL) {
+			if (!initialized) {
+				Log.e(TAG, "notifySurface end: Saving surface, but can't start/stop threads while not initialized");
+				return;
+			}
+
 			// If we got a surface, this starts the thread. If not, it doesn't.
-			if (mSurface == null) {
-				joinRenderLoopThread();
-			} else {
+			// NOTE: We do not try to join the thread here
+			if (mSurface != null) {
+				// applyFramerate is called in here.
 				startRenderLoopThread();
 			}
 		} else if (mSurface != null) {
 			applyFrameRate(mSurface, 60.0f);
 		}
 		updateSustainedPerformanceMode();
+		Log.i(TAG, "notifySurface end");
 	}
 
 	// The render loop thread (EmuThread) is now spawned from the native side.
@@ -760,7 +780,6 @@ public abstract class NativeActivity extends Activity {
 		requestExitVulkanRenderLoop();
 	}
 
-	@TargetApi(Build.VERSION_CODES.KITKAT)
 	void setupSystemUiCallback() {
 		final View decorView = getWindow().peekDecorView();
 		if (decorView == null || decorView == navigationCallbackView) {
@@ -774,35 +793,18 @@ public abstract class NativeActivity extends Activity {
 	@Override
 	protected void onDestroy() {
 		super.onDestroy();
-		Log.i(TAG, "onDestroy");
+		lifeCycle.onDestroy();
+
 		if (javaGL) {
-			if (nativeRenderer != null) {
-				if (nativeRenderer.isRenderingFrame()) {
-					Log.i(TAG, "Waiting for renderer to finish.");
-					int tries = 200;
-					do {
-						try {
-							Thread.sleep(10);
-						} catch (InterruptedException ignored) {
-						}
-						tries--;
-					} while (nativeRenderer.isRenderingFrame() && tries > 0);
-				} else {
-					Log.i(TAG, "nativerenderer done.");
-					nativeRenderer = null;
-				}
-			}
-			if (mGLSurfaceView != null) {
-				mGLSurfaceView.onDestroy();
-				mGLSurfaceView = null;
-			}
+			nativeRenderer = null;
+			mGLSurfaceView = null;
 		} else {
-			if (mSurfaceView != null) {
-				mSurfaceView.onDestroy();
-				mSurfaceView = null;
-			}
+			mSurfaceView = null;
 			mSurface = null;
 		}
+
+		mSensorManager = null;
+		mAccelerometer = null;
 
 		// Probably vain attempt to help the garbage collector...
 		audioFocusChangeListener = null;
@@ -818,113 +820,113 @@ public abstract class NativeActivity extends Activity {
 		// I've seen crashes that seem to indicate that sometimes it hasn't...
 		NativeApp.audioShutdown();
 		if (shuttingDown) {
+			Log.i(TAG, "in onDestroy, shutting down. Calling NativeApp.shutdown().");
 			NativeApp.shutdown();
 			unregisterCallbacks();
 			initialized = false;
+		} else {
+			Log.i(TAG, "in onDestroy, but not shutting down.");
 		}
 		navigationCallbackView = null;
 
-		// Workaround for VR issues when PPSSPP restarts
+		// Really ugly workaround for VR issues when PPSSPP restarts
 		if (isVRDevice()) {
 			System.exit(0);
 		}
-		Log.i(TAG, "onDestroy");
+		Log.i(TAG, "onDestroy end");
+	}
+
+	@Override
+	protected void onStart() {
+		super.onStart();
+		lifeCycle.onStart();
+	}
+
+	@Override
+	protected void onStop() {
+		super.onStop();
+		lifeCycle.onStop();
 	}
 
 	@Override
 	protected void onPause() {
 		super.onPause();
-		Log.i(TAG, "onPause");
-		loseAudioFocus(this.audioManager, this.audioFocusChangeListener);
-		sizeManager.setPaused(true);
-		NativeApp.pause();
+		lifeCycle.onPause();
+
 		if (!javaGL) {
-			mSurfaceView.onPause();
 			Log.i(TAG, "Joining render thread...");
 			joinRenderLoopThread();
 			Log.i(TAG, "Joined render thread");
-		} else {
-			if (mGLSurfaceView != null) {
-				mGLSurfaceView.onPause();
-			} else {
-				Log.e(TAG, "mGLSurfaceView really shouldn't be null in onPause");
-			}
+		} else if (mGLSurfaceView != null) {
+			mGLSurfaceView.onPause();
 		}
+
+		mSensorManager.unregisterListener(this);
+
+		loseAudioFocus(this.audioManager, this.audioFocusChangeListener);
+		sizeManager.onPause();
+		NativeApp.pause();
 		if (mCameraHelper != null) {
 			mCameraHelper.pause();
 		}
-		Log.i(TAG, "onPause completed");
-	}
-
-	private boolean detectOpenGLES20() {
-		ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
-		ConfigurationInfo info = am.getDeviceConfigurationInfo();
-		return info.reqGlEsVersion >= 0x20000;
-	}
-
-	private boolean detectOpenGLES30() {
-		ActivityManager am = (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
-		ConfigurationInfo info = am.getDeviceConfigurationInfo();
-		return info.reqGlEsVersion >= 0x30000;
+		Log.i(TAG, "onPause end");
 	}
 
 	@Override
 	protected void onResume() {
 		super.onResume();
+		lifeCycle.onResume();
+
 		updateSustainedPerformanceMode();
-		sizeManager.setPaused(false);
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
-			updateSystemUiVisibility();
-		}
+		sizeManager.onResume();
+		updateSystemUiVisibility();
 
 		// OK, config should be initialized, we can query for screen rotation.
 		updateScreenRotation("onResume");
 
-		Log.i(TAG, "onResume");
-		if (javaGL) {
-			if (mGLSurfaceView != null) {
-				mGLSurfaceView.onResume();
-			} else {
-				Log.e(TAG, "mGLSurfaceView really shouldn't be null in onResume");
-			}
-		} else {
-			if (mSurfaceView != null) {
-				mSurfaceView.onResume();
-			}
-		}
 		if (mCameraHelper != null) {
 			mCameraHelper.resume();
 		}
 
 		gainAudioFocus(this.audioManager, this.audioFocusChangeListener);
 		NativeApp.resume();
+		mSensorManager.registerListener(this, mAccelerometer, SensorManager.SENSOR_DELAY_GAME);
 
 		if (!javaGL) {
 			// Restart the render loop.
 			startRenderLoopThread();
+		} else if (mGLSurfaceView != null) {
+			mGLSurfaceView.onResume();
 		}
+		Log.i(TAG, "onResume end");
+	}
+
+	// Sensor management
+	@Override
+	public void onAccuracyChanged(Sensor sensor, int arg1) {}
+
+	@Override
+	public void onSensorChanged(SensorEvent event) {
+		if (event.sensor.getType() != Sensor.TYPE_ACCELEROMETER) {
+			return;
+		}
+		// Can also look at event.timestamp for accuracy magic
+		NativeApp.accelerometer(event.values[0], event.values[1], event.values[2]);
 	}
 
 	@Override
 	public void onAttachedToWindow() {
 		Log.i(TAG, "onAttachedToWindow");
 		super.onAttachedToWindow();
-
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-			setupSystemUiCallback();
-		}
+		setupSystemUiCallback();
 	}
 
 	@Override
 	public void onConfigurationChanged(@NonNull Configuration newConfig) {
 		Log.i(TAG, "onConfigurationChanged");
 		super.onConfigurationChanged(newConfig);
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
-			updateSystemUiVisibility();
-		}
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1) {
-			sizeManager.updateDpi((float)newConfig.densityDpi);
-		}
+		updateSystemUiVisibility();
+		sizeManager.updateDpi((float)newConfig.densityDpi);
 	}
 
 	@Override
@@ -966,92 +968,85 @@ public abstract class NativeActivity extends Activity {
 		// None was found, just add and return it.
 		InputDeviceState state = new InputDeviceState(device);
 		inputPlayers.add(state);
-		Log.i(TAG, "Input player registered: desc = " + getInputDesc(device));
+		Log.i(TAG, "Input player registered: desc = " + device.getDescriptor());
 		return state;
 	}
 
 	protected String getInputDeviceDebugString() {
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-			String buffer = "";
-			for (InputDeviceState input : inputPlayers) {
-				buffer += input.getDebugString();
-			}
-			if (buffer.isEmpty()) {
-				buffer = "(no devices)";
-			}
-			return buffer;
-		} else {
-			return "(input device debug not available before Android Kitkat)";
+		String buffer = "";
+		for (InputDeviceState input : inputPlayers) {
+			buffer += input.getDebugString();
 		}
+		if (buffer.isEmpty()) {
+			return "(no devices)";
+		}
+		return buffer;
 	}
 
 	// We grab the keys before onKeyDown/... even see them. This is also better because it lets us
 	// distinguish devices.
 	@Override
 	public boolean dispatchKeyEvent(KeyEvent event) {
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB_MR1) {
-			// Log.d(TAG, "key event source: " + event.getSource());
-			if (NativeSurfaceView.isFromSource(event, InputDevice.SOURCE_MOUSE)) {
-				Log.i(TAG, "Forwarding key event from mouse: " + event.getKeyCode());
-				Log.i(TAG, "usemodernb2: " + useModernMouseEventsB2);
-				if (event.getKeyCode() == KeyEvent.KEYCODE_BACK && !useModernMouseEventsB2) {
-					// Probably a right click
-					switch (event.getAction()) {
-						case KeyEvent.ACTION_DOWN:
-							NativeApp.mouse(-1, -1, 2, 1);
-							break;
-						case KeyEvent.ACTION_UP:
-							NativeApp.mouse(-1, -1, 2, 2);
-							break;
-					}
-				}
-				return true;
-			}
-
-			InputDeviceState state = getInputDeviceState(event);
-			if (state == null) {
-				return super.dispatchKeyEvent(event);
-			}
-
-			// Let's let back and menu through to dispatchKeyEvent.
-			boolean passThrough = false;
-
-			int sources = event.getSource();
-
-			// Is this really only for the Xperia Play special handling in OnKeyDown?
-			// And if so, can we just handle it here instead?
-			switch (event.getKeyCode()) {
-			case KeyEvent.KEYCODE_BACK:
-				passThrough = true;
-				break;
-			default:
-				break;
-			}
-
-			// Don't passthrough back button if from gamepad.
-			// XInput device on Android returns source 1281 or 0x501, which equals GAMEPAD | KEYBOARD.
-			// Shield Remote returns 769 or 0x301 which equals DPAD | KEYBOARD.
-
-			if (InputDeviceState.inputSourceIsJoystick(sources)) {
-				passThrough = false;
-			}
-
-			if (!passThrough) {
+		// Log.d(TAG, "key event source: " + event.getSource());
+		if (NativeApp.isFromSource(event, InputDevice.SOURCE_MOUSE)) {
+			Log.i(TAG, "Forwarding key event from mouse: " + event.getKeyCode() + " useModernB2: " + useModernMouseEventsB2);
+			if (event.getKeyCode() == KeyEvent.KEYCODE_BACK && !useModernMouseEventsB2) {
+				// Probably a right click
 				switch (event.getAction()) {
-				case KeyEvent.ACTION_DOWN:
-					Log.i(TAG, "KeyEvent Down");
-					if (state.onKeyDown(event)) {
-						return true;
-					}
-					break;
-
-				case KeyEvent.ACTION_UP:
-					Log.i(TAG, "KeyEvent Up");
-					if (state.onKeyUp(event)) {
-						return true;
-					}
-					break;
+					case KeyEvent.ACTION_DOWN:
+						NativeApp.mouse(-1, -1, 2, 1);
+						break;
+					case KeyEvent.ACTION_UP:
+						NativeApp.mouse(-1, -1, 2, 2);
+						break;
 				}
+			}
+			return true;
+		}
+
+		InputDeviceState state = getInputDeviceState(event);
+		if (state == null) {
+			return super.dispatchKeyEvent(event);
+		}
+
+		// Let's let back and menu through to dispatchKeyEvent.
+		boolean passThrough = false;
+
+		int sources = event.getSource();
+
+		// Is this really only for the Xperia Play special handling in OnKeyDown?
+		// And if so, can we just handle it here instead?
+		switch (event.getKeyCode()) {
+		case KeyEvent.KEYCODE_BACK:
+			passThrough = true;
+			break;
+		default:
+			break;
+		}
+
+		// Don't passthrough back button if from gamepad.
+		// XInput device on Android returns source 1281 or 0x501, which equals GAMEPAD | KEYBOARD.
+		// Shield Remote returns 769 or 0x301 which equals DPAD | KEYBOARD.
+
+		if (InputDeviceState.inputSourceIsJoystick(sources)) {
+			passThrough = false;
+		}
+
+		if (!passThrough) {
+			switch (event.getAction()) {
+			case KeyEvent.ACTION_DOWN:
+				Log.i(TAG, "KeyEvent Down");
+				if (state.onKeyDown(event)) {
+					return true;
+				}
+				break;
+
+			case KeyEvent.ACTION_UP:
+				Log.i(TAG, "KeyEvent Up");
+				if (state.onKeyUp(event)) {
+					return true;
+				}
+				break;
 			}
 		}
 
@@ -1059,20 +1054,7 @@ public abstract class NativeActivity extends Activity {
 		return super.dispatchKeyEvent(event);
 	}
 
-	@TargetApi(Build.VERSION_CODES.JELLY_BEAN)
-	public static String getInputDesc(InputDevice input) {
-		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
-			return input.getDescriptor();
-		} else {
-			List<InputDevice.MotionRange> motions = input.getMotionRanges();
-			StringBuilder fakeid = new StringBuilder();
-			for (InputDevice.MotionRange range : motions)
-				fakeid.append(range.getAxis());
-			return fakeid.toString();
-		}
-	}
-
-	@TargetApi(Build.VERSION_CODES.N)
+	@RequiresApi(Build.VERSION_CODES.N)
 	void sendMouseDelta(float dx, float dy) {
 		// Ignore zero deltas.
 		if (Math.abs(dx) > 0.001 || Math.abs(dx) > 0.001) {
@@ -1081,9 +1063,7 @@ public abstract class NativeActivity extends Activity {
 	}
 
 	@Override
-	@TargetApi(Build.VERSION_CODES.HONEYCOMB_MR1)
 	public boolean onGenericMotionEvent(MotionEvent event) {
-		// Log.i(TAG, "NativeActivity onGenericMotionEvent: " + event);
 		if (InputDeviceState.inputSourceIsJoystick(event.getSource())) {
 			InputDeviceState state = getInputDeviceState(event);
 			if (state == null) {
@@ -1154,12 +1134,8 @@ public abstract class NativeActivity extends Activity {
 		case KeyEvent.KEYCODE_BACK:
 			if (event.isAltPressed()) {
 				NativeApp.keyDown(NativeApp.DEVICE_ID_PAD_0, 1004, repeat); // special custom keycode for the O button on Xperia Play
-			} else if (NativeApp.isAtTopLevel()) {
-				Log.i(TAG, "IsAtTopLevel returned true.");
-				// Pass through the back event.
-				return super.onKeyDown(keyCode, event);
 			} else {
-				NativeApp.keyDown(NativeApp.DEVICE_ID_DEFAULT, keyCode, repeat);
+				super.onKeyDown(keyCode, event);
 			}
 			return true;
 		case KeyEvent.KEYCODE_MENU:
@@ -1172,7 +1148,7 @@ public abstract class NativeActivity extends Activity {
 		case KeyEvent.KEYCODE_DPAD_LEFT:
 		case KeyEvent.KEYCODE_DPAD_RIGHT:
 			// Joysticks are supported in Honeycomb MR1 and later via the onGenericMotionEvent method.
-			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB_MR1 && InputDeviceState.inputSourceIsJoystick(event.getSource())) {
+			if (InputDeviceState.inputSourceIsJoystick(event.getSource())) {
 				// Pass through / ignore
 				return super.onKeyDown(keyCode, event);
 			}
@@ -1192,11 +1168,8 @@ public abstract class NativeActivity extends Activity {
 		case KeyEvent.KEYCODE_BACK:
 			if (event.isAltPressed()) {
 				NativeApp.keyUp(NativeApp.DEVICE_ID_PAD_0, 1004); // special custom keycode
-			} else if (NativeApp.isAtTopLevel()) {
-				Log.i(TAG, "IsAtTopLevel returned true.");
-				return super.onKeyUp(keyCode, event);
 			} else {
-				NativeApp.keyUp(NativeApp.DEVICE_ID_DEFAULT, keyCode);
+				return super.onKeyUp(keyCode, event);
 			}
 			return true;
 		case KeyEvent.KEYCODE_MENU:
@@ -1210,7 +1183,7 @@ public abstract class NativeActivity extends Activity {
 		case KeyEvent.KEYCODE_DPAD_LEFT:
 		case KeyEvent.KEYCODE_DPAD_RIGHT:
 			// Joysticks are supported in Honeycomb MR1 and later via the onGenericMotionEvent method.
-			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB_MR1 && InputDeviceState.inputSourceIsJoystick(event.getSource())) {
+			if (InputDeviceState.inputSourceIsJoystick(event.getSource())) {
 				return super.onKeyUp(keyCode, event);
 			}
 			// Fall through
@@ -1241,15 +1214,20 @@ public abstract class NativeActivity extends Activity {
 		Log.i(TAG, "onActivityResult: requestCode=" + requestCode + " requestId = " + requestId + " resultCode = " + resultCode);
 
 		if (resultCode != RESULT_OK || data == null) {
+			if (data == null) {
+				Log.i(TAG, "Intent data == null");
+			}
 			NativeApp.sendRequestResult(requestId, false, "", resultCode);
 			return;
 		}
 
 		try {
 			if (requestCode == RESULT_LOAD_IMAGE) {
+				Log.i(TAG, "data: " + data);
 				Uri selectedImage = data.getData();
 				if (selectedImage != null) {
 					if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+						Log.i(TAG, "Selected image: " + selectedImage);
 						NativeApp.sendRequestResult(requestId, true, selectedImage.toString(), 0);
 					} else {
 						String[] filePathColumn = {MediaStore.Images.Media.DATA};
@@ -1259,18 +1237,19 @@ public abstract class NativeActivity extends Activity {
 							int columnIndex = cursor.getColumnIndex(filePathColumn[0]);
 							String picturePath = cursor.getString(columnIndex);
 							cursor.close();
+							Log.i(TAG, "Selected picture path: " + selectedImage);
 							NativeApp.sendRequestResult(requestId, true, picturePath, 0);
 						}
 					}
+				} else {
+					Log.i(TAG, "No image data received");
 				}
 			} else if (requestCode == RESULT_OPEN_DOCUMENT) {
 				Uri selectedFile = data.getData();
 				if (selectedFile != null) {
 					try {
 						// Grab permanent permission so we can show it in recents list etc.
-						if (Build.VERSION.SDK_INT >= 19) {
-							getContentResolver().takePersistableUriPermission(selectedFile, Intent.FLAG_GRANT_READ_URI_PERMISSION);
-						}
+						getContentResolver().takePersistableUriPermission(selectedFile, Intent.FLAG_GRANT_READ_URI_PERMISSION);
 					} catch (Exception e) {
 						Log.w(TAG, "Exception getting permissions for document: " + e);
 						NativeApp.sendRequestResult(requestId, false, "", 0);
@@ -1286,9 +1265,7 @@ public abstract class NativeActivity extends Activity {
 					String path = selectedDirectoryUri.toString();
 					Log.i(TAG, "Browse folder finished: " + path);
 					try {
-						if (Build.VERSION.SDK_INT >= 19) {
-							getContentResolver().takePersistableUriPermission(selectedDirectoryUri, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-						}
+						getContentResolver().takePersistableUriPermission(selectedDirectoryUri, Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
 					} catch (Exception e) {
 						Log.w(TAG, "Exception getting permissions for document: " + e);
 						NativeApp.reportException(e, selectedDirectoryUri.toString());
@@ -1310,17 +1287,6 @@ public abstract class NativeActivity extends Activity {
 		}
 	}
 
-	@TargetApi(Build.VERSION_CODES.HONEYCOMB)
-	private AlertDialog.Builder createDialogBuilderWithTheme() {
-		return new AlertDialog.Builder(this, AlertDialog.THEME_HOLO_DARK);
-	}
-
-	@TargetApi(Build.VERSION_CODES.ICE_CREAM_SANDWICH)
-	private AlertDialog.Builder createDialogBuilderWithDeviceTheme() {
-		return new AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK);
-	}
-
-	@TargetApi(Build.VERSION_CODES.JELLY_BEAN_MR1)
 	private AlertDialog.Builder createDialogBuilderWithDeviceThemeAndUiVisibility() {
 		AlertDialog.Builder bld = new AlertDialog.Builder(this, AlertDialog.THEME_DEVICE_DEFAULT_DARK);
 		bld.setOnDismissListener(new DialogInterface.OnDismissListener() {
@@ -1332,7 +1298,7 @@ public abstract class NativeActivity extends Activity {
 		return bld;
 	}
 
-	@TargetApi(Build.VERSION_CODES.M)
+	@RequiresApi(Build.VERSION_CODES.M)
 	private AlertDialog.Builder createDialogBuilderNew() {
 		AlertDialog.Builder bld = new AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert);
 		bld.setOnDismissListener(new DialogInterface.OnDismissListener() {
@@ -1364,18 +1330,12 @@ public abstract class NativeActivity extends Activity {
 		input.setText(defaultText);
 		input.selectAll();
 
-		// Lovely!
 		AlertDialog.Builder bld;
-		if (Build.VERSION.SDK_INT < Build.VERSION_CODES.HONEYCOMB)
-			bld = new AlertDialog.Builder(this);
-		else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.ICE_CREAM_SANDWICH)
-			bld = createDialogBuilderWithTheme();
-		else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.JELLY_BEAN_MR1)
-			bld = createDialogBuilderWithDeviceTheme();
-		else if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M)
-			bld = createDialogBuilderWithDeviceThemeAndUiVisibility();
-		else
+		if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
 			bld = createDialogBuilderNew();
+		} else {
+			bld = createDialogBuilderWithDeviceThemeAndUiVisibility();
+		}
 
 		AlertDialog.Builder builder = bld
 			.setView(fl)
@@ -1396,16 +1356,14 @@ public abstract class NativeActivity extends Activity {
 					d.cancel();
 				}
 			});
-		if (Build.VERSION.SDK_INT > Build.VERSION_CODES.JELLY_BEAN_MR1) {
-			builder.setOnDismissListener(new DialogInterface.OnDismissListener() {
-				@Override
-				public void onDismiss(DialogInterface d) {
-					Log.i(TAG, "input box dismissed");
-					NativeApp.sendRequestResult(requestId, false, "", 0);
-					updateSystemUiVisibility();
-				}
-			});
-		}
+		builder.setOnDismissListener(new DialogInterface.OnDismissListener() {
+			@Override
+			public void onDismiss(DialogInterface d) {
+				Log.i(TAG, "input box dismissed");
+				NativeApp.sendRequestResult(requestId, false, "", 0);
+				updateSystemUiVisibility();
+			}
+		});
 		AlertDialog dlg = builder.create();
 
 		dlg.setCancelable(true);
@@ -1555,7 +1513,7 @@ public abstract class NativeActivity extends Activity {
 			String defString = "";
 			String[] param = params.split(":@:", 3);
 			int requestID = Integer.parseInt(param[0]);
-			if (param.length > 1 && param[1].length() > 0)
+			if (param.length > 1 && !param[1].isEmpty())
 				title = param[1];
 			if (param.length > 2)
 				defString = param[2];
@@ -1568,6 +1526,7 @@ public abstract class NativeActivity extends Activity {
 				try {
 					milliseconds = Integer.parseInt(params);
 				} catch (NumberFormatException e) {
+					Log.i(TAG,"bad vibrate param " + params);
 				}
 			}
 			// Special parameters to perform standard haptic feedback
@@ -1601,36 +1560,34 @@ public abstract class NativeActivity extends Activity {
 			Log.i(TAG, "Setting shuttingDown = true and calling Finish");
 			shuttingDown = true;
 			finish();
+			return true;
 		} else if (command.equals("rotate")) {
-			if (javaGL) {
-				updateScreenRotation("rotate");
-				if (Build.VERSION.SDK_INT < Build.VERSION_CODES.ICE_CREAM_SANDWICH) {
-					Log.i(TAG, "Must recreate activity on rotation");
-				}
-			} else {
-				updateScreenRotation("rotate");
-			}
+			updateScreenRotation("rotate");
+			return true;
 		} else if (command.equals("sustainedPerfMode")) {
 			updateSustainedPerformanceMode();
+			return true;
 		} else if (command.equals("immersive")) {
-			if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
-				updateSystemUiVisibility();
-			}
+			updateSystemUiVisibility();
+			return true;
 		} else if (command.equals("recreate")) {
 			recreate();
+			return true;
 		} else if (command.equals("graphics_restart")) {
-			Log.i(TAG, "graphics_restart");
+			Log.i(TAG, "graphics_restart: Calling recreate() on activity");
 			if (params != null && !params.isEmpty()) {
 				overrideShortcutParam = params;
 			}
 			shuttingDown = true;
 			recreate();
+			return true;
 		} else if (command.equals("ask_permission") && params.equals("storage")) {
 			if (askForPermissions(permissionsForStorage, REQUEST_CODE_STORAGE_PERMISSION)) {
 				NativeApp.sendMessageFromJava("permission_pending", "storage");
 			} else {
 				NativeApp.sendMessageFromJava("permission_granted", "storage");
 			}
+			return true;
 		} else if (command.equals("gps_command")) {
 			if (params.equals("open")) {
 				if (!askForPermissions(permissionsForLocation, REQUEST_CODE_LOCATION_PERMISSION)) {
@@ -1639,11 +1596,12 @@ public abstract class NativeActivity extends Activity {
 			} else if (params.equals("close")) {
 				mLocationHelper.stopLocationUpdates();
 			}
+			return true;
 		} else if (command.equals("infrared_command")) {
 			if (mInfraredHelper == null) {
 				return false;
 			}
-			if (params.startsWith("sircs") && Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+			if (params.startsWith("sircs")) {
 				Pattern pattern = Pattern.compile("sircs_(\\d+)_(\\d+)_(\\d+)_(\\d+)");
 				Matcher matcher = pattern.matcher(params);
 				if (!matcher.matches())
@@ -1654,6 +1612,7 @@ public abstract class NativeActivity extends Activity {
 				int ir_count   = Integer.parseInt(matcher.group(4));
 				mInfraredHelper.sendSircCommand(ir_version, ir_command, ir_address, ir_count);
 			}
+			return true;
 		} else if (command.equals("camera_command")) {
 			if (mCameraHelper == null) {
 				return false;
@@ -1672,6 +1631,7 @@ public abstract class NativeActivity extends Activity {
 			} else if (mCameraHelper != null && params.equals("stopVideo")) {
 				mCameraHelper.stopCamera();
 			}
+			return true;
 		} else if (command.equals("microphone_command")) {
 			if (params.startsWith("startRecording:")) {
 				int sampleRate = Integer.parseInt(params.replace("startRecording:", ""));
@@ -1692,12 +1652,14 @@ public abstract class NativeActivity extends Activity {
 				// Only keep the screen bright ingame.
 				window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
 			}
+			return true;
 		} else if (command.equals("testException")) {
 			try {
 				throw new Exception();
 			} catch (Exception e) {
 				NativeApp.reportException(e, params);
 			}
+			return true;
 		} else if (command.equals("show_folder")) {
 			try {
 				Uri selectedUri = Uri.parse(params);
@@ -1718,31 +1680,15 @@ public abstract class NativeActivity extends Activity {
 				return false;
 			}
 		} else if (command.equals("copy_to_clipboard")) {
-			if (android.os.Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB) {
-				copyStringToClipboard(params);
-			}
+			ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+			ClipData clip = ClipData.newPlainText("Copied Text", params);
+			clipboard.setPrimaryClip(clip);
+			return true;
 		} else {
 			Log.w(TAG, "Unknown string command " + command);
+			return false;
 		}
 		return false;
-	}
-
-	@TargetApi(Build.VERSION_CODES.HONEYCOMB)
-	private void copyStringToClipboard(String text) {
-		ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-		ClipData clip = ClipData.newPlainText("Copied Text", text);
-		clipboard.setPrimaryClip(clip);
-	}
-
-	@SuppressLint("NewApi")
-	@Override
-	public void recreate() {
-		if (android.os.Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB) {
-			super.recreate();
-		} else {
-			startActivity(getIntent());
-			finish();
-		}
 	}
 
 	public static boolean isVRDevice() {

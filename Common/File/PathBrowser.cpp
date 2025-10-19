@@ -18,10 +18,10 @@
 #include "android/jni/app-android.h"
 #endif
 
-bool LoadRemoteFileList(const Path &url, const std::string &userAgent, bool *cancel, std::vector<File::FileInfo> &files) {
+static bool LoadRemoteFileList(const Path &url, std::string_view userAgent, bool *cancel, std::vector<File::FileInfo> &files) {
 	_dbg_assert_(url.Type() == PathType::HTTP);
 
-	http::Client http;
+	http::Client http(nullptr);
 	Buffer result;
 	int code = 500;
 	std::vector<std::string> responseHeaders;
@@ -129,7 +129,7 @@ void PathBrowser::SetPath(const Path &path) {
 }
 
 void PathBrowser::RestrictToRoot(const Path &root) {
-	INFO_LOG(Log::IO, "Restricting to root: %s", root.c_str());
+	VERBOSE_LOG(Log::IO, "Restricting to root: %s", root.c_str());
 	restrictedRoot_ = root;
 }
 
@@ -263,7 +263,7 @@ void PathBrowser::NavigateUp() {
 }
 
 // TODO: Support paths like "../../hello"
-void PathBrowser::Navigate(const std::string &path) {
+void PathBrowser::Navigate(std::string_view path) {
 	if (path == ".")
 		return;
 	if (path == "..") {

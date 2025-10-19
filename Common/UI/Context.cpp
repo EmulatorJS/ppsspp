@@ -13,6 +13,7 @@
 #include "Common/Log.h"
 #include "Common/TimeUtil.h"
 #include "Common/LogReporting.h"
+#include "Common/Render/AtlasGen.h"
 
 UIContext::UIContext() {
 	fontStyle_ = new UI::FontStyle();
@@ -39,31 +40,26 @@ void UIContext::Init(Draw::DrawContext *thin3d, Draw::Pipeline *uipipe, Draw::Pi
 	textDrawer_ = TextDrawer::Create(thin3d);  // May return nullptr if no implementation is available for this platform.
 }
 
-void UIContext::setUIAtlas(const std::string &name) {
-	_dbg_assert_(!name.empty());
-	UIAtlas_ = name;
-}
-
 void UIContext::BeginFrame() {
 	frameStartTime_ = time_now_d();
-	if (!uitexture_ || UIAtlas_ != lastUIAtlas_) {
-		uitexture_ = CreateTextureFromFile(draw_, UIAtlas_.c_str(), ImageFileType::ZIM, false);
-		lastUIAtlas_ = UIAtlas_;
-		if (!fontTexture_) {
-#if PPSSPP_PLATFORM(WINDOWS) || PPSSPP_PLATFORM(ANDROID)
-			// Don't bother with loading font_atlas.zim
-#else
-			fontTexture_ = CreateTextureFromFile(draw_, "font_atlas.zim", ImageFileType::ZIM, false);
-#endif
-			if (!fontTexture_) {
-				// Load the smaller ascii font only, like on Android. For debug ui etc.
-				fontTexture_ = CreateTextureFromFile(draw_, "asciifont_atlas.zim", ImageFileType::ZIM, false);
-				if (!fontTexture_) {
-					WARN_LOG(Log::System, "Failed to load font_atlas.zim or asciifont_atlas.zim");
-				}
-			}
+	if (atlasInvalid_ || !uitexture_) {
+		if (uitexture_) {
+			uitexture_->Release();
 		}
+		AtlasData data = atlasProvider_(draw_, AtlasChoice::General, 1.0f / g_display.dpi_scale_x);
+		uitexture_ = data.texture;
+		_dbg_assert_(uitexture_);
+		ui_draw2d.SetAtlas(data.atlas);
+		atlasInvalid_ = false;
 	}
+
+	if (!fontTexture_) {
+		AtlasData data = atlasProvider_(draw_, AtlasChoice::Font, 1.0f / g_display.dpi_scale_x);
+		fontTexture_ = data.texture;
+		_dbg_assert_(fontTexture_);
+		ui_draw2d.SetFontAtlas(data.atlas);
+	}
+
 	uidrawbuffer_->SetCurZ(0.0f);
 	ActivateTopScissor();
 }
@@ -163,12 +159,13 @@ Bounds UIContext::GetLayoutBounds() const {
 void UIContext::ActivateTopScissor() {
 	Bounds bounds;
 	if (scissorStack_.size()) {
-		const float scale = g_display.pixel_in_dps;
+		float scale_x = g_display.pixel_in_dps_x;
+		float scale_y = g_display.pixel_in_dps_y;
 		bounds = scissorStack_.back();
-		int x = floorf(scale * bounds.x);
-		int y = floorf(scale * bounds.y);
-		int w = std::max(0.0f, ceilf(scale * bounds.w));
-		int h = std::max(0.0f, ceilf(scale * bounds.h));
+		int x = floorf(scale_x * bounds.x);
+		int y = floorf(scale_y * bounds.y);
+		int w = std::max(0.0f, ceilf(scale_x * bounds.w));
+		int h = std::max(0.0f, ceilf(scale_y * bounds.h));
 		if (x < 0 || y < 0 || x + w > g_display.pixel_xres || y + h > g_display.pixel_yres) {
 			DEBUG_LOG(Log::G3D, "UI scissor out of bounds: %d,%d-%d,%d / %d,%d", x, y, w, h, g_display.pixel_xres, g_display.pixel_yres);
 			if (x < 0) { w += x; x = 0; }
@@ -350,6 +347,11 @@ void UIContext::DrawRectDropShadow(const Bounds &bounds, float radius, float alp
 void UIContext::DrawImageVGradient(ImageID image, uint32_t color1, uint32_t color2, const Bounds &bounds) {
 	uidrawbuffer_->DrawImageStretchVGradient(image, bounds.x, bounds.y, bounds.x2(), bounds.y2(), color1, color2);
 }
+
+void UIContext::DrawImageRotated(ImageID atlas_image, float x, float y, float scale, float angle, uint32_t color, bool mirror_h) {
+	uidrawbuffer_->DrawImageRotated(atlas_image, x, y, scale, angle, color, mirror_h);
+}
+
 
 void UIContext::PushTransform(const UITransform &transform) {
 	Flush();

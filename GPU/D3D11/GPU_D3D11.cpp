@@ -39,8 +39,6 @@ GPU_D3D11::GPU_D3D11(GraphicsContext *gfxCtx, Draw::DrawContext *draw)
 	context_ = (ID3D11DeviceContext *)draw->GetNativeObject(Draw::NativeObject::CONTEXT);
 	D3D_FEATURE_LEVEL featureLevel = (D3D_FEATURE_LEVEL)draw->GetNativeObject(Draw::NativeObject::FEATURE_LEVEL);
 
-	stockD3D11.Create(device_);
-
 	shaderManagerD3D11_ = new ShaderManagerD3D11(draw, device_, context_, featureLevel);
 	framebufferManagerD3D11_ = new FramebufferManagerD3D11(draw);
 	framebufferManager_ = framebufferManagerD3D11_;
@@ -78,7 +76,6 @@ GPU_D3D11::GPU_D3D11(GraphicsContext *gfxCtx, Draw::DrawContext *draw)
 }
 
 GPU_D3D11::~GPU_D3D11() {
-	stockD3D11.Destroy();
 }
 
 u32 GPU_D3D11::CheckGPUFeatures() const {
@@ -108,14 +105,12 @@ void GPU_D3D11::DeviceLost() {
 	// FBOs appear to survive? Or no?
 	shaderManager_->ClearShaders();
 	drawEngine_.ClearInputLayoutMap();
-	textureCache_->Clear(false);
 
 	GPUCommonHW::DeviceLost();
 }
 
 void GPU_D3D11::DeviceRestore(Draw::DrawContext *draw) {
 	GPUCommonHW::DeviceRestore(draw);
-	// Nothing needed.
 }
 
 void GPU_D3D11::BeginHostFrame() {

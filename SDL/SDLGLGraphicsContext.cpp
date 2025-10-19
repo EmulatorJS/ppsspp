@@ -51,13 +51,13 @@ int CheckEGLErrors(const char *file, int line) {
 		case EGL_BAD_NATIVE_WINDOW:         errortext = "EGL_BAD_NATIVE_WINDOW"; break;
 		default:                            errortext = "unknown"; break;
 	}
-	printf( "ERROR: EGL Error %s detected in file %s at line %d (0x%X)\n", errortext, file, line, error );
+	fprintf( stderr, "ERROR: EGL Error %s detected in file %s at line %d (0x%X)\n", errortext, file, line, error );
 	return 1;
 }
 
 #define EGL_ERROR(str, check) { \
 		if (check) CheckEGLErrors( __FILE__, __LINE__ ); \
-		printf("EGL ERROR: " str "\n"); \
+		fprintf(stderr, "EGL ERROR: " str "\n"); \
 		return 1; \
 	}
 
@@ -91,7 +91,7 @@ static int8_t EGL_Open(SDL_Window *window) {
 	SDL_SysWMinfo sysInfo{};
 	SDL_VERSION(&sysInfo.version);
 	if (!SDL_GetWindowWMInfo(window, &sysInfo)) {
-		printf("ERROR: Unable to retrieve native window handle\n");
+		fprintf(stderr, "ERROR: Unable to retrieve native window handle\n");
 		g_Display = (EGLNativeDisplayType)XOpenDisplay(nullptr);
 		g_XDisplayOpen = g_Display != nullptr;
 		if (!g_XDisplayOpen)
@@ -307,7 +307,7 @@ bool SDLGLGraphicsContext::InitFromRenderThread(std::string *errorMessage) {
 }
 
 // Returns 0 on success.
-int SDLGLGraphicsContext::Init(SDL_Window *&window, int x, int y, int w, int h, int mode, std::string *error_message) {
+int SDLGLGraphicsContext::Init(SDL_Window *&window, int x, int y, int w, int h, int mode, std::string *error_message, int force_gl_version) {
 	struct GLVersionPair {
 		int major;
 		int minor;
@@ -328,6 +328,12 @@ int SDLGLGraphicsContext::Init(SDL_Window *&window, int x, int y, int w, int h, 
 	SDL_GLContext glContext = nullptr;
 	for (size_t i = 0; i < ARRAY_SIZE(attemptVersions); ++i) {
 		const auto &ver = attemptVersions[i];
+		// If we force a specific OpenGL version, skip the ones
+		// that do not match, which may be all of them - e.g.
+		// requesting nonsensical "--graphics=opengl0" reliably
+		// skips straight to fallback code below.
+		if (force_gl_version >= 0 && 10 * ver.major + ver.minor != force_gl_version)
+			continue;
 		// Make sure to request a somewhat modern GL context at least - the
 		// latest supported by MacOS X (really, really sad...)
 		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, ver.major);
@@ -388,9 +394,9 @@ int SDLGLGraphicsContext::Init(SDL_Window *&window, int x, int y, int w, int h, 
 
 #ifdef USING_EGL
 	if (EGL_Open(window) != 0) {
-		printf("EGL_Open() failed\n");
+		fprintf(stderr, "EGL_Open() failed\n");
 	} else if (EGL_Init(window) != 0) {
-		printf("EGL_Init() failed\n");
+		fprintf(stderr, "EGL_Init() failed\n");
 	} else {
 		useEGLSwap = true;
 	}
@@ -405,7 +411,7 @@ int SDLGLGraphicsContext::Init(SDL_Window *&window, int x, int y, int w, int h, 
 	GLenum glew_err = glewInit();
 	// glx is not required, igore.
 	if (glew_err != GLEW_OK && glew_err != GLEW_ERROR_NO_GLX_DISPLAY) {
-		printf("Failed to initialize glew!\n");
+		fprintf(stderr, "Failed to initialize glew!\n");
 		return 1;
 	}
 	// Unfortunately, glew will generate an invalid enum error, ignore.
@@ -413,9 +419,9 @@ int SDLGLGraphicsContext::Init(SDL_Window *&window, int x, int y, int w, int h, 
 		glGetError();
 
 	if (GLEW_VERSION_2_0) {
-		printf("OpenGL 2.0 or higher.\n");
+		fprintf(stderr, "OpenGL 2.0 or higher.\n");
 	} else {
-		printf("Sorry, this program requires OpenGL 2.0.\n");
+		fprintf(stderr, "Sorry, this program requires OpenGL 2.0.\n");
 		return 1;
 	}
 #endif

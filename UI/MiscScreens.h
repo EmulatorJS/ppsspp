@@ -161,21 +161,24 @@ public:
 	CreditsScreen();
 	void update() override;
 	void DrawForeground(UIContext &ui) override;
+	void touch(const TouchInput &touch) override;
 
 	void CreateViews() override;
 
 	const char *tag() const override { return "Credits"; }
 
 private:
-	UI::EventReturn OnSupport(UI::EventParams &e);
-	UI::EventReturn OnPPSSPPOrg(UI::EventParams &e);
-	UI::EventReturn OnPrivacy(UI::EventParams &e);
-	UI::EventReturn OnForums(UI::EventParams &e);
-	UI::EventReturn OnDiscord(UI::EventParams &e);
-	UI::EventReturn OnShare(UI::EventParams &e);
-	UI::EventReturn OnX(UI::EventParams &e);
+	void OnPPSSPPOrg(UI::EventParams &e);
+	void OnPrivacy(UI::EventParams &e);
+	void OnForums(UI::EventParams &e);
+	void OnDiscord(UI::EventParams &e);
+	void OnShare(UI::EventParams &e);
+	void OnX(UI::EventParams &e);
 
 	double startTime_ = 0.0;
+	double dragYStart_ = -1.0;
+	double dragOffset_ = 0.0;
+	double dragYOffsetStart_ = 0.0;
 };
 
 class SettingInfoMessage : public UI::LinearLayout {
@@ -192,6 +195,15 @@ private:
 	double timeShown_ = 0.0;
 	float cutOffY_;
 	bool showing_ = false;
+};
+
+class ShinyIcon : public UI::ImageView {
+public:
+	ShinyIcon(ImageID atlasImage, UI::LayoutParams *layoutParams = 0) : UI::ImageView(atlasImage, "", UI::IS_DEFAULT, layoutParams) {}
+	void Draw(UIContext &dc) override;
+	void SetAnimated(bool anim) { animated_ = anim; }
+private:
+	bool animated_ = true;
 };
 
 uint32_t GetBackgroundColorWithAlpha(const UIContext &dc);

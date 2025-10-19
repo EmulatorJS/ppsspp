@@ -21,6 +21,7 @@
 
 #include "Common/Data/Encoding/Utf8.h"
 #include "Common/Data/Text/I18n.h"
+#include "Common/System/OSD.h"
 #include "Common/File/FileUtil.h"
 #include "Common/Serialize/Serializer.h"
 #include "Common/Serialize/SerializeFuncs.h"
@@ -41,8 +42,14 @@
 
 static double g_lastSaveTime = -1.0;
 
+// Actually this should be called on both saves and loads, since just after a load it's safe to exit.
 void ResetSecondsSinceLastGameSave() {
 	g_lastSaveTime = time_now_d();
+}
+
+void ShowSaveLoadIndicator(bool save) {
+	g_OSD.Show(OSDType::STATUS_ICON, "", "", save ? "I_ROTATE_RIGHT" : "I_ROTATE_LEFT", 1.0f, "save_indicator");
+	g_OSD.SetFlags("save_indicator", (save ? OSDMessageFlags::SpinRight : OSDMessageFlags::SpinLeft) | OSDMessageFlags::Transparent);
 }
 
 double SecondsSinceLastGameSave() {
@@ -137,8 +144,7 @@ int PSPSaveDialog::Init(int paramAddr) {
 	INFO_LOG(Log::sceUtility,"sceUtilitySavedataInitStart(%08x) : Game key (hex): %s", paramAddr, param.GetKey(param.GetPspParam()).c_str());
 
 	yesnoChoice = 1;
-	switch ((SceUtilitySavedataFocus)(u32)param.GetPspParam()->focus)
-	{
+	switch ((SceUtilitySavedataFocus)(u32)param.GetPspParam()->focus) {
 	case SCE_UTILITY_SAVEDATA_FOCUS_NAME:
 		currentSelectedSave = param.GetSaveNameIndex(param.GetPspParam());
 		break;
@@ -204,8 +210,7 @@ int PSPSaveDialog::Init(int paramAddr) {
 			break;
 		case SCE_UTILITY_SAVEDATA_TYPE_SAVE:
 			DEBUG_LOG(Log::sceUtility, "Saving. Title: %s Save: %s File: %s", param.GetGameName(param.GetPspParam()).c_str(), param.GetGameName(param.GetPspParam()).c_str(), param.GetFileName(param.GetPspParam()).c_str());
-			if (param.GetFileInfo(0).size != 0)
-			{
+			if (param.GetFileInfo(0).size != 0) {
 				yesnoChoice = 0;
 				display = DS_SAVE_CONFIRM_OVERWRITE;
 			}
@@ -972,15 +977,15 @@ int PSPSaveDialog::Update(int animSpeed)
 			DisplayBanner(DB_DELETE);
 
 			if (IsButtonPressed(cancelButtonFlag) || (IsButtonPressed(okButtonFlag) && yesnoChoice == 0)) {
-				if(param.GetPspParam()->mode == SCE_UTILITY_SAVEDATA_TYPE_LISTDELETE || param.GetPspParam()->mode == SCE_UTILITY_SAVEDATA_TYPE_LISTALLDELETE)
+				if (param.GetPspParam()->mode == SCE_UTILITY_SAVEDATA_TYPE_LISTDELETE || param.GetPspParam()->mode == SCE_UTILITY_SAVEDATA_TYPE_LISTALLDELETE)
 					display = DS_DELETE_LIST_CHOICE;
 				else {
 					param.GetPspParam()->common.result = SCE_UTILITY_DIALOG_RESULT_CANCEL;
 					StartFade(false);
 				}
 			} else if (IsButtonPressed(okButtonFlag)) {
-					display = DS_DELETE_DELETING;
-					StartIOThread();
+				display = DS_DELETE_DELETING;
+				StartIOThread();
 			}
 
 			EndDraw();
@@ -1095,6 +1100,7 @@ int PSPSaveDialog::Update(int animSpeed)
 	return 0;
 }
 
+// It's kinda ugly how this uses the "global" 'display'...
 void PSPSaveDialog::ExecuteIOAction() {
 	param.ClearSFOCache();
 	auto &result = param.GetPspParam()->common.result;
@@ -1149,11 +1155,15 @@ void PSPSaveDialog::ExecuteNotVisibleIOAction() {
 	case SCE_UTILITY_SAVEDATA_TYPE_LOAD: // Only load and exit
 	case SCE_UTILITY_SAVEDATA_TYPE_AUTOLOAD:
 		result = param.Load(param.GetPspParam(), GetSelectedSaveDirName(), currentSelectedSave);
+		ResetSecondsSinceLastGameSave();
+		ShowSaveLoadIndicator(false);
 		break;
 	case SCE_UTILITY_SAVEDATA_TYPE_SAVE: // Only save and exit
 	case SCE_UTILITY_SAVEDATA_TYPE_AUTOSAVE:
 		SaveState::NotifySaveData();
 		result = param.Save(param.GetPspParam(), GetSelectedSaveDirName());
+		ResetSecondsSinceLastGameSave();
+		ShowSaveLoadIndicator(true);
 		break;
 	case SCE_UTILITY_SAVEDATA_TYPE_SIZES:
 		result = param.GetSizes(param.GetPspParam());
@@ -1197,16 +1207,21 @@ void PSPSaveDialog::ExecuteNotVisibleIOAction() {
 	// TODO: Should reset the directory's other files.
 	case SCE_UTILITY_SAVEDATA_TYPE_MAKEDATA:
 	case SCE_UTILITY_SAVEDATA_TYPE_MAKEDATASECURE:
-		SaveState::NotifySaveData();
 		result = param.Save(param.GetPspParam(), GetSelectedSaveDirName(), param.GetPspParam()->mode == SCE_UTILITY_SAVEDATA_TYPE_MAKEDATASECURE);
 		if (result == SCE_UTILITY_SAVEDATA_ERROR_SAVE_MS_NOSPACE) {
 			result = SCE_UTILITY_SAVEDATA_ERROR_RW_MEMSTICK_FULL;
+		} else {
+			SaveState::NotifySaveData();
+			ResetSecondsSinceLastGameSave();
+			ShowSaveLoadIndicator(true);
 		}
 		break;
 	case SCE_UTILITY_SAVEDATA_TYPE_WRITEDATA:
 	case SCE_UTILITY_SAVEDATA_TYPE_WRITEDATASECURE:
 		SaveState::NotifySaveData();
 		result = param.Save(param.GetPspParam(), GetSelectedSaveDirName(), param.GetPspParam()->mode == SCE_UTILITY_SAVEDATA_TYPE_WRITEDATASECURE);
+		ResetSecondsSinceLastGameSave();
+		ShowSaveLoadIndicator(true);
 		break;
 	case SCE_UTILITY_SAVEDATA_TYPE_READDATA:
 	case SCE_UTILITY_SAVEDATA_TYPE_READDATASECURE:
@@ -1215,6 +1230,8 @@ void PSPSaveDialog::ExecuteNotVisibleIOAction() {
 			result = SCE_UTILITY_SAVEDATA_ERROR_RW_DATA_BROKEN;
 		if (result == SCE_UTILITY_SAVEDATA_ERROR_LOAD_NO_DATA)
 			result = SCE_UTILITY_SAVEDATA_ERROR_RW_NO_DATA;
+		ResetSecondsSinceLastGameSave();
+		ShowSaveLoadIndicator(false);
 		break;
 	case SCE_UTILITY_SAVEDATA_TYPE_ERASE:
 	case SCE_UTILITY_SAVEDATA_TYPE_ERASESECURE:
@@ -1227,21 +1244,26 @@ void PSPSaveDialog::ExecuteNotVisibleIOAction() {
 	param.ClearSFOCache();
 }
 
-static void DoExecuteIOAction(PSPSaveDialog *dialog) {
-	SetCurrentThreadName("SaveIO");
-
-	AndroidJNIThreadContext jniContext;
-	dialog->ExecuteIOAction();
-}
-
 void PSPSaveDialog::StartIOThread() {
 	if (ioThread.joinable()) {
 		WARN_LOG_REPORT(Log::sceUtility, "Starting a save io thread when one already pending, uh oh.");
 		ioThread.join();
 	}
 
+	// Show save indicator. It's strange how "display" is just as much an action as what to display.
+	if (display == DS_SAVE_SAVING || display == DS_LOAD_LOADING) {
+		const bool save = display != DS_LOAD_LOADING;
+		ResetSecondsSinceLastGameSave();
+		ShowSaveLoadIndicator(save);
+	}
+
 	ioThreadStatus = SAVEIO_PENDING;
-	ioThread = std::thread(&DoExecuteIOAction, this);
+	ioThread = std::thread([this]() {
+		SetCurrentThreadName("SaveIO");
+
+		AndroidJNIThreadContext jniContext;
+		this->ExecuteIOAction();
+	});
 }
 
 int PSPSaveDialog::Shutdown(bool force) {

@@ -175,7 +175,7 @@ static void ScheduleLagSync(int over = 0) {
 
 void __DisplayInit() {
 	__DisplaySetFramerate();
-	DisplayHWInit();
+	DisplayHWReset();
 	hasSetMode = false;
 	mode = 0;
 	resumeMode = 0;
@@ -296,7 +296,6 @@ void __DisplayDoState(PointerWrap &p) {
 }
 
 void __DisplayShutdown() {
-	DisplayHWShutdown();
 	vblankWaitingThreads.clear();
 }
 
@@ -426,7 +425,7 @@ static void DoFrameTiming(bool throttle, bool *skipFrame, float scaledTimestep, 
 
 	// Auto-frameskip automatically if speed limit is set differently than the default.
 	int frameSkipNum = DisplayCalculateFrameSkip();
-	if (g_Config.bAutoFrameSkip) {
+	if (g_Config.bAutoFrameSkip && !g_Config.bSkipBufferEffects) {
 		// autoframeskip
 		// Argh, we are falling behind! Let's skip a frame and see if we catch up.
 		if (curFrameTime > nextFrameTime && doFrameSkip) {
@@ -556,14 +555,10 @@ static void NotifyUserIfSlow() {
 	if (!g_Config.bHideSlowWarnings &&
 		!hasNotifiedSlow &&
 		PSP_CoreParameter().fpsLimit == FPSLimit::NORMAL &&
-		DisplayIsRunningSlow()) {
+		DisplayIsRunningSlow() && g_Config.bSoftwareRendering) {
 #ifndef _DEBUG
 		auto err = GetI18NCategory(I18NCat::ERRORS);
-		if (g_Config.bSoftwareRendering) {
-			g_OSD.Show(OSDType::MESSAGE_INFO, err->T("Running slow: Try turning off Software Rendering"), 5.0f);
-		} else {
-			g_OSD.Show(OSDType::MESSAGE_INFO, err->T("Running slow: try frameskip, sound is choppy when slow"));
-		}
+		g_OSD.Show(OSDType::MESSAGE_INFO, err->T("Running slow: Try turning off Software Rendering"), 5.0f);
 #endif
 		hasNotifiedSlow = true;
 	}
@@ -589,7 +584,7 @@ void __DisplayFlip(int cyclesLate) {
 
 	Draw::DrawContext *draw = gpu->GetDrawContext();
 	if (draw) {
-		g_frameTiming.presentMode = ComputePresentMode(draw, &g_frameTiming.presentInterval);
+		g_frameTiming.presentMode = ComputePresentMode(draw);
 		if (!draw->GetDeviceCaps().presentInstantModeChange && g_frameTiming.presentMode == Draw::PresentMode::FIFO) {
 			// Some backends can't just flip into MAILBOX/IMMEDIATE mode instantly.
 			// Vulkan doesn't support the interval setting, so we force skipping the flip.
@@ -599,7 +594,6 @@ void __DisplayFlip(int cyclesLate) {
 	} else {
 		// Surely can never get here?
 		g_frameTiming.presentMode = Draw::PresentMode::FIFO;
-		g_frameTiming.presentInterval = 1;
 	}
 
 	if (!g_Config.bSkipBufferEffects) {
@@ -695,6 +689,14 @@ void __DisplayFlip(int cyclesLate) {
 	} else {
 		gstate_c.skipDrawReason &= ~SKIPDRAW_SKIPFRAME;
 		numSkippedFrames = 0;
+
+		// NOTE!! It can happen that if we just toggled frameskip (especially auto), we are still in a state
+		// where we don't have a framebuffer bound, from the last frame. But framebuffermanager still might think
+		// that we're in non-buffered mode.
+		if (gpu->GetFramebufferManagerCommon() && !gpu->GetFramebufferManagerCommon()->UseBufferedRendering() && !g_Config.bSkipBufferEffects) {
+			gpu->GetFramebufferManagerCommon()->ForceUseBufferedRendering(!g_Config.bSkipBufferEffects);
+			gstate_c.skipDrawReason &= ~SKIPDRAW_NON_DISPLAYED_FB;
+		}
 	}
 
 	// Returning here with coreState == CORE_NEXTFRAME causes a buffer flip to happen (next frame).
@@ -858,7 +860,7 @@ int sceDisplaySetFramebuf(u32 topaddr, int linesize, int pixelformat, int sync) 
 		return hleLogError(Log::sceDisplay, SCE_KERNEL_ERROR_INVALID_POINTER, "misaligned address");
 	}
 	if ((linesize & 0x3F) != 0 || (linesize == 0 && topaddr != 0)) {
-		return hleLogError(Log::sceDisplay, SCE_KERNEL_ERROR_INVALID_SIZE, "invalid stride");
+		return hleLogWarning(Log::sceDisplay, SCE_KERNEL_ERROR_INVALID_SIZE, "invalid stride");
 	}
 	if (pixelformat < 0 || pixelformat > GE_FORMAT_8888) {
 		return hleLogError(Log::sceDisplay, SCE_KERNEL_ERROR_INVALID_FORMAT, "invalid format");
@@ -866,7 +868,7 @@ int sceDisplaySetFramebuf(u32 topaddr, int linesize, int pixelformat, int sync) 
 
 	if (sync == PSP_DISPLAY_SETBUF_IMMEDIATE) {
 		if ((GEBufferFormat)pixelformat != latchedFramebuf.fmt || linesize != latchedFramebuf.stride) {
-			return hleReportError(Log::sceDisplay, SCE_KERNEL_ERROR_INVALID_MODE, "must change latched framebuf first");
+			return hleReportWarning(Log::sceDisplay, SCE_KERNEL_ERROR_INVALID_MODE, "must change latched framebuf first");
 		}
 	}
 

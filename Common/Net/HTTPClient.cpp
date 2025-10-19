@@ -63,8 +63,14 @@ bool Connection::Resolve(const char *host, int port, DNSType type) {
 	char port_str[16];
 	snprintf(port_str, sizeof(port_str), "%d", port);
 
+	std::string processedHostname(host);
+
+	if (customResolve_) {
+		processedHostname = customResolve_(host);
+	}
+	
 	std::string err;
-	if (!net::DNSResolve(host, port_str, &resolved_, err, type)) {
+	if (!net::DNSResolve(processedHostname.c_str(), port_str, &resolved_, err, type)) {
 		WARN_LOG(Log::IO, "Failed to resolve host '%s': '%s' (%s)", host, err.c_str(), DNSTypeAsString(type));
 		// Zero port so that future calls fail.
 		port_ = 0;
@@ -209,7 +215,7 @@ namespace http {
 constexpr const char *DEFAULT_USERAGENT = "PPSSPP";
 constexpr const char *HTTP_VERSION = "1.1";
 
-Client::Client() {
+Client::Client(net::ResolveFunc func) : Connection(func) {
 	userAgent_ = DEFAULT_USERAGENT;
 	httpVersion_ = HTTP_VERSION;
 }
@@ -220,8 +226,10 @@ Client::~Client() {
 
 // Ignores line folding (deprecated), but respects field combining.
 // Don't use for Set-Cookie, which is a special header per RFC 7230.
-bool GetHeaderValue(const std::vector<std::string> &responseHeaders, const std::string &header, std::string *value) {
-	std::string search = header + ":";
+bool GetHeaderValue(const std::vector<std::string> &responseHeaders, std::string_view header, std::string *value) {
+	std::string search(header);
+	search.push_back(':');
+
 	bool found = false;
 
 	value->clear();
@@ -236,7 +244,7 @@ bool GetHeaderValue(const std::vector<std::string> &responseHeaders, const std::
 			if (!found)
 				*value = stripped.substr(value_pos);
 			else
-				*value += "," + stripped.substr(value_pos);
+				*value += "," + std::string(stripped.substr(value_pos));
 			found = true;
 		}
 	}
@@ -381,6 +389,11 @@ int Client::ReadResponseHeaders(net::Buffer *readbuf, std::vector<std::string> &
 		return -1;
 	}
 
+	if (readbuf->empty()) {
+		ERROR_LOG(Log::HTTP, "Empty HTTP header read buffer :(");
+		return -1;
+	}
+
 	// Grab the first header line that contains the http code.
 
 	std::string line;
@@ -486,8 +499,8 @@ int Client::ReadResponseEntity(net::Buffer *readbuf, const std::vector<std::stri
 	return 0;
 }
 
-HTTPRequest::HTTPRequest(RequestMethod method, std::string_view url, std::string_view postData, std::string_view postMime, const Path &outfile, RequestFlags flags, std::string_view name)
-	: Request(method, url, name, &cancelled_, flags), postData_(postData), postMime_(postMime) {
+HTTPRequest::HTTPRequest(RequestMethod method, std::string_view url, std::string_view postData, std::string_view postMime, const Path &outfile, RequestFlags flags, net::ResolveFunc customResolve, std::string_view name)
+	: Request(method, url, name, &cancelled_, flags), postData_(postData), postMime_(postMime), customResolve_(customResolve) {
 	outfile_ = outfile;
 }
 
@@ -523,7 +536,7 @@ int HTTPRequest::Perform(const std::string &url) {
 		return -1;
 	}
 
-	http::Client client;
+	http::Client client(customResolve_);
 	if (!userAgent_.empty()) {
 		client.SetUserAgent(userAgent_);
 	}

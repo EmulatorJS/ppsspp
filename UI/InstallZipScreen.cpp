@@ -102,8 +102,12 @@ void InstallZipScreen::CreateViews() {
 
 			installChoice_ = rightColumnItems->Add(new Choice(iz->T("Install")));
 			installChoice_->OnClick.Handle(this, &InstallZipScreen::OnInstall);
-			playChoice_ = rightColumnItems->Add(new Choice(ga->T("Play")));
-			playChoice_->OnClick.Handle(this, &InstallZipScreen::OnPlay);
+
+			// NOTE: We detect PBP isos (like demos) as game dirs currently. Can't play them directly.
+			if (zipFileInfo_.contents == ZipFileContents::ISO_FILE) {
+				playChoice_ = rightColumnItems->Add(new Choice(ga->T("Play")));
+				playChoice_->OnClick.Handle(this, &InstallZipScreen::OnPlay);
+			}
 
 			returnToHomebrew_ = true;
 			showDeleteCheckbox = true;
@@ -154,7 +158,6 @@ void InstallZipScreen::CreateViews() {
 				if (System_GetPropertyBool(SYSPROP_CAN_SHOW_FILE)) {
 					rightCompare->Add(new Button(di->T("Show in folder")))->OnClick.Add([=](UI::EventParams &) {
 						System_ShowFileInFolder(savedataToOverwrite_);
-						return UI::EVENT_DONE;
 					});
 				}
 			}
@@ -203,7 +206,7 @@ bool InstallZipScreen::key(const KeyInput &key) {
 	return false;
 }
 
-UI::EventReturn InstallZipScreen::OnInstall(UI::EventParams &params) {
+void InstallZipScreen::OnInstall(UI::EventParams &params) {
 	ZipFileTask task;
 	task.url = zipPath_;
 	task.fileName = zipPath_;
@@ -214,16 +217,17 @@ UI::EventReturn InstallZipScreen::OnInstall(UI::EventParams &params) {
 	}
 	if (g_GameManager.InstallZipOnThread(task)) {
 		installStarted_ = true;
+		if (playChoice_) {
+			playChoice_->SetEnabled(false);  // need to exit this screen to played the installed one. We could make this smarter.
+		}
 		if (installChoice_) {
 			installChoice_->SetEnabled(false);
 		}
 	}
-	return UI::EVENT_DONE;
 }
 
-UI::EventReturn InstallZipScreen::OnPlay(UI::EventParams &params) {
+void InstallZipScreen::OnPlay(UI::EventParams &params) {
 	screenManager()->switchScreen(new EmuScreen(zipPath_));
-	return UI::EVENT_DONE;
 }
 
 void InstallZipScreen::update() {
@@ -243,8 +247,9 @@ void InstallZipScreen::update() {
 			if (doneView_)
 				doneView_->SetText(iz->T(err));
 		} else if (installStarted_) {
-			if (doneView_)
+			if (doneView_) {
 				doneView_->SetText(iz->T("Installed!"));
+			}
 			MainScreen::showHomebrewTab = returnToHomebrew_;
 		}
 	}

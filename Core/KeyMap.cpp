@@ -225,7 +225,7 @@ static const KeyMap_IntStrPair key_names[] = {
 	{NKCODE_APOSTROPHE, "'"},
 	{NKCODE_MINUS, "-"},
 	{NKCODE_PLUS, "+"},
-	{NKCODE_SYSRQ, "Print"},
+	{NKCODE_PRINTSCREEN, "Print"},
 	{NKCODE_SCROLL_LOCK, "ScrLock"},
 	{NKCODE_BREAK, "Pause"},
 
@@ -238,6 +238,8 @@ static const KeyMap_IntStrPair key_names[] = {
 	{NKCODE_CTRL_RIGHT, "RCtrl"},
 	{NKCODE_ALT_LEFT, "LAlt"},
 	{NKCODE_ALT_RIGHT, "RAlt"},
+	{NKCODE_META_LEFT, "LMeta"},
+	{NKCODE_META_RIGHT, "RMeta"},
 	{NKCODE_SPACE, "Space"},
 	{NKCODE_WINDOW, "Windows"},
 	{NKCODE_DEL, "Backspace"},

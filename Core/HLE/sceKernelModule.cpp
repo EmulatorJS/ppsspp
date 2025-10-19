@@ -661,9 +661,6 @@ void ImportFuncSymbol(const FuncSymbolImport &func, bool reimporting, const char
 		// TODO: There's some double lookup going on here (we already did the lookup in GetHLEFunc above).
 		WriteHLESyscall(func.moduleName, func.nid, func.stubAddr);
 		currentMIPS->InvalidateICache(func.stubAddr, 8);
-		if (g_Config.bPreloadFunctions) {
-			MIPSAnalyst::PrecompileFunction(func.stubAddr, 8);
-		}
 		return;
 	}
 
@@ -682,9 +679,6 @@ void ImportFuncSymbol(const FuncSymbolImport &func, bool reimporting, const char
 				}
 				WriteFuncStub(func.stubAddr, it->symAddr);
 				currentMIPS->InvalidateICache(func.stubAddr, 8);
-				if (g_Config.bPreloadFunctions) {
-					MIPSAnalyst::PrecompileFunction(func.stubAddr, 8);
-				}
 				return;
 			}
 		}
@@ -725,9 +719,6 @@ void ExportFuncSymbol(const FuncSymbolExport &func) {
 				INFO_LOG(Log::Loader, "Resolving function %s/%08x", func.moduleName, func.nid);
 				WriteFuncStub(it->stubAddr, func.symAddr);
 				currentMIPS->InvalidateICache(it->stubAddr, 8);
-				if (g_Config.bPreloadFunctions) {
-					MIPSAnalyst::PrecompileFunction(it->stubAddr, 8);
-				}
 			}
 		}
 	}
@@ -1085,6 +1076,14 @@ static PSPModule *__KernelLoadELFFromPtr(const u8 *ptr, size_t elfSize, u32 load
 			// In this case it's definitely not compressed. Added assert below.
 		}
 
+		// Don't accept ELFs over 32MB.
+		if (decryptedSize > 32 * 1024 * 1024) {
+			*error_string = StringFromFormat("ELF/PRX corrupt, unreasonable decrypted size: %d", (u32)decryptedSize);
+			// TODO: Might be the wrong error code.
+			error = SCE_KERNEL_ERROR_FILEERR;
+			return nullptr;
+		}
+
 		// decompress if required.
 		if (isGzip) {
 			_dbg_assert_(Read32(ptr + 0x150) != ELF_MAGIC);
@@ -1245,6 +1244,13 @@ static PSPModule *__KernelLoadELFFromPtr(const u8 *ptr, size_t elfSize, u32 load
 
 	modinfo = (const PspModuleInfo *)Memory::GetPointerUnchecked(modinfoaddr);
 
+	// OK, even if it's an ELF module, it might be one we shouldn't fully load and execute!
+	// This is seen with mpeg.prx in Tony Hawk's Underground 2, see #20568.
+	if (ShouldHLEModule(modinfo->name)) {
+		// We load it, but at least we don't run any part of it.
+		module->isFake = true;
+	}
+
 	module->nm.nsegment = reader.GetNumSegments();
 	module->nm.attribute = modinfo->moduleAttrs;
 	module->nm.version[0] = modinfo->moduleVersion & 0xFF;
@@ -1315,15 +1321,15 @@ static PSPModule *__KernelLoadELFFromPtr(const u8 *ptr, size_t elfSize, u32 load
 		bool insertSymbols = scan && !reader.LoadSymbols();
 		std::vector<SectionID> codeSections = reader.GetCodeSections();
 		for (SectionID id : codeSections) {
-			u32 start = reader.GetSectionAddr(id);
+			const u32 start = reader.GetSectionAddr(id);
 			// Note: scan end is inclusive.
-			u32 end = start + reader.GetSectionSize(id) - 4;
-			u32 len = end + 4 - start;
+			const u32 end = start + reader.GetSectionSize(id) - 4;
+			const u32 len = end + 4 - start;
 			if (len == 0) {
 				// Seen in WWE: Smackdown vs Raw 2009. See #17435.
 				continue;
 			}
-			if (!Memory::IsValidRange(start, len)) {
+			if (!Memory::IsValid4AlignedRange(start, len)) {
 				ERROR_LOG(Log::Loader, "Bad section %08x (len %08x) of section %d", start, len, id);
 				continue;
 			}
@@ -1343,14 +1349,14 @@ static PSPModule *__KernelLoadELFFromPtr(const u8 *ptr, size_t elfSize, u32 load
 			u32 scanStart = module->textStart;
 			u32 scanEnd = module->textEnd;
 
-			if (Memory::IsValidRange(scanStart, scanEnd - scanStart)) {
+			if (Memory::IsValid4AlignedRange(scanStart, scanEnd - scanStart)) {
 				// Skip the exports and imports sections, they're not code.
 				if (scanEnd >= std::min(modinfo->libent, modinfo->libstub)) {
-					insertSymbols = MIPSAnalyst::ScanForFunctions(scanStart, std::min(modinfo->libent, modinfo->libstub) - 4, insertSymbols);
+					insertSymbols = MIPSAnalyst::ScanForFunctions(scanStart, std::min(modinfo->libent, modinfo->libstub), insertSymbols);
 					scanStart = std::min(modinfo->libentend, modinfo->libstubend);
 				}
 				if (scanEnd >= std::max(modinfo->libent, modinfo->libstub)) {
-					insertSymbols = MIPSAnalyst::ScanForFunctions(scanStart, std::max(modinfo->libent, modinfo->libstub) - 4, insertSymbols);
+					insertSymbols = MIPSAnalyst::ScanForFunctions(scanStart, std::max(modinfo->libent, modinfo->libstub), insertSymbols);
 					scanStart = std::max(modinfo->libentend, modinfo->libstubend);
 				}
 				insertSymbols = MIPSAnalyst::ScanForFunctions(scanStart, scanEnd, insertSymbols);
@@ -1360,6 +1366,8 @@ static PSPModule *__KernelLoadELFFromPtr(const u8 *ptr, size_t elfSize, u32 load
 		}
 
 		if (scan) {
+			// TODO: Limit this to the newly loaded range! This is expensive, well, at least in debug builds
+			// and the cause of stutter during Wipeout Pure initialization.
 			MIPSAnalyst::FinalizeScan(insertSymbols);
 		}
 	}
@@ -1397,7 +1405,7 @@ static PSPModule *__KernelLoadELFFromPtr(const u8 *ptr, size_t elfSize, u32 load
 			continue;
 		}
 
-		u32 variableCount = ent->size <= 4 ? ent->vcount : std::max((u32)ent->vcount , (u32)ent->vcountNew);
+		const u32 variableCount = ent->size <= 4 ? ent->vcount : std::max((u32)ent->vcount , (u32)ent->vcountNew);
 		const char *name;
 		if (Memory::IsValidAddress(ent->name)) {
 			name = Memory::GetCharPointer(ent->name);
@@ -1428,8 +1436,13 @@ static PSPModule *__KernelLoadELFFromPtr(const u8 *ptr, size_t elfSize, u32 load
 		func.moduleName[KERNELOBJECT_MAX_NAME_LENGTH] = '\0';
 
 		for (u32 j = 0; j < ent->fcount; j++) {
-			u32 nid = residentPtr[j];
-			u32 exportAddr = exportPtr[j];
+			const u32 nid = residentPtr[j];
+			const u32 exportAddr = exportPtr[j];
+
+			if (exportAddr & 3) {
+				ERROR_LOG(Log::Loader, "Bad fn export address %08x", exportAddr);
+				// We should probably reject it, but risky.
+			}
 
 			switch (nid) {
 			case NID_MODULE_START:
@@ -1462,8 +1475,8 @@ static PSPModule *__KernelLoadELFFromPtr(const u8 *ptr, size_t elfSize, u32 load
 		var.moduleName[KERNELOBJECT_MAX_NAME_LENGTH] = '\0';
 
 		for (u32 j = 0; j < variableCount; j++) {
-			u32 nid = residentPtr[ent->fcount + j];
-			u32 exportAddr = exportPtr[ent->fcount + j];
+			const u32 nid = residentPtr[ent->fcount + j];
+			const u32 exportAddr = exportPtr[ent->fcount + j];  // These can be unaligned (small varables or char arrays).
 
 			int size;
 			switch (nid) {
@@ -1530,8 +1543,6 @@ static PSPModule *__KernelLoadELFFromPtr(const u8 *ptr, size_t elfSize, u32 load
 		// use module_start_func instead of entry_addr if entry_addr is 0
 		if (module->nm.entry_addr == 0)
 			module->nm.entry_addr = module->nm.module_start_func;
-
-		MIPSAnalyst::PrecompileFunctions();
 	} else {
 		module->nm.entry_addr = -1;
 	}
@@ -1648,11 +1659,6 @@ static void __KernelStartModule(PSPModule *m, int args, const char *argp, SceKer
 
 	SceUID threadID = __KernelSetupRootThread(m->GetUID(), args, argp, options->priority, options->stacksize, options->attribute);
 	__KernelSetThreadRA(threadID, NID_MODULERETURN);
-
-	if (HLEPlugins::Load()) {
-		KernelRotateThreadReadyQueue(0);
-		__KernelReSchedule("Started plugins");
-	}
 }
 
 
@@ -1785,6 +1791,13 @@ bool __KernelLoadExec(const char *filename, u32 paramPtr, std::string *error_str
 		__KernelStartModule(module, (u32)strlen(filename) + 1, filename, &option);
 
 	__KernelStartIdleThreads(module->GetUID());
+
+	// Wait until plugins are loaded
+	module->startingPlugins.clear();
+	if (HLEPlugins::Load(module, __KernelGetCurThread())) {
+		__KernelWaitCurThread(WAITTYPE_PLUGIN, module->GetUID(), 1, 0, false, "started plugins");
+		__KernelReSchedule("Started plugins");
+	}
 
 	delete[] param_argp;
 	delete[] param_key;
@@ -2070,7 +2083,7 @@ static u32 sceKernelStartModule(u32 moduleId, u32 argsize, u32 argAddr, u32 retu
 			module->nm.status = MODULE_STATUS_STARTING;
 			module->waitingThreads.push_back(mwt);
 		}
-		return hleLogInfo(Log::sceModule, ret);
+		return hleLogInfo(Log::sceModule, ret, "'%.*s'", (int)sizeof(module->nm.name), module->nm.name);
 	}
 }
 
@@ -2299,6 +2312,29 @@ void __KernelReturnFromModuleFunc() {
 		}
 	}
 	module->waitingThreads.clear();
+
+	// Check if we need to wake up a plugin waiting thread
+	if (module->pluginWaitingThread) {
+		u32 error;
+		PSPThread *plugin_waiting_thread = kernelObjects.Get<PSPThread>(module->pluginWaitingThread, error);
+		if (plugin_waiting_thread && HLEKernel::VerifyWait(module->pluginWaitingThread, WAITTYPE_PLUGIN, plugin_waiting_thread->moduleId)) {
+			PSPModule *plugin_waiting_module = kernelObjects.Get<PSPModule>(plugin_waiting_thread->moduleId, error);
+			if (plugin_waiting_module) {
+				for (auto it = plugin_waiting_module->startingPlugins.begin(), end = plugin_waiting_module->startingPlugins.end(); it < end; ++it) {
+					if (*it == leftModuleID) {
+						plugin_waiting_module->startingPlugins.erase(it);
+						break;
+					}
+				}
+				if (plugin_waiting_module->startingPlugins.empty()) {
+					INFO_LOG(Log::sceModule, "Resuming LoadExec thread %d", module->pluginWaitingThread);
+					__KernelResumeThreadFromWait(module->pluginWaitingThread, 0);
+				} else {
+					INFO_LOG(Log::sceModule, "LoadExec thread %d still waiting for %d plugin(s)", module->pluginWaitingThread, (int)plugin_waiting_module->startingPlugins.size());
+				}
+			}
+		}
+	}
 
 	if (module->nm.status == MODULE_STATUS_UNLOADING) {
 		// TODO: Delete the waiting thread?

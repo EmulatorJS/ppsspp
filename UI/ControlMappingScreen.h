@@ -49,7 +49,7 @@ protected:
 	void update() override;
 
 private:
-	UI::EventReturn OnAutoConfigure(UI::EventParams &params);
+	void OnAutoConfigure(UI::EventParams &params);
 
 	void dialogFinished(const Screen *dialog, DialogResult result) override;
 
@@ -97,6 +97,9 @@ class KeyMappingNewMouseKeyDialog : public PopupScreen {
 public:
 	KeyMappingNewMouseKeyDialog(int btn, bool replace, std::function<void(KeyMap::MultiInputMapping)> callback, I18NCat i18n)
 		: PopupScreen(T(i18n, "Map Mouse"), "", ""), callback_(callback) {}
+	~KeyMappingNewMouseKeyDialog() {
+		g_IsMappingMouseInput = false;
+	}
 
 	const char *tag() const override { return "KeyMappingNewMouseKey"; }
 
@@ -132,7 +135,7 @@ protected:
 	void CreateViews() override;
 
 private:
-	UI::EventReturn OnResetToDefaults(UI::EventParams &e);
+	void OnResetToDefaults(UI::EventParams &e);
 
 	ControlMapper mapper_;
 
@@ -162,8 +165,8 @@ protected:
 	void resized() override;
 
 private:
-	UI::EventReturn OnMapButton(UI::EventParams &e);
-	UI::EventReturn OnBindAll(UI::EventParams &e);
+	void OnMapButton(UI::EventParams &e);
+	void OnBindAll(UI::EventParams &e);
 	void HandleKeyMapping(const KeyMap::MultiInputMapping &key);
 	void MapNext(bool successive);
 

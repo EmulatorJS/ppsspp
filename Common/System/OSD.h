@@ -5,6 +5,8 @@
 #include <vector>
 #include <mutex>
 
+#include "Common/Common.h"
+
 // Shows a visible message to the user.
 // The default implementation in NativeApp.cpp uses our "osm" system (on screen messaging).
 enum class OSDType {
@@ -29,10 +31,20 @@ enum class OSDType {
 
 	PROGRESS_BAR,
 
-	TRANSPARENT_STATUS,  // Use icons from the atlas
+	STATUS_ICON,  // Use icons from the atlas
 
 	VALUE_COUNT,
 };
+
+#undef None  // X11, sigh.
+
+enum class OSDMessageFlags {
+	None = 0,
+	SpinLeft = 1,
+	SpinRight = 2,
+	Transparent = 4,
+};
+ENUM_CLASS_BITOPS(OSDMessageFlags);
 
 // Data holder for on-screen messages.
 class OnScreenDisplay {
@@ -59,15 +71,15 @@ public:
 	void ShowAchievementUnlocked(int achievementID);
 	void ShowAchievementProgress(int achievementID, bool show);  // call with show=false to hide.  There can only be one of these. When hiding it's ok to not pass a valid achievementID.
 	void ShowChallengeIndicator(int achievementID, bool show);  // call with show=false to hide.
-	void ShowLeaderboardTracker(int leaderboardTrackerID, const char *trackerText, bool show);   // show=true is used both for create and update.
-	void ShowLeaderboardStartEnd(const std::string &title, const std::string &description, bool started);  // started = true for started, false for ended.
-	void ShowLeaderboardSubmitted(const std::string &title, const std::string &value);
+	void ShowLeaderboardTracker(int leaderboardTrackerID, std::string_view trackerText, bool show);   // show=true is used both for create and update.
+	void ShowLeaderboardStartEnd(std::string_view title, std::string_view description, bool started);  // started = true for started, false for ended.
+	void ShowLeaderboardSubmitted(std::string_view title, std::string_view value);
 
 	// Progress bar controls
 	// Set is both create and update. If you set maxValue <= minValue, you'll create an "indeterminate" progress
 	// bar that doesn't show a specific amount of progress.
 	void SetProgressBar(std::string_view id, std::string_view message, float minValue, float maxValue, float progress, float delay_s);
-	void RemoveProgressBar(const std::string &id, bool success, float delay_s);
+	void RemoveProgressBar(std::string_view id, bool success, float delay_s);
 
 	// Call every frame to keep the sidebar visible. Otherwise it'll fade out.
 	void NudgeSidebar();
@@ -78,6 +90,7 @@ public:
 
 	// Can't add an infinite number of "Show" functions, so starting to offer post-modification.
 	void SetClickCallback(const char *id, void (*callback)(bool, void *), void *userdata);
+	void SetFlags(const char *id, OSDMessageFlags flag);
 
 	struct Entry {
 		OSDType type;
@@ -86,6 +99,7 @@ public:
 		std::string iconName;
 		int numericID;
 		std::string id;
+		OSDMessageFlags flags;
 
 		// We could use std::function, but prefer to do it the oldschool way.
 		void (*clickCallback)(bool, void *);

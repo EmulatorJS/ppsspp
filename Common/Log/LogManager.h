@@ -43,7 +43,7 @@ struct LogMessage {
 };
 
 enum class LogOutput {
-	Stdio = (1 << 0),
+	Stdio = (1 << 0),  // Also android log.
 	DebugString = (1 << 1),
 	RingBuffer = (1 << 2),
 	File = (1 << 3),
@@ -95,6 +95,13 @@ public:
 		temp &= ~output;
 		SetOutputsEnabled(temp);
 	}
+	void EnableOutput(LogOutput output, bool enabled) {
+		if (enabled) {
+			EnableOutput(output);
+		} else {
+			DisableOutput(output);
+		}
+	}
 
 	static u32 GetMaxLevel() { return (u32)MAX_LOGLEVEL;	}
 	static int GetNumChannels() { return (int)Log::NUMBER_OF_LOGS; }
@@ -130,8 +137,8 @@ public:
 	}
 #endif
 
-	const RingbufferLog *GetRingbuffer() const {
-		return &ringLog_;
+	const RingbufferLog &GetRingbuffer() const {
+		return ringLog_;
 	}
 
 	void Init(bool *enabledSetting, bool headless = false);
@@ -142,12 +149,25 @@ public:
 		externalUserData_ = userdata;
 	}
 
-	void ChangeFileLog(const Path &filename);
+	void SetFileLogPath(const Path &filename);
+	const Path &GetLogFilePath() const { return logFilename_; }
 
 	void SaveConfig(Section *section);
-	void LoadConfig(const Section *section, bool debugDefaults);
+	void LoadConfig(const Section *section);
 
 	static const char *GetLogTypeName(Log type);
+
+	static u32 GetLevelColor(LogLevel level) {
+		switch (level) {
+		case LogLevel::LDEBUG: return 0xE0E0E0;
+		case LogLevel::LWARNING: return 0x50FFFF;
+		case LogLevel::LERROR: return 0x5050FF;
+		case LogLevel::LNOTICE: return 0x30FF30;
+		case LogLevel::LINFO: return 0xFFFF60;
+		case LogLevel::LVERBOSE:
+		default: return 0xC0C0C0;
+		}
+	}
 
 private:
 	// Prevent copies.

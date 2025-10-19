@@ -1,10 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project DefaultTargets="Build" ToolsVersion="14.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <ItemGroup Label="ProjectConfigurations">
-    <ProjectConfiguration Include="Debug|ARM">
-      <Configuration>Debug</Configuration>
-      <Platform>ARM</Platform>
-    </ProjectConfiguration>
     <ProjectConfiguration Include="Debug|ARM64">
       <Configuration>Debug</Configuration>
       <Platform>ARM64</Platform>
@@ -12,10 +8,6 @@
     <ProjectConfiguration Include="Debug|x64">
       <Configuration>Debug</Configuration>
       <Platform>x64</Platform>
-    </ProjectConfiguration>
-    <ProjectConfiguration Include="Release|ARM">
-      <Configuration>Release</Configuration>
-      <Platform>ARM</Platform>
     </ProjectConfiguration>
     <ProjectConfiguration Include="Release|ARM64">
       <Configuration>Release</Configuration>
@@ -60,22 +52,6 @@
   <PropertyGroup>
     <GenerateManifest>false</GenerateManifest>
   </PropertyGroup>
-  <ItemDefinitionGroup Condition="'$(Platform)' == 'arm'">
-    <ClCompile>
-      <PrecompiledHeader>Use</PrecompiledHeader>
-      <CompileAsWinRT>false</CompileAsWinRT>
-      <SDLCheck>false</SDLCheck>
-      <ForcedIncludeFiles>pch.h</ForcedIncludeFiles>
-      <AdditionalIncludeDirectories>../../ext/libchdr/include;../../ffmpeg/Windows10/ARM/include;../../ffmpeg/WindowsInclude;../..;../../ext/native;../../ext/snappy;../../ext/libpng17;../../Common;../../ext/zlib;../../ext/zstd/lib;../../ext;../../ext/armips/;../../ext/armips/ext/filesystem/include/;../../ext/armips/ext/tinyformat/;$(ProjectDir);$(GeneratedFilesDir);$(IntDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>USE_FFMPEG;WITH_UPNP;_CRT_NONSTDC_NO_DEPRECATE;_CRT_SECURE_NO_WARNINGS;NOMINMAX;_ARM_WINAPI_PARTITION_DESKTOP_SDK_AVAILABLE=1;ARMIPS_USE_STD_FILESYSTEM;%(ClCompile.PreprocessorDefinitions)</PreprocessorDefinitions>
-      <LanguageStandard>stdcpp17</LanguageStandard>
-    </ClCompile>
-    <Link>
-      <SubSystem>Console</SubSystem>
-      <IgnoreAllDefaultLibraries>false</IgnoreAllDefaultLibraries>
-      <GenerateWindowsMetadata>false</GenerateWindowsMetadata>
-    </Link>
-  </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Platform)' == 'ARM64'">
     <ClCompile>
       <PrecompiledHeader>Use</PrecompiledHeader>
@@ -155,7 +131,7 @@
     <ClInclude Include="..\..\Core\Dialog\PSPScreenshotDialog.h" />
     <ClInclude Include="..\..\Core\Dialog\SavedataParam.h" />
     <ClInclude Include="..\..\Core\ELF\ElfReader.h" />
-    <ClInclude Include="..\..\Core\ELF\ElfTypes.h" />
+    <ClInclude Include="..\..\Core\ELF\PSPElfTypes.h" />
     <ClInclude Include="..\..\Core\ELF\ParamSFO.h" />
     <ClInclude Include="..\..\Core\ELF\PBPReader.h" />
     <ClInclude Include="..\..\Core\ELF\PrxDecrypter.h" />
@@ -185,6 +161,7 @@
     <ClInclude Include="..\..\Core\HLE\sceNp2.h" />
     <ClInclude Include="..\..\Core\HLE\sceReg.h" />
     <ClInclude Include="..\..\Core\HLE\SocketManager.h" />
+    <ClInclude Include="..\..\Core\HW\GranularMixer.h" />
     <ClInclude Include="..\..\Core\Instance.h" />
     <ClInclude Include="..\..\Core\HLE\FunctionWrappers.h" />
     <ClInclude Include="..\..\Core\HLE\HLE.h" />
@@ -238,6 +215,7 @@
     <ClInclude Include="..\..\Core\HLE\sceMt19937.h" />
     <ClInclude Include="..\..\Core\HLE\sceNet.h" />
     <ClInclude Include="..\..\Core\HLE\sceNet_lib.h" />
+    <ClInclude Include="..\..\Core\HLE\NetAdhocCommon.h" />
     <ClInclude Include="..\..\Core\HLE\sceNetAdhoc.h" />
     <ClInclude Include="..\..\Core\HLE\sceNetAdhocMatching.h" />
     <ClInclude Include="..\..\Core\HLE\sceNp.h" />
@@ -350,6 +328,7 @@
     <ClInclude Include="..\..\ext\cityhash\citycrc.h" />
     <ClInclude Include="..\..\ext\disarm.h" />
     <ClInclude Include="..\..\ext\riscv-disas.h" />
+    <ClInclude Include="..\..\ext\loongarch-disasm.h" />
     <ClInclude Include="..\..\ext\gason\gason.h" />
     <ClInclude Include="..\..\ext\jpge\jpgd.h" />
     <ClInclude Include="..\..\ext\jpge\jpge.h" />
@@ -451,6 +430,7 @@
     <ClCompile Include="..\..\Core\HLE\sceNp2.cpp" />
     <ClCompile Include="..\..\Core\HLE\sceReg.cpp" />
     <ClCompile Include="..\..\Core\HLE\SocketManager.cpp" />
+    <ClCompile Include="..\..\Core\HW\GranularMixer.cpp" />
     <ClCompile Include="..\..\Core\Instance.cpp" />
     <ClCompile Include="..\..\Core\HLE\HLE.cpp" />
     <ClCompile Include="..\..\Core\HLE\HLEHelperThread.cpp" />
@@ -502,6 +482,7 @@
     <ClCompile Include="..\..\Core\HLE\sceMt19937.cpp" />
     <ClCompile Include="..\..\Core\HLE\sceNet.cpp" />
     <ClCompile Include="..\..\Core\HLE\sceNet_lib.cpp" />
+    <ClCompile Include="..\..\Core\HLE\NetAdhocCommon.cpp" />
     <ClCompile Include="..\..\Core\HLE\sceNetAdhoc.cpp" />
     <ClCompile Include="..\..\Core\HLE\sceNetAdhocMatching.cpp" />
     <ClCompile Include="..\..\Core\HLE\sceNp.cpp" />
@@ -652,6 +633,7 @@
     <ClCompile Include="..\..\ext\cityhash\city.cpp" />
     <ClCompile Include="..\..\ext\disarm.cpp" />
     <ClCompile Include="..\..\ext\riscv-disas.cpp" />
+    <ClCompile Include="..\..\ext\loongarch-disasm.cpp" />
     <ClCompile Include="..\..\ext\gason\gason.cpp" />
     <ClCompile Include="..\..\ext\jpge\jpgd.cpp" />
     <ClCompile Include="..\..\ext\jpge\jpge.cpp" />

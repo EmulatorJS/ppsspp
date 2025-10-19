@@ -194,12 +194,22 @@ void CPUInfo::Detect()
 	if (logical_cpu_count <= 0)
 		logical_cpu_count = 1;
 
-	truncate_cpy(cpu_string, parser.ISAString().c_str());
+	truncate_cpy(cpu_string, parser.ISAString());
 
 	// A number of CPUs support a limited set of bitmanip.  It's not all U74, so we use SOC for now...
 	if (parser.FirmwareMatchesCompatible("starfive,jh7110")) {
 		RiscV_Zba = true;
 		RiscV_Zbb = true;
+	}
+	if ((parser.FirmwareMatchesCompatible("spacemit,k1-x"))
+			|| (parser.FirmwareMatchesCompatible("spacemit,k1"))) {
+		RiscV_Zba = true;
+		RiscV_Zbb = true;
+		RiscV_Zbc = true;
+		RiscV_Zbs = true;
+		RiscV_Zfh = true;
+		RiscV_Zfhmin = true;
+		RiscV_Zicond = true;
 	}
 #endif
 

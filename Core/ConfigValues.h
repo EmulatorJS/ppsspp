@@ -106,7 +106,6 @@ enum class ScreenshotMode {
 // Software is not among these because it will have one of these perform the blit to display.
 enum class GPUBackend {
 	OPENGL = 0,
-	DIRECT3D9 = 1,
 	DIRECT3D11 = 2,
 	VULKAN = 3,
 };
@@ -116,6 +115,11 @@ enum class DepthRasterMode {
 	LOW_QUALITY = 1,
 	OFF = 2,
 	FORCE_ON = 3,
+};
+
+enum class AudioSyncMode {
+	GRANULAR = 0,
+	CLASSIC_PITCH = 1,
 };
 
 enum class RestoreSettingsBits : int {
@@ -143,10 +147,14 @@ ENUM_CLASS_BITOPS(DisableHLEFlags);
 std::string GPUBackendToString(GPUBackend backend);
 GPUBackend GPUBackendFromString(std::string_view backend);
 
-enum AudioBackendType {
-	AUDIO_BACKEND_AUTO,
-	AUDIO_BACKEND_DSOUND,
-	AUDIO_BACKEND_WASAPI,
+// Vulkan present modes, linearized. Currently in order of lowest to highest latency, hopefully won't change in the future.
+// NOTE: These values DO NOT match the flags in DrawContext caps - these are not used as a bitfield.
+enum class PresentMode {
+	Immediate = 0,  // VK_PRESENT_MODE_IMMEDIATE_KHR
+	Mailbox = 1,    // VK_PRESENT_MODE_MAILBOX_KHR
+	FifoLatestReady = 2, // VK_PRESENT_MODE_FIFO_LATEST_READY_KHR
+	FifoRelaxed = 3, // VK_PRESENT_MODE_FIFO_RELAXED_KHR
+	Fifo = 4,       // VK_PRESENT_MODE_FIFO_KHR
 };
 
 // For iIOTimingMethod.
@@ -175,6 +183,7 @@ enum class BackgroundAnimation {
 	WAVE = 3,
 	MOVING_BACKGROUND = 4,
 	BOUNCING_ICON = 5,
+	FLOATING_SYMBOLS_COLORED = 6,
 };
 
 // iOS only
@@ -188,6 +197,12 @@ enum class ShowStatusFlags {
 	FPS_COUNTER = 1 << 1,
 	SPEED_COUNTER = 1 << 2,
 	BATTERY_PERCENT = 1 << 3,
+};
+
+enum class SplineQuality {
+	LOW_QUALITY = 0,
+	MEDIUM_QUALITY = 1,
+	HIGH_QUALITY = 2,
 };
 
 enum class DumpFileType {

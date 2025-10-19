@@ -18,9 +18,19 @@
 #include <wrl/client.h>
 
 namespace W32Util {
+using Microsoft::WRL::ComPtr;
+
+void OpenDisplaySettings() {
+	// Windows 10/11 Settings URI
+	HINSTANCE res = ShellExecuteW(NULL, L"open", L"ms-settings:display-advanced", NULL, NULL, SW_SHOWNORMAL);
+	if ((INT_PTR)res <= 32) {
+		// Fallback for Windows 7/8
+		ShellExecuteW(NULL, L"open", L"desk.cpl", NULL, NULL, SW_SHOWNORMAL);
+	}
+}
 
 bool MoveToTrash(const Path &path) {
-	IFileOperation *pFileOp = nullptr;
+	ComPtr<IFileOperation> pFileOp;
 
 	HRESULT hr = CoCreateInstance(CLSID_FileOperation, nullptr, CLSCTX_ALL, IID_PPV_ARGS(&pFileOp));
 	if (FAILED(hr)) {
@@ -30,22 +40,19 @@ bool MoveToTrash(const Path &path) {
 	// Set operation flags
 	hr = pFileOp->SetOperationFlags(FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_SILENT);
 	if (FAILED(hr)) {
-		pFileOp->Release();
 		return false;
 	}
 
 	// Create a shell item from the file path
-	IShellItem* pItem = nullptr;
+	ComPtr<IShellItem> pItem;
 	hr = SHCreateItemFromParsingName(path.ToWString().c_str(), nullptr, IID_PPV_ARGS(&pItem));
 	if (SUCCEEDED(hr)) {
 		// Schedule the delete (move to recycle bin)
-		hr = pFileOp->DeleteItem(pItem, nullptr);
+		hr = pFileOp->DeleteItem(pItem.Get(), nullptr);
 		if (SUCCEEDED(hr)) {
 			hr = pFileOp->PerformOperations(); // Execute
 		}
-		pItem->Release();
 	}
-	pFileOp->Release();
 
 	if (SUCCEEDED(hr)) {
 		INFO_LOG(Log::IO, "Moved file to trash successfully: %s", path.c_str());
@@ -63,7 +70,7 @@ std::string BrowseForFolder2(HWND parent, std::string_view title, std::string_vi
 	std::wstring selectedFolder;
 
 	// Create the FileOpenDialog object
-	IFileDialog* pFileDialog = nullptr;
+	ComPtr<IFileDialog> pFileDialog;
 	HRESULT hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pFileDialog));
 	if (!SUCCEEDED(hr)) {
 		return "";
@@ -79,11 +86,10 @@ std::string BrowseForFolder2(HWND parent, std::string_view title, std::string_vi
 
 	// Set the initial directory
 	if (!initialDir.empty()) {
-		IShellItem* pShellItem = nullptr;
+		ComPtr<IShellItem> pShellItem;
 		hr = SHCreateItemFromParsingName(initialDir.c_str(), nullptr, IID_PPV_ARGS(&pShellItem));
 		if (SUCCEEDED(hr)) {
-			hr = pFileDialog->SetFolder(pShellItem);
-			pShellItem->Release();
+			hr = pFileDialog->SetFolder(pShellItem.Get());
 		}
 	}
 	pFileDialog->SetTitle(wtitle.c_str());
@@ -92,7 +98,7 @@ std::string BrowseForFolder2(HWND parent, std::string_view title, std::string_vi
 	hr = pFileDialog->Show(parent);
 	if (SUCCEEDED(hr)) {
 		// Get the selected folder
-		IShellItem* pShellItem = nullptr;
+		ComPtr<IShellItem> pShellItem;
 		hr = pFileDialog->GetResult(&pShellItem);
 		if (SUCCEEDED(hr)) {
 			PWSTR pszFilePath = nullptr;
@@ -101,11 +107,9 @@ std::string BrowseForFolder2(HWND parent, std::string_view title, std::string_vi
 				selectedFolder = pszFilePath;
 				CoTaskMemFree(pszFilePath);
 			}
-			pShellItem->Release();
 		}
 	}
 
-	pFileDialog->Release();
 	return ConvertWStringToUTF8(selectedFolder);
 }
 
@@ -229,7 +233,7 @@ std::string BrowseForFolder2(HWND parent, std::string_view title, std::string_vi
 // http://msdn.microsoft.com/en-us/library/aa969393.aspx
 static HRESULT CreateLink(LPCWSTR lpszPathObj, LPCWSTR lpszArguments, LPCWSTR lpszPathLink, LPCWSTR lpszDesc, LPCWSTR lpszIcon, int iconIndex) {
 	HRESULT hres;
-	Microsoft::WRL::ComPtr<IShellLink> psl;
+	ComPtr<IShellLink> psl;
 	hres = CoInitializeEx(NULL, COINIT_MULTITHREADED);
 	if (FAILED(hres))
 		return hres;
@@ -238,7 +242,7 @@ static HRESULT CreateLink(LPCWSTR lpszPathObj, LPCWSTR lpszArguments, LPCWSTR lp
 	// has already been called.
 	hres = CoCreateInstance(__uuidof(ShellLink), NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&psl));
 	if (SUCCEEDED(hres) && psl) {
-		Microsoft::WRL::ComPtr<IPersistFile> ppf;
+		ComPtr<IPersistFile> ppf;
 
 		// Set the path to the shortcut target and add the description. 
 		psl->SetPath(lpszPathObj);

@@ -516,6 +516,12 @@ static const HardHashTableEntry hardcodedHashes[] = {
 	{ 0xf93d3cd093595a6c, 856, "brian_lara_fps_hack", }, // Brian Lara 2007: Pressure Play
 	{ 0xc1d4af42a4c8860f, 964, "persona1_download_frame", },  // Persona 1 (issue #13079)
 	{ 0xde4286b2e7f6d3c1, 304, "persona2_download_frame", },  // Persona 2 (issue #13079)
+	{ 0x478c9c93d02011af, 1068, "steinsgate_download_frame", }, // Steins;Gate (issue #18262)
+	{ 0xb85dbe639f7acf13, 312, "infinity_download_frame", },  // Never7, Ever17, Remember11
+	{ 0x649d3305344f7afd, 464, "takuyo_1_download_frame", },
+	{ 0x505ad2073e4381d7, 428, "takuyo_2_download_frame", },
+	{ 0x0f4dbf28320798d7, 1160, "takuyo_3_download_frame", },
+	{ 0xf2bbff4807c5dab2, 556, "kingdomhearts_download_frame", },
 };
 
 namespace MIPSAnalyst {
@@ -906,33 +912,6 @@ skip:
 		}
 	}
 
-	void PrecompileFunction(u32 startAddr, u32 length) {
-		// Direct calls to this ignore the bPreloadFunctions flag, since it's just for stubs.
-		std::lock_guard<std::recursive_mutex> guard(MIPSComp::jitLock);
-		if (MIPSComp::jit) {
-			MIPSComp::jit->CompileFunction(startAddr, length);
-		}
-	}
-
-	void PrecompileFunctions() {
-		if (!g_Config.bPreloadFunctions) {
-			return;
-		}
-		std::lock_guard<std::recursive_mutex> guard(functions_lock);
-
-		// TODO: Load from cache file if available instead.
-
-		double st = time_now_d();
-		for (auto iter = functions.begin(), end = functions.end(); iter != end; iter++) {
-			const AnalyzedFunction &f = *iter;
-
-			PrecompileFunction(f.start, f.end - f.start + 4);
-		}
-		double et = time_now_d();
-
-		NOTICE_LOG(Log::JIT, "Precompiled %d MIPS functions in %0.2f milliseconds", (int)functions.size(), (et - st) * 1000.0);
-	}
-
 	static const char *DefaultFunctionName(char buffer[256], u32 startAddr) {
 		snprintf(buffer, 256, "z_un_%08x", startAddr);
 		return buffer;
@@ -1022,7 +1001,11 @@ skip:
 		return furthestJumpbackAddr;
 	}
 
+	// endAddr is exclusive.
 	bool ScanForFunctions(u32 startAddr, u32 endAddr, bool insertSymbols) {
+		_assert_((startAddr & 3) == 0);
+		_assert_((endAddr & 3) == 0);
+
 		std::lock_guard<std::recursive_mutex> guard(functions_lock);
 
 		FunctionsVector new_functions;
@@ -1036,7 +1019,7 @@ skip:
 		bool decreasedSp = false;
 
 		u32 addr;
-		for (addr = startAddr; addr <= endAddr; addr += 4) {
+		for (addr = startAddr; addr < endAddr; addr += 4) {
 			MIPSOpcode op = Memory::Read_Instruction(addr, true);
 			u32 target = GetBranchTargetNoRA(addr, op);
 			if (target != INVALIDTARGET) {
@@ -1160,7 +1143,7 @@ skip:
 			}
 		}
 
-		if (addr <= endAddr) {
+		if (addr < endAddr) {
 			currentFunction.end = addr + 4;
 			new_functions.push_back(currentFunction);
 		}
@@ -1204,6 +1187,9 @@ skip:
 	}
 
 	void RegisterFunction(u32 startAddr, u32 size, const char *name) {
+		_assert_((startAddr & 3) == 0);
+		_assert_((size & 3) == 0);
+
 		std::lock_guard<std::recursive_mutex> guard(functions_lock);
 
 		// Check if we have this already
@@ -1236,19 +1222,23 @@ skip:
 		HashFunctions();
 	}
 
+	// endAddr is exclusive.
 	void ForgetFunctions(u32 startAddr, u32 endAddr) {
 		std::lock_guard<std::recursive_mutex> guard(functions_lock);
+
+		_assert_((startAddr & 3) == 0);
+		_assert_((endAddr & 3) == 0);
 
 		// It makes sense to forget functions as modules are unloaded but it breaks
 		// the easy way of saving a hashmap by unloading and loading a game. I added
 		// an alternative way.
 
-		// Most of the time, functions from the same module will be contiguous in functions.
+		// Most of the time, functions from the same module will be contiguous in the vector, in address order.
 		FunctionsVector::iterator prevMatch = functions.end();
 		size_t originalSize = functions.size();
 		for (auto iter = functions.begin(); iter != functions.end(); ++iter) {
 			const bool hadPrevMatch = prevMatch != functions.end();
-			const bool match = iter->start >= startAddr && iter->start <= endAddr;
+			const bool match = iter->start >= startAddr && iter->start < endAddr;
 
 			if (!hadPrevMatch && match) {
 				// Entering a range.

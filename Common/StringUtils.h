@@ -33,7 +33,7 @@
 
 // Useful for shaders with error messages..
 std::string LineNumberString(const std::string &str);
-std::string IndentString(const std::string &str, const std::string &sep, bool skipFirst = false);
+std::string IndentString(const std::string &str, std::string_view sep, bool skipFirst = false);
 
 // Other simple string utilities.
 
@@ -90,13 +90,10 @@ enum class StringRestriction {
 std::string SanitizeString(std::string_view username, StringRestriction restriction, int minLength = 0, int maxLength = -1);
 
 void DataToHexString(const uint8_t *data, size_t size, std::string *output, bool lineBreaks = true);
-void DataToHexString(int indent, uint32_t startAddr, const uint8_t* data, size_t size, std::string* output);
+void DataToHexString(int indent, uint32_t startAddr, const uint8_t* data, size_t size, std::string *output);
 
 std::string StringFromFormat(const char* format, ...);
 std::string StringFromInt(int value);
-
-std::string StripSpaces(const std::string &s);
-std::string StripQuotes(const std::string &s);
 
 std::string_view KeepAfterLast(std::string_view s, char c);
 std::string_view KeepIncludingLast(std::string_view s, char c);
@@ -106,12 +103,12 @@ std::string_view StripQuotes(std::string_view s);
 
 std::string_view StripPrefix(std::string_view prefix, std::string_view s);
 
-int countChar(std::string_view haystack, char needle);
+int CountChar(std::string_view haystack, char needle);
 
 // NOTE: str must live at least as long as all uses of output.
 void SplitString(std::string_view str, const char delim, std::vector<std::string_view> &output);
 // Try to avoid this when possible, in favor of the string_view version.
-void SplitString(std::string_view str, const char delim, std::vector<std::string> &output);
+void SplitString(std::string_view str, const char delim, std::vector<std::string> &output, bool trimOutput = false);
 
 void GetQuotedStrings(std::string_view str, std::vector<std::string> &output);
 
@@ -134,7 +131,9 @@ inline size_t truncate_cpy(char(&out)[Count], std::string_view src) {
 	return truncate_cpy(out, Count, src);
 }
 
-const char* safe_string(const char* s);
+inline const char *safe_string(const char *s) {
+	return s ? s : "(null)";
+}
 
 long parseHexLong(const std::string &s);
 long parseLong(std::string s);
@@ -150,8 +149,7 @@ inline void CharArrayFromFormat(char (& out)[Count], const char* format, ...)
 	va_end(args);
 }
 
-// "C:/Windows/winhelp.exe" to "C:/Windows/", "winhelp", ".exe"
-bool SplitPath(const std::string& full_path, std::string* _pPath, std::string* _pFilename, std::string* _pExtension);
+void MakeUnique(std::vector<std::string> &vec);
 
 // Replaces %1, %2, %3 in format with arg1, arg2, arg3.
 // Much safer than snprintf and friends.

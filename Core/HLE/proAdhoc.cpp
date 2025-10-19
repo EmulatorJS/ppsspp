@@ -41,6 +41,7 @@
 #include "Core/HLE/sceKernel.h"
 #include "Core/HLE/sceKernelMutex.h"
 #include "Core/HLE/sceUtility.h"
+#include "Core/HLE/ErrorCodes.h"
 
 #include "Core/MemMap.h"
 #include "Core/HLE/HLE.h"
@@ -52,7 +53,9 @@
 #include "Core/HLE/sceKernelMemory.h"
 #include "Core/HLE/sceNetAdhoc.h"
 #include "Core/Instance.h"
-#include "proAdhoc.h" 
+#include "proAdhoc.h"
+
+#include "Core/HLE/NetAdhocCommon.h"
 
 #ifdef _WIN32
 #undef errno
@@ -1352,7 +1355,7 @@ int friendFinder() {
 	g_adhocServerIP.in.sin_addr.s_addr = INADDR_NONE;
 	if (g_Config.bEnableWlan && !net::DNSResolve(g_Config.proAdhocServer, "", &resolved, err)) {
 		ERROR_LOG(Log::sceNet, "DNS Error Resolving %s\n", g_Config.proAdhocServer.c_str());
-		g_OSD.Show(OSDType::MESSAGE_ERROR, std::string(n->T("DNS Error Resolving ")) + g_Config.proAdhocServer);
+		g_OSD.Show(OSDType::MESSAGE_ERROR, std::string(n->T("DNS Error Resolving")) + g_Config.proAdhocServer);
 	}
 	if (resolved) {
 		for (auto ptr = resolved; ptr != NULL; ptr = ptr->ai_next) {
@@ -1452,7 +1455,7 @@ int friendFinder() {
 			// Calculate EnterGameMode Timeout to prevent waiting forever for disconnected players
 			if (isAdhocctlBusy && adhocctlState == ADHOCCTL_STATE_DISCONNECTED && adhocctlCurrentMode == ADHOCCTL_MODE_GAMEMODE && netAdhocGameModeEntered && static_cast<s64>(now - adhocctlStartTime) > netAdhocEnterGameModeTimeout) {
 				netAdhocGameModeEntered = false;
-				notifyAdhocctlHandlers(ADHOCCTL_EVENT_ERROR, ERROR_NET_ADHOC_TIMEOUT);
+				notifyAdhocctlHandlers(ADHOCCTL_EVENT_ERROR, SCE_NET_ADHOC_ERROR_TIMEOUT);
 			}
 
 			// Handle Packets

@@ -1,6 +1,5 @@
 // Qt Desktop UI: works on Linux, Windows and Mac OSX
 #include "ppsspp_config.h"
-#include "mainwindow.h"
 
 #include <QApplication>
 #include <QDesktopServices>
@@ -8,6 +7,8 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QMessageBox>
+
+#include "mainwindow.h"
 
 #include "Common/System/Display.h"
 #include "Common/System/NativeApp.h"
@@ -28,12 +29,12 @@ MainWindow::MainWindow(QWidget *parent, bool fullscreen) :
 	lastUIState(UISTATE_MENU)
 {
 #if defined(ASSETS_DIR)
-	if (QFile::exists(ASSETS_DIR "icon_regular_72.png"))
-		setWindowIcon(QIcon(ASSETS_DIR "icon_regular_72.png"));
+	if (QFile::exists(ASSETS_DIR "ui_images/icon.png"))
+		setWindowIcon(QIcon(ASSETS_DIR "ui_images/icon.png"));
 	else
-		setWindowIcon(QIcon(qApp->applicationDirPath() + "/assets/icon_regular_72.png"));
+		setWindowIcon(QIcon(qApp->applicationDirPath() + "/assets/ui_images/icon.png"));
 #else
-	setWindowIcon(QIcon(qApp->applicationDirPath() + "/assets/icon_regular_72.png"));
+	setWindowIcon(QIcon(qApp->applicationDirPath() + "/assets/ui_images/icon.png"));
 #endif
 
 	SetGameTitle("");
@@ -130,7 +131,7 @@ void MainWindow::loadAct()
 	{
 		QFileInfo info(filename);
 		g_Config.currentDirectory = Path(info.absolutePath().toStdString());
-		System_PostUIMessage(UIMessage::REQUEST_GAME_BOOT, filename.toStdString().c_str());
+		System_PostUIMessage(UIMessage::REQUEST_GAME_BOOT, filename.toStdString());
 	}
 }
 
@@ -149,7 +150,7 @@ void MainWindow::openmsAct()
 	QDesktopServices::openUrl(QUrl(memorystick));
 }
 
-static void SaveStateActionFinished(SaveState::Status status, std::string_view message, void *userdata)
+static void SaveStateActionFinished(SaveState::Status status, std::string_view message)
 {
 	// TODO: Improve messaging?
 	if (status == SaveState::Status::FAILURE)
@@ -165,13 +166,13 @@ static void SaveStateActionFinished(SaveState::Status status, std::string_view m
 void MainWindow::qlstateAct()
 {
 	Path gamePath = PSP_CoreParameter().fileToStart;
-	SaveState::LoadSlot(gamePath, 0, SaveStateActionFinished, this);
+	SaveState::LoadSlot(gamePath, 0, SaveStateActionFinished);
 }
 
 void MainWindow::qsstateAct()
 {
 	Path gamePath = PSP_CoreParameter().fileToStart;
-	SaveState::SaveSlot(gamePath, 0, SaveStateActionFinished, this);
+	SaveState::SaveSlot(gamePath, 0, SaveStateActionFinished);
 }
 
 void MainWindow::lstateAct()
@@ -185,7 +186,7 @@ void MainWindow::lstateAct()
 	if (dialog.exec())
 	{
 		QStringList fileNames = dialog.selectedFiles();
-		SaveState::Load(Path(fileNames[0].toStdString()), -1, SaveStateActionFinished, this);
+		SaveState::Load(Path(fileNames[0].toStdString()), -1, SaveStateActionFinished);
 	}
 }
 
@@ -200,7 +201,7 @@ void MainWindow::sstateAct()
 	if (dialog.exec())
 	{
 		QStringList fileNames = dialog.selectedFiles();
-		SaveState::Save(Path(fileNames[0].toStdString()), -1, SaveStateActionFinished, this);
+		SaveState::Save(Path(fileNames[0].toStdString()), -1, SaveStateActionFinished);
 	}
 }
 

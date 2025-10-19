@@ -372,6 +372,7 @@ else ifneq (,$(findstring windows_msvc2019,$(platform)))
 	WindowsSDKSharedIncludeDir := $(shell cygpath -w "$(WindowsSdkDir)\Include\$(WindowsSDKVersion)\shared")
 	WindowsSDKUCRTIncludeDir := $(shell cygpath -w "$(WindowsSdkDir)\Include\$(WindowsSDKVersion)\ucrt")
 	WindowsSDKUMIncludeDir := $(shell cygpath -w "$(WindowsSdkDir)\Include\$(WindowsSDKVersion)\um")
+	WindowsSDKWinRTIncludeDir := $(shell cygpath -w "$(WindowsSdkDir)\Include\$(WindowsSDKVersion)\winrt")
 	WindowsSDKUCRTLibDir := $(shell cygpath -w "$(WindowsSdkDir)\Lib\$(WindowsSDKVersion)\ucrt\$(TargetArchMoniker)")
 	WindowsSDKUMLibDir := $(shell cygpath -w "$(WindowsSdkDir)\Lib\$(WindowsSDKVersion)\um\$(TargetArchMoniker)")
 
@@ -393,7 +394,7 @@ else ifneq (,$(findstring windows_msvc2019,$(platform)))
 	PATH := $(shell IFS=$$'\n'; cygpath "$(VCCompilerToolsBinDir)"):$(PATH)
 	PATH := $(PATH):$(shell IFS=$$'\n'; cygpath "$(VsInstallRoot)/Common7/IDE")
 
-	export INCLUDE := $(INCLUDE);$(WindowsSDKSharedIncludeDir);$(WindowsSDKUCRTIncludeDir);$(WindowsSDKUMIncludeDir)
+	export INCLUDE := $(INCLUDE);$(WindowsSDKSharedIncludeDir);$(WindowsSDKUCRTIncludeDir);$(WindowsSDKUMIncludeDir);$(WindowsSDKWinRTIncludeDir)
 	export LIB := $(LIB);$(WindowsSDKUCRTLibDir);$(WindowsSDKUMLibDir);$(FFMPEGDIR)/Windows/$(TARGET_ARCH)/lib
 	TARGET := $(TARGET_NAME)_libretro.dll
 	PSS_STYLE :=2
@@ -403,14 +404,14 @@ else ifneq (,$(findstring windows_msvc2019,$(platform)))
 	FFMPEGLIBDIR := $(FFMPEGDIR)/Windows/$(TARGET_ARCH)/lib
 	FFMPEGLDFLAGS += -LIBPATH:$(FFMPEGLIBDIR)
 	GL_LIB := opengl32.lib
-	LDFLAGS += ws2_32.lib user32.lib shell32.lib avcodec.lib avutil.lib swresample.lib swscale.lib avformat.lib advapi32.lib winmm.lib gdi32.lib d3d9.lib Iphlpapi.lib
+	LDFLAGS += ws2_32.lib user32.lib shell32.lib avcodec.lib avutil.lib swresample.lib swscale.lib avformat.lib advapi32.lib winmm.lib gdi32.lib Iphlpapi.lib
 
 # Windows
 else ifneq (,$(findstring win,$(platform)))
 	TARGET := $(TARGET_NAME)_libretro.dll
 	CFLAGS += -D_UNICODE -DUNICODE
 	CXXFLAGS += -fpermissive -Wno-multichar -D_UNICODE -DUNICODE -DARMIPS_USE_STD_FILESYSTEM
-	LDFLAGS += -shared -Wl,--no-undefined -static-libgcc -static-libstdc++ -Wl,--version-script=link.T -lwinmm -lgdi32 -lwsock32 -lws2_32 -ld3d9
+	LDFLAGS += -shared -Wl,--no-undefined -static-libgcc -static-libstdc++ -Wl,--version-script=link.T -lwinmm -lgdi32 -lwsock32 -lws2_32
 	GL_LIB := -lopengl32
 	PLATFORM_EXT = win32
    FFMPEGINCFLAGS += -I$(FFMPEGDIR)/Windows/$(TARGET_ARCH)/include

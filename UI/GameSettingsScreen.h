@@ -23,19 +23,20 @@
 #include <thread>
 
 #include "Common/UI/UIScreen.h"
+#include "Common/UI/PopupScreens.h"
 #include "Core/ConfigValues.h"
-#include "UI/MiscScreens.h"
+#include "UI/BaseScreens.h"
 #include "UI/TabbedDialogScreen.h"
 
 class Path;
 
 // Per-game settings screen - enables you to configure graphic options, control options, etc
 // per game.
-class GameSettingsScreen : public TabbedUIDialogScreenWithGameBackground {
+class GameSettingsScreen : public UITabbedBaseDialogScreen {
 public:
 	GameSettingsScreen(const Path &gamePath, std::string gameID = "", bool editThenRestore = false);
+	~GameSettingsScreen();
 
-	void onFinish(DialogResult result) override;
 	const char *tag() const override { return "GameSettings"; }
 
 protected:
@@ -74,12 +75,6 @@ private:
 
 	std::string memstickDisplay_;
 
-	// Event handlers
-	void OnControlMapping(UI::EventParams &e);
-	void OnCalibrateAnalogs(UI::EventParams &e);
-	void OnTouchControlLayout(UI::EventParams &e);
-	void OnTiltCustomize(UI::EventParams &e);
-
 	// Global settings handlers
 	void OnAutoFrameskip(UI::EventParams &e);
 	void OnTextureShader(UI::EventParams &e);
@@ -92,7 +87,6 @@ private:
 	void OnChangeBackground(UI::EventParams &e);
 	void OnFullscreenChange(UI::EventParams &e);
 	void OnFullscreenMultiChange(UI::EventParams &e);
-	void OnResolutionChange(UI::EventParams &e);
 	void OnRestoreDefaultSettings(UI::EventParams &e);
 	void OnRenderingBackend(UI::EventParams &e);
 	void OnRenderingDevice(UI::EventParams &e);
@@ -106,11 +100,12 @@ private:
 	void OnMemoryStickMyDoc(UI::EventParams &e);
 	void OnMemoryStickOther(UI::EventParams &e);
 #endif
-	void OnScreenRotation(UI::EventParams &e);
 	void OnImmersiveModeChange(UI::EventParams &e);
 	void OnSustainedPerformanceModeChange(UI::EventParams &e);
 
 	void OnAdhocGuides(UI::EventParams &e);
+
+	void TriggerRestartOrDo(std::function<void()> callback);
 
 	// Temporaries to convert setting types, cache enabled, etc.
 	int iAlternateSpeedPercent1_ = 0;
@@ -122,16 +117,16 @@ private:
 	bool analogSpeedMapped_ = false;
 
 	// edit the game-specific settings and restore the global settings after exiting
-	bool editThenRestore_ = false;
+	bool editGameSpecificThenRestore_ = false;
 
 	// Android-only
 	std::string pendingMemstickFolder_;
 };
 
-class HostnameSelectScreen : public PopupScreen {
+class HostnameSelectScreen : public UI::PopupScreen {
 public:
 	HostnameSelectScreen(std::string *value, std::vector<std::string> *listItems, std::string_view title)
-		: PopupScreen(title, "OK", "Cancel"), listItems_(listItems), value_(value) {
+		: UI::PopupScreen(title, "OK", "Cancel"), listItems_(listItems), value_(value) {
 		resolver_ = std::thread([](HostnameSelectScreen *thiz) {
 			thiz->ResolverThread();
 		}, this);
@@ -155,7 +150,7 @@ protected:
 
 private:
 	void ResolverThread();
-	void SendEditKey(InputKeyCode keyCode, int flags = 0);
+	void SendEditKey(InputKeyCode keyCode, KeyInputFlags flags = (KeyInputFlags)0);
 
 	void OnNumberClick(UI::EventParams &e);
 	void OnPointClick(UI::EventParams &e);
@@ -189,16 +184,18 @@ private:
 	bool lastResolvedResult_ = false;
 };
 
-
-class GestureMappingScreen : public UIDialogScreenWithGameBackground {
+class GestureMappingScreen : public UITabbedBaseDialogScreen {
 public:
-	GestureMappingScreen(const Path &gamePath) : UIDialogScreenWithGameBackground(gamePath) {}
-	void CreateViews() override;
+	GestureMappingScreen(const Path &gamePath) : UITabbedBaseDialogScreen(gamePath) {}
 
+	void CreateTabs() override;
 	const char *tag() const override { return "GestureMapping"; }
+	bool ShowSearchControls() const override { return false; }
+protected:
+	void CreateGestureTab(UI::LinearLayout *parent);
 };
 
-class RestoreSettingsScreen : public PopupScreen {
+class RestoreSettingsScreen : public UI::PopupScreen {
 public:
 	RestoreSettingsScreen(std::string_view title);
 	void CreatePopupContents(UI::ViewGroup *parent) override;

@@ -19,11 +19,12 @@
 
 #include <functional>
 
-#include "UI/MiscScreens.h"
+#include "UI/BaseScreens.h"
 #include "Common/UI/UIScreen.h"
 #include "Common/File/Path.h"
-
 #include "UI/GameInfoCache.h"
+#include "UI/SimpleDialogScreen.h"
+
 
 class NoticeView;
 
@@ -33,19 +34,21 @@ class NoticeView;
 // Uses GameInfoCache heavily to implement the functionality.
 // Should possibly merge this with the PauseScreen.
 
-class GameScreen : public UIDialogScreenWithGameBackground {
+class GameScreen : public UITwoPaneBaseDialogScreen {
 public:
 	GameScreen(const Path &gamePath, bool inGame);
 	~GameScreen();
 
 	void update() override;
 
-	ScreenRenderFlags render(ScreenRenderMode mode) override;
-
 	const char *tag() const override { return "Game"; }
 
 protected:
-	void CreateViews() override;
+	void CreateContentViews(UI::ViewGroup *parent) override;
+	void CreateSettingsViews(UI::ViewGroup *parent) override;
+	void CreateContextMenu(UI::ViewGroup *parent) override;
+
+	std::string_view GetTitle() const override;
 
 private:
 	// Event handlers
@@ -69,4 +72,7 @@ private:
 	GameInfoFlags knownFlags_ = GameInfoFlags::EMPTY;
 
 	bool knownHasCRC_ = false;
+
+	std::shared_ptr<GameInfo> info_;
+	mutable std::string titleCache_;
 };

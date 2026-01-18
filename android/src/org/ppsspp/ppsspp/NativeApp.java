@@ -51,6 +51,7 @@ public class NativeApp {
 
 	public static native boolean keyDown(int deviceId, int key, boolean isRepeat);
 	public static native boolean keyUp(int deviceId, int key);
+	public static native boolean keyChar(int deviceId, int unicodeChar);
 
 	public static native void joystickAxis(int deviceId, int []axis, float []value, int count);
 
@@ -114,7 +115,7 @@ public class NativeApp {
 		Log.i(TAG, "motion mouse event");
 		switch (ev.getActionMasked()) {
 			case MotionEvent.ACTION_DOWN: {
-				if (NativeActivity.useModernMouseEvents) {
+				if (PpssppActivity.useModernMouseEvents) {
 					return;
 				}
 				//Log.i(TAG, "Surface Action down. button state: " + ev.getButtonState());
@@ -122,7 +123,7 @@ public class NativeApp {
 				break;
 			}
 			case MotionEvent.ACTION_UP: {
-				if (NativeActivity.useModernMouseEvents) {
+				if (PpssppActivity.useModernMouseEvents) {
 					return;
 				}
 				//Log.i(TAG, "Surface Action up. button state: " + ev.getButtonState());

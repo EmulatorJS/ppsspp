@@ -24,8 +24,8 @@
 #include "Common/UI/Context.h"
 #include "Common/UI/View.h"
 #include "Common/UI/UIScreen.h"
+#include "Common/UI/TabHolder.h"
 #include "Common/Math/math_util.h"
-#include "Common/System/Display.h"
 #include "Common/System/NativeApp.h"
 #include "Common/VR/PPSSPPVR.h"
 #include "Common/StringUtils.h"
@@ -33,9 +33,11 @@
 #include "Common/Data/Color/RGBAUtil.h"
 #include "Common/Data/Text/I18n.h"
 #include "UI/DisplayLayoutScreen.h"
+#include "UI/Background.h"
 #include "Core/Config.h"
 #include "Core/ConfigValues.h"
 #include "Core/System.h"
+#include "GPU/GPUCommon.h"
 #include "GPU/Common/FramebufferManagerCommon.h"
 #include "GPU/Common/PresentationCommon.h"
 
@@ -59,31 +61,33 @@ static Bounds FRectToBounds(FRect rc) {
 
 class DisplayLayoutBackground : public UI::View {
 public:
-	DisplayLayoutBackground(UI::ChoiceStrip *mode, UI::LayoutParams *layoutParams) : UI::View(layoutParams), mode_(mode) {}
+	DisplayLayoutBackground(UI::ChoiceStrip *mode, DeviceOrientation orientation, UI::LayoutParams *layoutParams) : UI::View(layoutParams), mode_(mode), orientation_(orientation) {}
 
 	bool Touch(const TouchInput &touch) override {
 		int mode = mode_ ? mode_->GetSelection() : 0;
 
-		if ((touch.flags & TOUCH_MOVE) != 0 && dragging_) {
+		DisplayLayoutConfig &config = g_Config.GetDisplayLayoutConfig(orientation_);
+
+		if ((touch.flags & TouchInputFlags::MOVE) != 0 && dragging_) {
 			float relativeTouchX = touch.x - startX_;
 			float relativeTouchY = touch.y - startY_;
 
 			switch (mode) {
 			case MODE_MOVE:
-				g_Config.fDisplayOffsetX = clamp_value(startDisplayOffsetX_ + relativeTouchX / bounds_.w, 0.0f, 1.0f);
-				g_Config.fDisplayOffsetY = clamp_value(startDisplayOffsetY_ + relativeTouchY / bounds_.h, 0.0f, 1.0f);
+				config.fDisplayOffsetX = clamp_value(startDisplayOffsetX_ + relativeTouchX / bounds_.w, 0.0f, 1.0f);
+				config.fDisplayOffsetY = clamp_value(startDisplayOffsetY_ + relativeTouchY / bounds_.h, 0.0f, 1.0f);
 				break;
 			case MODE_RESIZE:
 			{
 				// Resize. Vertical = scaling; Up should be bigger so let's negate in that direction
 				float diffYProp = -relativeTouchY * 0.007f;
-				g_Config.fDisplayScale = clamp_value(startScale_ * powf(2.0f, diffYProp), 0.2f, 2.0f);
+				config.fDisplayScale = clamp_value(startScale_ * powf(2.0f, diffYProp), 0.2f, 2.0f);
 				break;
 			}
 			}
 		}
 
-		if ((touch.flags & TOUCH_DOWN) != 0 && !dragging_) {
+		if ((touch.flags & TouchInputFlags::DOWN) != 0 && !dragging_) {
 			// Check that we're in the central 80% of the screen.
 			// If outside, it may be a drag from displaying the back button on phones
 			// where you have to drag from the side, etc.
@@ -92,13 +96,13 @@ public:
 				dragging_ = true;
 				startX_ = touch.x;
 				startY_ = touch.y;
-				startDisplayOffsetX_ = g_Config.fDisplayOffsetX;
-				startDisplayOffsetY_ = g_Config.fDisplayOffsetY;
-				startScale_ = g_Config.fDisplayScale;
+				startDisplayOffsetX_ = config.fDisplayOffsetX;
+				startDisplayOffsetY_ = config.fDisplayOffsetY;
+				startScale_ = config.fDisplayScale;
 			}
 		}
 
-		if ((touch.flags & TOUCH_UP) != 0 && dragging_) {
+		if ((touch.flags & TouchInputFlags::UP) != 0 && dragging_) {
 			dragging_ = false;
 		}
 
@@ -108,7 +112,7 @@ public:
 private:
 	UI::ChoiceStrip *mode_;
 	bool dragging_ = false;
-
+	const DeviceOrientation orientation_;
 	// Touch down state for drag to resize etc
 	float startX_ = 0.0f;
 	float startY_ = 0.0f;
@@ -117,7 +121,7 @@ private:
 	float startDisplayOffsetY_ = -1.0f;
 };
 
-DisplayLayoutScreen::DisplayLayoutScreen(const Path &filename) : UIDialogScreenWithGameBackground(filename) {}
+DisplayLayoutScreen::DisplayLayoutScreen(const Path &filename) : UIBaseDialogScreen(filename) {}
 
 void DisplayLayoutScreen::DrawBackground(UIContext &dc) {
 	if (PSP_GetBootState() == BootState::Complete && !g_Config.bSkipBufferEffects) {
@@ -126,11 +130,12 @@ void DisplayLayoutScreen::DrawBackground(UIContext &dc) {
 		// But if it's not present (we're not in game, or skip buffer effects is used),
 		// we have to draw a substitute ourselves.
 		UIContext &dc = *screenManager()->getUIContext();
+		DisplayLayoutConfig &config = g_Config.GetDisplayLayoutConfig(GetDeviceOrientation());
 
 		// TODO: Clean this up a bit, this GetScreenFrame/CenterDisplay combo is too common.
-		FRect screenFrame = GetScreenFrame(g_display.pixel_xres, g_display.pixel_yres);
+		FRect screenFrame = GetScreenFrame(config.bIgnoreScreenInsets, g_display.pixel_xres, g_display.pixel_yres);
 		FRect rc;
-		CalculateDisplayOutputRect(&rc, 480.0f, 272.0f, screenFrame, g_Config.iInternalScreenRotation);
+		CalculateDisplayOutputRect(config, &rc, 480.0f, 272.0f, screenFrame, config.iInternalScreenRotation);
 
 		dc.Flush();
 		ImageID bg = ImageID("I_PSP_DISPLAY");
@@ -181,7 +186,7 @@ static std::string PostShaderTranslateName(std::string_view value) {
 }
 
 void DisplayLayoutScreen::sendMessage(UIMessage message, const char *value) {
-	UIDialogScreenWithGameBackground::sendMessage(message, value);
+	UIBaseDialogScreen::sendMessage(message, value);
 	if (message == UIMessage::POSTSHADER_UPDATED) {
 		g_Config.bShaderChainRequires60FPS = PostShaderChainRequires60FPS(GetFullPostShadersChain(g_Config.vPostShaderNames));
 		RecreateViews();
@@ -197,18 +202,25 @@ void DisplayLayoutScreen::CreateViews() {
 	auto gr = GetI18NCategory(I18NCat::GRAPHICS);
 	auto co = GetI18NCategory(I18NCat::CONTROLS);
 	auto ps = GetI18NCategory(I18NCat::POSTSHADERS);
+	auto sy = GetI18NCategory(I18NCat::SYSTEM);
 
 	root_ = new AnchorLayout(new LayoutParams(FILL_PARENT, FILL_PARENT));
 
-	bool vertical = bounds.h > bounds.w;
+	const bool portrait = GetDeviceOrientation() == DeviceOrientation::Portrait;
 
 	// Make it so that a touch can only affect one view. Makes manipulating the background through the buttons
 	// impossible.
 	root_->SetExclusiveTouch(true);
 
+	// Add indicator of the current mode we're editing. Not sure why these strings are in Controls.
+	root_->Add(new TextView(portrait ? co->T("Portrait") : co->T("Landscape"), new AnchorLayoutParams(portrait ? 10.0f : NONE, 10.0f, NONE, NONE)))->SetSmall(true);
+
+	DisplayLayoutConfig &config = g_Config.GetDisplayLayoutConfig(GetDeviceOrientation());
+	bool internalPortrait = config.iInternalScreenRotation == ROTATION_LOCKED_VERTICAL || config.iInternalScreenRotation == ROTATION_LOCKED_VERTICAL180;
+
 	LinearLayout *leftColumn;
-	if (!vertical) {
-		ScrollView *leftScrollView = new ScrollView(ORIENT_VERTICAL, new AnchorLayoutParams(420.0f, FILL_PARENT, 0.f, 0.f, NONE, 0.f, false));
+	if (!portrait) {
+		ScrollView *leftScrollView = new ScrollView(ORIENT_VERTICAL, new AnchorLayoutParams(420.0f, FILL_PARENT, 0.f, 0.f, NONE, 0.f));
 		leftColumn = new LinearLayout(ORIENT_VERTICAL);
 		leftColumn->padding.SetAll(8.0f);
 		leftScrollView->Add(leftColumn);
@@ -216,20 +228,24 @@ void DisplayLayoutScreen::CreateViews() {
 		root_->Add(leftScrollView);
 	}
 
-	ScrollView *rightScrollView = new ScrollView(ORIENT_VERTICAL, new AnchorLayoutParams(300.0f, FILL_PARENT, NONE, 0.f, 0.f, 0.f, false));
+	ScrollView *rightScrollView = new ScrollView(ORIENT_VERTICAL, new AnchorLayoutParams(300.0f, FILL_PARENT, NONE, 0.f, 0.f, 0.f));
 	LinearLayout *rightColumn = new LinearLayout(ORIENT_VERTICAL);
 	rightColumn->padding.SetAll(8.0f);
 	rightScrollView->Add(rightColumn);
 	rightScrollView->SetClickableBackground(true);
 	root_->Add(rightScrollView);
 
+	Choice *back = new Choice(di->T("Back"), ImageID("I_NAVIGATE_BACK"));
+	back->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
+	rightColumn->Add(back);
+
 	LinearLayout *bottomControls;
-	if (vertical) {
+	if (portrait) {
 		bottomControls = new LinearLayout(ORIENT_HORIZONTAL);
 		rightColumn->Add(bottomControls);
 		leftColumn = rightColumn;
 	} else {
-		bottomControls = new LinearLayout(ORIENT_HORIZONTAL, new AnchorLayoutParams(NONE, NONE, NONE, 10.0f, false));
+		bottomControls = new LinearLayout(ORIENT_HORIZONTAL, new AnchorLayoutParams(NONE, NONE, NONE, 10.0f));
 		root_->Add(bottomControls);
 	}
 
@@ -239,40 +255,52 @@ void DisplayLayoutScreen::CreateViews() {
 	rightColumn->SetBG(backgroundWithAlpha);
 
 	if (!IsVREnabled()) {
-		auto stretch = new CheckBox(&g_Config.bDisplayStretch, gr->T("Stretch"));
-		stretch->SetDisabledPtr(&g_Config.bDisplayIntegerScale);
-		rightColumn->Add(stretch);
+		if (portrait == internalPortrait) {
+			// Stretch doesn't make sense in portrait mode (looks crazy), so we only show it in landscape mode.
+			// Vice versa if internal is portrait.
+			auto stretch = new CheckBox(&config.bDisplayStretch, gr->T("Stretch"));
+			stretch->SetDisabledPtr(&config.bDisplayIntegerScale);
+			rightColumn->Add(stretch);
+		}
 
-		PopupSliderChoiceFloat *aspectRatio = new PopupSliderChoiceFloat(&g_Config.fDisplayAspectRatio, 0.1f, 2.0f, 1.0f, gr->T("Aspect Ratio"), screenManager());
+		PopupSliderChoiceFloat *aspectRatio = new PopupSliderChoiceFloat(&config.fDisplayAspectRatio, 0.1f, 2.0f, 1.0f, gr->T("Aspect Ratio"), screenManager());
 		rightColumn->Add(aspectRatio);
-		aspectRatio->SetEnabledFunc([]() {
-			return !g_Config.bDisplayStretch && !g_Config.bDisplayIntegerScale;
+		aspectRatio->SetEnabledFunc([config]() {
+			return !config.bDisplayStretch && !config.bDisplayIntegerScale;
 		});
 		aspectRatio->SetHasDropShadow(false);
 		aspectRatio->SetLiveUpdate(true);
 
-		rightColumn->Add(new CheckBox(&g_Config.bDisplayIntegerScale, gr->T("Integer scale factor")));
+		rightColumn->Add(new CheckBox(&config.bDisplayIntegerScale, gr->T("Integer scale factor")));
 
+		bool supportsInsets = false;
 #if PPSSPP_PLATFORM(ANDROID)
-		// Hide insets option if no insets, or OS too old.
-		if (System_GetPropertyInt(SYSPROP_SYSTEMVERSION) >= 28 &&
-			(System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_LEFT) != 0.0f ||
-				System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_TOP) != 0.0f ||
-				System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_RIGHT) != 0.0f ||
-				System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_BOTTOM) != 0.0f)) {
-			rightColumn->Add(new CheckBox(&g_Config.bIgnoreScreenInsets, gr->T("Ignore camera notch when centering")));
-		}
+		supportsInsets = System_GetPropertyInt(SYSPROP_SYSTEMVERSION) >= 28;
+#elif PPSSPP_PLATFORM(IOS)
+		supportsInsets = true;
 #endif
+		// Hide insets option if no insets, or OS too old.
+		if (supportsInsets && (
+			System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_LEFT) != 0.0f ||
+			System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_TOP) != 0.0f ||
+			System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_RIGHT) != 0.0f ||
+			System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_BOTTOM) != 0.0f)) {
+			rightColumn->Add(new CheckBox(&config.bIgnoreScreenInsets, gr->T("Ignore camera notch when centering")));
+		}
 
 		mode_ = new ChoiceStrip(ORIENT_HORIZONTAL, new LinearLayoutParams(WRAP_CONTENT, WRAP_CONTENT));
-		mode_->AddChoice(di->T("Inactive"));
-		mode_->AddChoice(di->T("Move"));
-		mode_->AddChoice(di->T("Resize"));
+		mode_->AddChoice(sy->T("Off"));
+		mode_->AddChoice(ImageID("I_MOVE"));
+		mode_->AddChoice(ImageID("I_RESIZE"));
 		mode_->SetSelection(0, false);
 		bottomControls->Add(mode_);
 
 		static const char *displayRotation[] = { "Landscape", "Portrait", "Landscape Reversed", "Portrait Reversed" };
-		auto rotation = new PopupMultiChoice(&g_Config.iInternalScreenRotation, gr->T("Rotation"), displayRotation, 1, ARRAY_SIZE(displayRotation), I18NCat::CONTROLS, screenManager());
+		auto rotation = new PopupMultiChoice(&config.iInternalScreenRotation, gr->T("Rotation"), displayRotation, 1, ARRAY_SIZE(displayRotation), I18NCat::CONTROLS, screenManager());
+		rotation->OnChoice.Add([this](UI::EventParams &) {
+			// Affects the presence of the Stretch checkbox.
+			RecreateViews();
+		});
 		rotation->SetEnabledFunc([] {
 			return !g_Config.bSkipBufferEffects || g_Config.bSoftwareRendering;
 		});
@@ -280,28 +308,22 @@ void DisplayLayoutScreen::CreateViews() {
 		rightColumn->Add(rotation);
 
 		Choice *center = new Choice(di->T("Reset"));
-		center->OnClick.Add([&](UI::EventParams &) {
-			g_Config.fDisplayAspectRatio = 1.0f;
-			g_Config.fDisplayScale = 1.0f;
-			g_Config.fDisplayOffsetX = 0.5f;
-			g_Config.fDisplayOffsetY = 0.5f;
+		center->OnClick.Add([&config, portrait](UI::EventParams &) {
+			// Hm, not really ideal to have to use strings here.
+			config.ResetToDefault(portrait ? "DisplayLayout.Portrait" : "DisplayLayout.Landscape");
 		});
 		rightColumn->Add(center);
 
 		rightColumn->Add(new Spacer(12.0f));
 	}
 
-	Choice *back = new Choice(di->T("Back"), "", false);
-	back->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
-	rightColumn->Add(back);
-
-	if (vertical) {
+	if (portrait) {
 		leftColumn->Add(new Spacer(24.0f));
 	}
 
 	if (!IsVREnabled()) {
 		static const char *bufFilters[] = { "Linear", "Nearest", };
-		leftColumn->Add(new PopupMultiChoice(&g_Config.iDisplayFilter, gr->T("Screen Scaling Filter"), bufFilters, 1, ARRAY_SIZE(bufFilters), I18NCat::GRAPHICS, screenManager()));
+		leftColumn->Add(new PopupMultiChoice(&config.iDisplayFilter, gr->T("Screen Scaling Filter"), bufFilters, 1, ARRAY_SIZE(bufFilters), I18NCat::GRAPHICS, screenManager()));
 	}
 
 	Draw::DrawContext *draw = screenManager()->getDrawContext();
@@ -463,7 +485,7 @@ void DisplayLayoutScreen::CreateViews() {
 		}
 	}
 
-	root_->Add(new DisplayLayoutBackground(mode_, new AnchorLayoutParams(FILL_PARENT, FILL_PARENT, 0.0f, 0.0f, 0.0f, 0.0f)));
+	root_->Add(new DisplayLayoutBackground(mode_, GetDeviceOrientation(), new AnchorLayoutParams(FILL_PARENT, FILL_PARENT, 0.0f, 0.0f, 0.0f, 0.0f)));
 }
 
 void PostProcScreen::CreateViews() {

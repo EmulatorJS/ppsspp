@@ -17,16 +17,17 @@ double from_time_raw_relative(uint64_t raw_time);
 // Seconds, Unix UTC time
 double time_now_unix_utc();
 
-// Sleep. Does not necessarily have millisecond granularity, especially on Windows.
+// Sleep for milliseconds. Does not necessarily have millisecond granularity, especially on Windows.
 // Requires a "reason" since sleeping generally should be very sparingly used. This
 // can be logged if desired to figure out where we're wasting time.
 void sleep_ms(int ms, const char *reason);
-
+// Sleep for microseconds. Does not necessarily have microsecond granularity, especially on Windows.
+void sleep_us(int us, const char *reason);
 // Precise sleep. Can consume a little bit of CPU on Windows at least.
-void sleep_precise(double seconds);
+void sleep_precise(double seconds, const char *reason);
 
 // Random sleep, used for debugging.
-void sleep_random(double minSeconds, double maxSeconds);
+void sleep_random(double minSeconds, double maxSeconds, const char *reason);
 
 // Yield. Signals that this thread is busy-waiting but wants to allow other hyperthreads to run.
 void yield();
@@ -36,6 +37,7 @@ void GetCurrentTimeFormatted(char formattedTime[13]);
 // Most accurate timer possible - no extra double conversions. Only for spans.
 class Instant {
 public:
+	Instant();
 	static Instant Now() {
 		return Instant();
 	}
@@ -43,7 +45,6 @@ public:
 	double ElapsedMs() const { return ElapsedSeconds() * 1000.0; }
 	int64_t ElapsedNanos() const;
 private:
-	Instant();
 	uint64_t nativeStart_;
 #ifndef _WIN32
 	int64_t nsecs_;

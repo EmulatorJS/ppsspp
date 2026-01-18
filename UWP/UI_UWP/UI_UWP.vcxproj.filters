@@ -115,6 +115,9 @@
     <ClCompile Include="..\..\UI\TabbedDialogScreen.cpp">
       <Filter>Screens</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\UI\SimpleDialogScreen.cpp">
+      <Filter>Screens</Filter>
+    </ClCompile>
     <ClCompile Include="..\..\UI\TiltAnalogSettingsScreen.cpp">
       <Filter>Screens</Filter>
     </ClCompile>
@@ -124,6 +127,14 @@
     <ClCompile Include="..\..\UI\TouchControlVisibilityScreen.cpp">
       <Filter>Screens</Filter>
     </ClCompile>
+    <ClCompile Include="..\..\UI\UploadScreen.cpp">
+      <Filter>Screens</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\UI\MiscViews.cpp">
+      <Filter>Screens</Filter>
+    </ClCompile>
+    <ClCompile Include="..\..\UI\Background.cpp" />
+    <ClCompile Include="..\..\UI\BaseScreens.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="pch.h" />
@@ -249,6 +260,14 @@
     <ClInclude Include="..\..\UI\TouchControlVisibilityScreen.h">
       <Filter>Screens</Filter>
     </ClInclude>
+    <ClInclude Include="..\..\UI\UploadScreen.h">
+      <Filter>Screens</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\UI\MiscViews.h">
+      <Filter>Screens</Filter>
+    </ClInclude>
+    <ClInclude Include="..\..\UI\Background.h" />
+    <ClInclude Include="..\..\UI\BaseScreens.h" />
   </ItemGroup>
   <ItemGroup>
     <Filter Include="ImDebugger">

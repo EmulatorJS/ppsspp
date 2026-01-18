@@ -109,22 +109,30 @@ public:
 
 const float NONE = -FLT_MAX;
 
+enum class Centering {
+	None = 0,
+	Vertical = 1,
+	Horizontal = 2,
+	Both = 3,  // 1 | 2
+};
+ENUM_CLASS_BITOPS(Centering);
+
 class AnchorLayoutParams : public LayoutParams {
 public:
-	AnchorLayoutParams(Size w, Size h, float l, float t, float r, float b, bool c = false)
-		: LayoutParams(w, h, LP_ANCHOR), left(l), top(t), right(r), bottom(b), center(c) {}
+	AnchorLayoutParams(Size w, Size h, float l, float t, float r, float b, Centering c = Centering::None)
+		: LayoutParams(w, h, LP_ANCHOR), left(l), top(t), right(r), bottom(b), centering(c) {}
 	// There's a small hack here to make this behave more intuitively - AnchorLayout ordinarily ignores FILL_PARENT.
-	AnchorLayoutParams(Size w, Size h, bool c = false)
-		: LayoutParams(w, h, LP_ANCHOR), left(0), top(0), right(w == FILL_PARENT ? 0 : NONE), bottom(h == FILL_PARENT ? 0 : NONE), center(c) {
+	AnchorLayoutParams(Size w, Size h, Centering c = Centering::None)
+		: LayoutParams(w, h, LP_ANCHOR), left(0), top(0), right(w == FILL_PARENT ? 0 : NONE), bottom(h == FILL_PARENT ? 0 : NONE), centering(c) {
 	}
-	AnchorLayoutParams(float l, float t, float r, float b, bool c = false)
-		: LayoutParams(WRAP_CONTENT, WRAP_CONTENT, LP_ANCHOR), left(l), top(t), right(r), bottom(b), center(c) {}
+	AnchorLayoutParams(float l, float t, float r, float b, Centering c = Centering::None)
+		: LayoutParams(WRAP_CONTENT, WRAP_CONTENT, LP_ANCHOR), left(l), top(t), right(r), bottom(b), centering(c) {}
 
 	// These are not bounds, but distances from the container edges.
 	// Set to NONE to not attach this edge to the container.
 	// If two opposite edges are NONE, centering will happen.
 	float left, top, right, bottom;
-	bool center;  // If set, only two "sides" can be set, and they refer to the center, not the edge, of the view being layouted.
+	Centering centering;  // If set, only two "sides" can be set, and they refer to the center, not the edge, of the view being layouted.
 
 	static LayoutParamsType StaticType() {
 		return LP_ANCHOR;
@@ -149,21 +157,25 @@ private:
 class LinearLayoutParams : public LayoutParams {
 public:
 	LinearLayoutParams()
-		: LayoutParams(LP_LINEAR), weight(0.0f), gravity(G_TOPLEFT), hasMargins_(false) {}
-	explicit LinearLayoutParams(float wgt, Gravity grav = G_TOPLEFT)
+		: LayoutParams(LP_LINEAR), weight(0.0f), gravity(Gravity::G_TOPLEFT), hasMargins_(false) {}
+	explicit LinearLayoutParams(float wgt, Gravity grav = Gravity::G_TOPLEFT)
 		: LayoutParams(LP_LINEAR), weight(wgt), gravity(grav), hasMargins_(false) {}
 	LinearLayoutParams(float wgt, const Margins &mgn)
-		: LayoutParams(LP_LINEAR), weight(wgt), gravity(G_TOPLEFT), margins(mgn), hasMargins_(true) {}
-	LinearLayoutParams(Size w, Size h, float wgt = 0.0f, Gravity grav = G_TOPLEFT)
+		: LayoutParams(LP_LINEAR), weight(wgt), gravity(Gravity::G_TOPLEFT), margins(mgn), hasMargins_(true) {}
+	LinearLayoutParams(float wgt, Gravity grav, const Margins &mgn)
+		: LayoutParams(LP_LINEAR), weight(wgt), gravity(grav), margins(mgn), hasMargins_(true) {}
+	LinearLayoutParams(Size w, Size h, float wgt = 0.0f, Gravity grav = Gravity::G_TOPLEFT)
 		: LayoutParams(w, h, LP_LINEAR), weight(wgt), gravity(grav), margins(0), hasMargins_(false) {}
 	LinearLayoutParams(Size w, Size h, float wgt, Gravity grav, const Margins &mgn)
 		: LayoutParams(w, h, LP_LINEAR), weight(wgt), gravity(grav), margins(mgn), hasMargins_(true) {}
 	LinearLayoutParams(Size w, Size h, const Margins &mgn)
-		: LayoutParams(w, h, LP_LINEAR), weight(0.0f), gravity(G_TOPLEFT), margins(mgn), hasMargins_(true) {}
+		: LayoutParams(w, h, LP_LINEAR), weight(0.0f), gravity(Gravity::G_TOPLEFT), margins(mgn), hasMargins_(true) {}
+	LinearLayoutParams(Size w, Size h, Gravity grav, const Margins &mgn)
+		: LayoutParams(w, h, LP_LINEAR), weight(0.0f), gravity(grav), margins(mgn), hasMargins_(true) {}
 	LinearLayoutParams(Size w, Size h, float wgt, const Margins &mgn)
-		: LayoutParams(w, h, LP_LINEAR), weight(wgt), gravity(G_TOPLEFT), margins(mgn), hasMargins_(true) {}
+		: LayoutParams(w, h, LP_LINEAR), weight(wgt), gravity(Gravity::G_TOPLEFT), margins(mgn), hasMargins_(true) {}
 	LinearLayoutParams(const Margins &mgn)
-		: LayoutParams(WRAP_CONTENT, WRAP_CONTENT, LP_LINEAR), weight(0.0f), gravity(G_TOPLEFT), margins(mgn), hasMargins_(true) {}
+		: LayoutParams(WRAP_CONTENT, WRAP_CONTENT, LP_LINEAR), weight(0.0f), gravity(Gravity::G_TOPLEFT), margins(mgn), hasMargins_(true) {}
 
 	float weight;
 	Gravity gravity;
@@ -226,7 +238,7 @@ struct GridLayoutSettings {
 class GridLayoutParams : public LayoutParams {
 public:
 	GridLayoutParams()
-		: LayoutParams(LP_GRID), gravity(G_CENTER) {}
+		: LayoutParams(LP_GRID), gravity(Gravity::G_CENTER) {}
 	explicit GridLayoutParams(Gravity grav)
 		: LayoutParams(LP_GRID), gravity(grav) {
 	}
@@ -258,84 +270,6 @@ public:
 	}
 
 	std::string DescribeText() const override;
-};
-
-class ChoiceStrip : public LinearLayout {
-public:
-	ChoiceStrip(Orientation orientation, LayoutParams *layoutParams = 0);
-
-	void AddChoice(std::string_view title);
-	void AddChoice(ImageID buttonImage);
-
-	int GetSelection() const { return selected_; }
-	void SetSelection(int sel, bool triggerClick);
-
-	void EnableChoice(int choice, bool enabled);
-
-	bool Key(const KeyInput &input) override;
-
-	void SetTopTabs(bool tabs) { topTabs_ = tabs; }
-
-	std::string DescribeLog() const override { return "ChoiceStrip: " + View::DescribeLog(); }
-	std::string DescribeText() const override;
-
-	Event OnChoice;
-
-private:
-	StickyChoice *Choice(int index);
-	void OnChoiceClick(EventParams &e);
-
-	int selected_ = 0;   // Can be controlled with L/R.
-	bool topTabs_ = false;
-};
-
-class TabHolder : public LinearLayout {
-public:
-	TabHolder(Orientation orientation, float stripSize, View *bannerView, LayoutParams *layoutParams = 0);
-
-	template <class T>
-	T *AddTab(std::string_view title, T *tabContents) {
-		AddTabContents(title, tabContents);
-		return tabContents;
-	}
-	void AddTabDeferred(std::string_view title, std::function<ViewGroup *()> createCb);
-	void EnableTab(int tab, bool enabled) {
-		tabStrip_->EnableChoice(tab, enabled);
-	}
-
-	void AddBack(UIScreen *parent);
-
-	// Returns true if the tab wasn't created before (but is now).
-	bool SetCurrentTab(int tab, bool skipTween = false);
-
-	int GetCurrentTab() const { return currentTab_; }
-	std::string DescribeLog() const override { return "TabHolder: " + View::DescribeLog(); }
-
-	void PersistData(PersistStatus status, std::string anonId, PersistMap &storage) override;
-
-	void EnsureAllCreated();
-
-	LinearLayout *Container() { return tabContainer_; }
-
-	const std::vector<ViewGroup *> &GetTabContentViews() const {
-		return tabs_;
-	}
-
-private:
-	void AddTabContents(std::string_view title, ViewGroup *tabContents);
-	void OnTabClick(EventParams &e);
-	bool EnsureTab(int index);  // return true if it actually created a tab.
-
-	View *bannerView_ = nullptr;
-	LinearLayout *tabContainer_ = nullptr;
-	ChoiceStrip *tabStrip_ = nullptr;
-	ScrollView *tabScroll_ = nullptr;
-	ViewGroup *contents_ = nullptr;
-
-	int currentTab_ = 0;
-	std::vector<ViewGroup *> tabs_;
-	std::vector<AnchorTranslateTween *> tabTweens_;
-	std::vector<std::function<ViewGroup *()>> createFuncs_;
 };
 
 class CollapsibleHeader;

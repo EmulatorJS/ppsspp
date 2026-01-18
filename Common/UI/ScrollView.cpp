@@ -1,4 +1,6 @@
 #include <algorithm>
+#include "Common/System/System.h"
+#include "Common/System/Display.h"
 #include "Common/UI/Context.h"
 #include "Common/UI/ScrollView.h"
 #include "Common/Data/Text/I18n.h"
@@ -14,16 +16,20 @@ ScrollView::~ScrollView() {
 	lastScrollPosY = 0;
 }
 
-void ScrollView::Measure(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert) {
-	// Respect margins
-	Margins margins;
+Margins ScrollView::GetMargins() const {
 	if (views_.size()) {
 		const LinearLayoutParams *linLayoutParams = views_[0]->GetLayoutParams()->As<LinearLayoutParams>();
 		if (linLayoutParams) {
-			margins = linLayoutParams->margins;
+			return linLayoutParams->margins;
 		}
 	}
+	return Margins(0);
+}
 
+void ScrollView::Measure(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert) {
+	// Respect margins
+	const Margins margins = GetMargins();
+	
 	// The scroll view itself simply obeys its parent - but also tries to fit the child if possible.
 	MeasureBySpec(layoutParams_->width, horiz.size, horiz, &measuredWidth_);
 	MeasureBySpec(layoutParams_->height, vert.size, vert, &measuredHeight_);
@@ -66,11 +72,7 @@ void ScrollView::Layout() {
 	Bounds scrolled;
 
 	// Respect margins
-	Margins margins;
-	const LinearLayoutParams *linLayoutParams = views_[0]->GetLayoutParams()->As<LinearLayoutParams>();
-	if (linLayoutParams) {
-		margins = linLayoutParams->margins;
-	}
+	const Margins margins = GetMargins();
 
 	scrolled.w = views_[0]->GetMeasuredWidth() - margins.horiz();
 	scrolled.h = views_[0]->GetMeasuredHeight() - margins.vert();
@@ -116,10 +118,10 @@ bool ScrollView::Key(const KeyInput &input) {
 		break;
 	}
 
-	if (input.flags & KEY_DOWN) {
+	if ((input.flags & KeyInputFlags::DOWN) && mouseHover_) {
 		if ((input.keyCode == NKCODE_EXT_MOUSEWHEEL_UP || input.keyCode == NKCODE_EXT_MOUSEWHEEL_DOWN) &&
-			(input.flags & KEY_HASWHEELDELTA)) {
-			scrollSpeed = (float)(short)(input.flags >> 16) * 1.25f;  // Fudge factor. TODO: Should be moved to the backends.
+			(input.flags & KeyInputFlags::HAS_WHEEL_DELTA)) {
+			scrollSpeed = (float)((s32)input.flags >> 16) * 1.25f;  // Fudge factor. TODO: Should be moved to the backends.
 		}
 
 		switch (input.keyCode) {
@@ -140,7 +142,7 @@ const float friction = 0.92f;
 const float stop_threshold = 0.1f;
 
 bool ScrollView::Touch(const TouchInput &input) {
-	if ((input.flags & TOUCH_DOWN) && scrollTouchId_ == -1 && bounds_.Contains(input.x, input.y)) {
+	if ((input.flags & TouchInputFlags::DOWN) && scrollTouchId_ == -1 && bounds_.Contains(input.x, input.y)) {
 		if (orientation_ == ORIENT_VERTICAL) {
 			Bob bob = ComputeBob();
 			float internalY = input.y - bounds_.y;
@@ -157,7 +159,7 @@ bool ScrollView::Touch(const TouchInput &input) {
 
 	Gesture gesture = orientation_ == ORIENT_VERTICAL ? GESTURE_DRAG_VERTICAL : GESTURE_DRAG_HORIZONTAL;
 
-	if ((input.flags & TOUCH_UP) && input.id == scrollTouchId_) {
+	if ((input.flags & TouchInputFlags::UP) && input.id == scrollTouchId_) {
 		float info[4];
 		if (gesture_.GetGestureInfo(gesture, input.id, info)) {
 			inertia_ = info[1];
@@ -166,12 +168,17 @@ bool ScrollView::Touch(const TouchInput &input) {
 		draggingBob_ = false;
 	}
 
+	if (input.flags & TouchInputFlags::MOUSE) {
+		// Kinda hacky, we should make a proper hover mechanism.
+		mouseHover_ = bounds_.Contains(input.x, input.y);
+	}
+
 	// We modify the input2 we send to children, so we can cancel drags if we start scrolling, and stuff like that.
 	TouchInput input2;
 	if (CanScroll()) {
 		if (draggingBob_) {
 			// Cancel any drags/holds on the children instantly to avoid accidental click-throughs.
-			input2.flags = TOUCH_UP | TOUCH_CANCEL;
+			input2.flags = TouchInputFlags::UP | TouchInputFlags::CANCEL;
 			// Skip the gesture manager, do calculations directly.
 			// Might switch to the gesture later.
 			Bob bob = ComputeBob();
@@ -188,7 +195,7 @@ bool ScrollView::Touch(const TouchInput &input) {
 		} else {
 			input2 = gesture_.Update(input, bounds_);
 			float info[4];
-			if (input.id == scrollTouchId_ && gesture_.GetGestureInfo(gesture, input.id, info) && !(input.flags & TOUCH_DOWN)) {
+			if (input.id == scrollTouchId_ && gesture_.GetGestureInfo(gesture, input.id, info) && !(input.flags & TouchInputFlags::DOWN)) {
 				float pos = scrollStart_ - info[0];
 				scrollPos_ = pos;
 				scrollTarget_ = pos;
@@ -201,11 +208,32 @@ bool ScrollView::Touch(const TouchInput &input) {
 		scrollToTarget_ = false;
 	}
 
-	if (!(input.flags & TOUCH_DOWN) || bounds_.Contains(input.x, input.y)) {
+	if (!(input.flags & TouchInputFlags::DOWN) || bounds_.Contains(input.x, input.y)) {
 		return ViewGroup::Touch(input2);
 	} else {
 		return false;
 	}
+}
+
+float ScrollView::ChildSize() const {
+	float extraSpace = 0.0f;
+
+	if (orientation_ == ORIENT_VERTICAL) {
+		if (bounds_.y2() >= g_display.dp_yres - 1) {
+			extraSpace = System_GetPropertyFloat(SYSPROP_DISPLAY_SAFE_INSET_BOTTOM);
+		}
+	}
+
+	if (views_.empty()) {
+		// Avoid division by zero. This shouldn't happen, anyway.
+		return 1.0f;
+	}
+	return std::max(0.01f, views_[0]->GetBounds().GetSize(orientation_) + extraSpace);
+}
+
+float ScrollView::ScrollMax() const {
+	const float childHeight = ChildSize();
+	return std::max(0.0f, childHeight - bounds_.GetSize(orientation_));
 }
 
 ScrollView::Bob ScrollView::ComputeBob() const {
@@ -213,10 +241,9 @@ ScrollView::Bob ScrollView::ComputeBob() const {
 	if (views_.empty()) {
 		return bob;
 	}
-	float childHeight = std::max(0.01f, views_[0]->GetBounds().h);
-	float scrollMax = std::max(0.0f, childHeight - bounds_.h);
-	float ratio = bounds_.h / childHeight;
-
+	const float childHeight = ChildSize();
+	const float ratio = bounds_.h / childHeight;
+	const float scrollMax = ScrollMax();
 	if (ratio < 1.0f && scrollMax > 0.0f) {
 		bob.show = true;
 		bob.thickness = draggingBob_ ? 15.0f : 6.0f;
@@ -242,6 +269,8 @@ void ScrollView::Draw(UIContext &dc) {
 
 	// If not anchored at the top of the screen exactly, and not scrolled to the top,
 	// draw a subtle drop shadow to indicate scrollability.
+
+	const float darkness = 0.4f;
 	if (bounds_.y > 0.0f && orientation_ == ORIENT_VERTICAL) {
 		float radius = 20.0f;
 
@@ -251,9 +280,31 @@ void ScrollView::Draw(UIContext &dc) {
 		shadowBounds.y -= radius * 2;
 		shadowBounds.h = radius * 2;
 
-		float fade = std::clamp(scrollPos_ * 0.1f, 0.0f, 0.6f);
+		float fade = std::clamp(scrollPos_ * 0.05f, 0.0f, 1.0f) * darkness;
 
 		dc.DrawRectDropShadow(shadowBounds, radius, fade);
+	}
+
+	// Same at the bottom.
+	float y2 = dc.GetLayoutBounds().y2();
+	if (bounds_.y2() < y2 && orientation_ == ORIENT_VERTICAL) {
+		float radius = 20.0f;
+
+		Bounds shadowBounds = bounds_;
+		shadowBounds.x -= radius;
+		shadowBounds.w += radius * 2;
+		shadowBounds.y = bounds_.y2() - radius * 2;
+		shadowBounds.h = radius * 2;
+
+		float fade = std::clamp((ScrollMax() - scrollPos_) * 0.05f, 0.0f, 1.0f) * darkness;
+
+		dc.DrawRectDropShadow(shadowBounds, radius, fade);
+	}
+
+	// If there are any additional views, we treat them as overlays attached at the top - they don't scroll, and they're
+	// drawn on top of the shadow. TODO: Give them an idea about the scroll position so they can fade in?
+	for (size_t i = 1; i < views_.size(); ++i) {
+		views_[i]->Draw(dc);
 	}
 
 	dc.PopScissor();
@@ -404,9 +455,9 @@ float ScrollView::HardClampedScrollPos(float pos) const {
 	if (!views_.size() || bounds_.h == 0.0f) {
 		return 0.0f;
 	}
-	float childSize = orientation_ == ORIENT_VERTICAL ? views_[0]->GetBounds().h : views_[0]->GetBounds().w;
-	float containerSize = (orientation_ == ORIENT_VERTICAL ? bounds_.h : bounds_.w);
-	float scrollMax = std::max(0.0f, childSize - containerSize);
+	const float childSize = ChildSize();
+	const float containerSize = bounds_.GetSize(orientation_);
+	const float scrollMax = std::max(0.0f, childSize - containerSize);
 	return Clamp(pos, 0.0f, scrollMax);
 }
 
@@ -415,8 +466,8 @@ float ScrollView::ClampedScrollPos(float pos) {
 		return 0.0f;
 	}
 
-	float childSize = orientation_ == ORIENT_VERTICAL ? views_[0]->GetBounds().h : views_[0]->GetBounds().w;
-	float containerSize = (orientation_ == ORIENT_VERTICAL ? bounds_.h : bounds_.w);
+	float childSize = ChildSize();
+	float containerSize = bounds_.GetSize(orientation_);
 	float scrollMax = std::max(0.0f, childSize - containerSize);
 
 	Gesture gesture = orientation_ == ORIENT_VERTICAL ? GESTURE_DRAG_VERTICAL : GESTURE_DRAG_HORIZONTAL;
@@ -448,8 +499,8 @@ float ScrollView::ClampedScrollPos(float pos) {
 }
 
 void ScrollView::ScrollToBottom() {
-	float childHeight = views_[0]->GetBounds().h;
-	float scrollMax = std::max(0.0f, childHeight - bounds_.h);
+	const float childSize = ChildSize();
+	const float scrollMax = std::max(0.0f, childSize - bounds_.GetSize(orientation_));
 	scrollPos_ = scrollMax;
 	scrollTarget_ = scrollMax;
 }
@@ -457,14 +508,7 @@ void ScrollView::ScrollToBottom() {
 bool ScrollView::CanScroll() const {
 	if (!views_.size())
 		return false;
-	switch (orientation_) {
-	case ORIENT_VERTICAL:
-		return views_[0]->GetBounds().h > bounds_.h;
-	case ORIENT_HORIZONTAL:
-		return views_[0]->GetBounds().w > bounds_.w;
-	default:
-		return false;
-	}
+	return ChildSize() > bounds_.GetSize(orientation_);
 }
 
 void ScrollView::GetLastScrollPosition(float &x, float &y) {
@@ -535,7 +579,9 @@ void ListView::CreateAllItems() {
 				imageID = &iter->second;
 			}
 			View *v = linLayout_->Add(adaptor_->CreateItemView(i, imageID));
-			adaptor_->AddEventCallback(v, std::bind(&ListView::OnItemCallback, this, i, std::placeholders::_1));
+			adaptor_->AddEventCallback(v, [this, i](UI::EventParams &e) {
+				OnItemCallback(i, e);
+			});
 		}
 	}
 }
@@ -562,9 +608,12 @@ void ListView::OnItemCallback(int num, EventParams &e) {
 }
 
 View *ChoiceListAdaptor::CreateItemView(int index, ImageID *optionalImageID) {
-	Choice *choice = new Choice(items_[index]);
+	Choice *choice;
 	if (optionalImageID) {
-		choice->SetIcon(*optionalImageID);
+		choice = new Choice(items_[index], *optionalImageID);
+	} else {
+		choice = new Choice(items_[index]);
+		//choice->SetIconRight(*optionalImageID);
 	}
 	return choice;
 }
@@ -575,10 +624,14 @@ void ChoiceListAdaptor::AddEventCallback(View *view, std::function<void(EventPar
 }
 
 View *StringVectorListAdaptor::CreateItemView(int index, ImageID *optionalImageID) {
-	Choice *choice = new Choice(items_[index], "", index == selected_);
+	ImageID temp;
 	if (optionalImageID) {
-		choice->SetIcon(*optionalImageID);
+		temp = *optionalImageID;
 	}
+	Choice *choice = new Choice(items_[index], temp);
+	// if (optionalImageID) {
+	// 	choice->SetIconRight(*optionalImageID);
+	// }
 	return choice;
 }
 

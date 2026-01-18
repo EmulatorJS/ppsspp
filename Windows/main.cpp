@@ -115,6 +115,7 @@ static std::string langRegion;
 static std::string osName;
 static std::string osVersion;
 static std::string gpuDriverVersion;
+static std::string computerName;
 
 static std::string restartArgs;
 
@@ -130,7 +131,7 @@ static double g_lastKeepAwake = 0.0;
 // Should this be configurable?  2 hours currently.
 static constexpr double ACTIVITY_IDLE_TIMEOUT = 2.0 * 3600.0;
 
-void System_LaunchUrl(LaunchUrlType urlType, const char *url) {
+void System_LaunchUrl(LaunchUrlType urlType, std::string_view url) {
 	std::string u(url);
 	std::thread t = std::thread([u]() {
 		ShellExecute(NULL, L"open", ConvertUTF8ToWString(u).c_str(), NULL, NULL, SW_SHOWNORMAL);
@@ -253,6 +254,17 @@ std::string System_GetProperty(SystemProperty prop) {
 		return PPSSPP_GIT_VERSION;
 	case SYSPROP_USER_DOCUMENTS_DIR:
 		return Path(W32Util::UserDocumentsPath()).ToString();  // this'll reverse the slashes.
+	case SYSPROP_COMPUTER_NAME:
+		if (computerName.empty()) {
+			wchar_t nameBuf[MAX_COMPUTERNAME_LENGTH + 1];
+			DWORD size = ARRAY_SIZE(nameBuf);
+			if (GetComputerNameW(nameBuf, &size)) {
+				computerName = ConvertWStringToUTF8(std::wstring(nameBuf, size));
+			} else {
+				computerName = "(N/A)";
+			}
+		}
+		return computerName;
 	default:
 		return "";
 	}
@@ -433,6 +445,12 @@ bool System_GetPropertyBool(SystemProperty prop) {
 #else
 		return false;
 #endif
+	case SYSPROP_HAS_ACCELEROMETER:
+		return g_InputManager.AnyAccelerometer();
+	case SYSPROP_USE_IAP:
+		return false;
+	case SYSPROP_USE_APP_STORE:
+		return false;
 	default:
 		return false;
 	}

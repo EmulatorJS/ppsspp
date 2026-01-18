@@ -23,7 +23,8 @@
 #include "Common/UI/ViewGroup.h"
 #include "Common/Net/HTTPClient.h"
 
-#include "UI/MiscScreens.h"
+#include "UI/BaseScreens.h"
+#include "UI/SimpleDialogScreen.h"
 
 // Game screen: Allows you to start a game, delete saves, delete the game,
 // set game specific settings, etc.
@@ -60,7 +61,7 @@ struct StoreEntry {
 	u64 size;
 };
 
-class StoreScreen : public UIDialogScreenWithBackground {
+class StoreScreen : public UISimpleBaseDialogScreen {
 public:
 	StoreScreen();
 	~StoreScreen();
@@ -69,11 +70,12 @@ public:
 	const char *tag() const override { return "Store"; }
 
 protected:
-	void CreateViews() override;
+	void CreateDialogViews(UI::ViewGroup *parent) override;
 	void OnGameSelected(UI::EventParams &e);
 	void OnRetry(UI::EventParams &e);
 	void OnGameLaunch(UI::EventParams &e);
 
+	std::string_view GetTitle() const override;
 private:
 	void ParseListing(const std::string &json);
 	ProductItemView *GetSelectedItem();
@@ -102,6 +104,5 @@ private:
 
 	UI::ViewGroup *scrollItemView_ = nullptr;
 	UI::ViewGroup *productPanel_ = nullptr;
-	UI::TextView *titleText_ = nullptr;
 };
 

@@ -516,11 +516,7 @@ BEGIN
 
         POPUP "Savestate Slot",                             ID_FILE_SAVESTATE_SLOT_MENU
         BEGIN
-            MENUITEM "&1",                                  ID_FILE_SAVESTATE_SLOT_1
-            MENUITEM "&2",                                  ID_FILE_SAVESTATE_SLOT_2
-            MENUITEM "&3",                                  ID_FILE_SAVESTATE_SLOT_3
-            MENUITEM "&4",                                  ID_FILE_SAVESTATE_SLOT_4
-            MENUITEM "&5",                                  ID_FILE_SAVESTATE_SLOT_5
+            MENUITEM "Dummy",                               ID_FILE_SAVESTATE_SLOT_BASE
         END
         MENUITEM "Load State",                              ID_FILE_QUICKLOADSTATE
         MENUITEM "Save State",                              ID_FILE_QUICKSAVESTATE
@@ -641,11 +637,6 @@ BEGIN
             MENUITEM "&6",                                  ID_OPTIONS_FRAMESKIP_6
             MENUITEM "&7",                                  ID_OPTIONS_FRAMESKIP_7
             MENUITEM "&8",                                  ID_OPTIONS_FRAMESKIP_8
-        END
-        POPUP "Frame Skipping Type",                        ID_OPTIONS_FRAMESKIPTYPE_MENU
-        BEGIN
-            MENUITEM "Skip Number of Frames",               ID_OPTIONS_FRAMESKIPTYPE_COUNT
-            MENUITEM "Skip Percent of FPS",                 ID_OPTIONS_FRAMESKIPTYPE_PRCNT
         END
         POPUP "Texture Filtering",                          ID_OPTIONS_TEXTUREFILTERING_MENU
         BEGIN

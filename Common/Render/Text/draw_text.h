@@ -1,6 +1,6 @@
 // draw_text
 
-// Uses system fonts to draw text. 
+// Uses system fonts to draw text.
 // Platform support will be added over time, initially just Win32.
 
 // Caches strings in individual textures. Might later combine them into a big one
@@ -16,6 +16,7 @@
 
 #include "Common/Data/Text/WrapText.h"
 #include "Common/Render/DrawBuffer.h"
+#include "Common/Render/Text/Font.h"
 
 namespace Draw {
 	class DrawContext;
@@ -45,11 +46,11 @@ public:
 	virtual ~TextDrawer() = default;
 
 	virtual bool IsReady() const { return true; }
-	virtual uint32_t SetFont(const char *fontName, int size, int flags) = 0;
-	virtual void SetFont(uint32_t fontHandle) = 0;  // Shortcut once you've set the font once.
+	virtual void SetOrCreateFont(const FontStyle &style) = 0;
+
 	void SetFontScale(float xscale, float yscale);
 	void MeasureString(std::string_view str, float *w, float *h);
-	void MeasureStringRect(std::string_view str, const Bounds &bounds, float *w, float *h, int align = ALIGN_TOPLEFT);
+	void MeasureStringRect(std::string_view str, float maxWidth, float *w, float *h, int align = ALIGN_TOPLEFT);
 
 	void DrawString(DrawBuffer &target, std::string_view str, float x, float y, uint32_t color, int align = ALIGN_TOPLEFT);
 	void DrawStringRect(DrawBuffer &target, std::string_view str, const Bounds &bounds, uint32_t color, int align);
@@ -112,17 +113,7 @@ protected:
 		return (a << 24) | (r << 16) | (g << 8) | b;
 	}
 
-	struct CacheKey {
-		bool operator < (const CacheKey &other) const {
-			if (fontHash < other.fontHash)
-				return true;
-			if (fontHash > other.fontHash)
-				return false;
-			return text < other.text;
-		}
-		std::string text;
-		uint32_t fontHash;
-	};
+	typedef std::pair<std::string, FontStyle> CacheKeyType;
 
 	Draw::DrawContext *draw_;
 
@@ -131,11 +122,13 @@ protected:
 	float fontScaleY_ = 1.0f;
 	float dpiScale_ = 1.0f;
 	bool ignoreGlobalDpi_ = false;
+	FontStyle fontStyle_{};
 
-	uint32_t fontHash_ = 0;
+	// We will clamp strings to this length to avoid various degenenerate behaviors.k
+	static constexpr size_t MAX_TEXT_LENGTH = 16384;
 
-	std::map<CacheKey, std::unique_ptr<TextStringEntry>> cache_;
-	std::map<CacheKey, std::unique_ptr<TextMeasureEntry>> sizeCache_;
+	std::map<CacheKeyType, std::unique_ptr<TextStringEntry>> cache_;
+	std::map<CacheKeyType, std::unique_ptr<TextMeasureEntry>> sizeCache_;
 };
 
 class TextDrawerWordWrapper : public WordWrapper {
@@ -148,3 +141,13 @@ protected:
 
 	TextDrawer *drawer_;
 };
+
+// The backends can use this to query the filenames of the fonts.
+// Some backends want to just load all the fonts, just pass all.
+// Note that the ttf file extension is included in the output.
+std::vector<std::string> GetAllFontFilenames();
+std::string GetFilenameForFontStyle(const FontStyle &font);
+std::string GetFontNameForFontStyle(const FontStyle &font, FontStyleFlags *outFlags);
+
+// Some languages use an override font, set via ini file.
+void SetFontNameOverride(FontFamily family, std::string_view overrideFont);

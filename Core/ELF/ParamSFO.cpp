@@ -89,9 +89,9 @@ const u8 *ParamSFOData::GetValueData(std::string_view key, unsigned int *size) c
 		return 0;
 	}
 	if (size) {
-		*size = it->second.u_size;
+		*size = (unsigned int)it->second.u_value.size();
 	}
-	return it->second.u_value;
+	return it->second.u_value.data();
 }
 
 std::vector<std::string> ParamSFOData::GetKeys() const {
@@ -131,8 +131,6 @@ bool ParamSFOData::ReadSFO(const u8 *paramsfo, size_t size) {
 	if (header->key_table_start > size || header->data_table_start > size) {
 		return false;
 	}
-
-	const u8 *data_start = paramsfo + header->data_table_start;
 
 	auto readStringCapped = [paramsfo, size](size_t offset, size_t maxLen) -> std::string {
 		std::string str;
@@ -288,10 +286,10 @@ void ParamSFOData::WriteSFO(u8 **paramsfo, size_t *size) const {
 		else if (v.type == VT_UTF8_SPE)
 		{
 			index_ptr->param_fmt = 0x0004;
-			index_ptr->param_len = v.u_size;
+			index_ptr->param_len = (u32)v.u_value.size();
 
-			memset(data_ptr,0,index_ptr->param_max_len);
-			memcpy(data_ptr,v.u_value,index_ptr->param_len);
+			memset(data_ptr, 0, index_ptr->param_max_len);
+			memcpy(data_ptr, v.u_value.data(), index_ptr->param_len);
 		}
 		else if (v.type == VT_UTF8)
 		{
@@ -314,18 +312,6 @@ void ParamSFOData::WriteSFO(u8 **paramsfo, size_t *size) const {
 
 void ParamSFOData::Clear() {
 	values.clear();
-}
-
-void ParamSFOData::ValueData::SetData(const u8* data, int size) {
-	if (u_value) {
-		delete[] u_value;
-		u_value = 0;
-	}
-	if (size > 0) {
-		u_value = new u8[size];
-		memcpy(u_value, data, size);
-	}
-	u_size = size;
 }
 
 std::string ParamSFOData::GenerateFakeID(const Path &filename) const {

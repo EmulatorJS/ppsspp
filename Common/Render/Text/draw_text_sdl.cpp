@@ -111,14 +111,14 @@ void TextDrawerSDL::PrepareFallbackFonts(std::string_view locale) {
 		// printf("trying font name %s\n", names[i]);
 		FcPattern *name = FcNameParse((const FcChar8 *)names[i]);
 		FcFontSet *foundFonts = FcFontList(config, name, os);
-		
+
 		for (int j = 0; foundFonts && j < foundFonts->nfont; ++j) {
 			FcPattern* font = foundFonts->fonts[j];
 			FcChar8 *path;
 			int fontIndex;
 
 			if (FcPatternGetInteger(font, FC_INDEX, 0, &fontIndex) != FcResultMatch) {
-				fontIndex = 0; // The 0th face is guaranteed to exist 
+				fontIndex = 0; // The 0th face is guaranteed to exist
 			}
 
 			if (FcPatternGetString(font, FC_FILE, 0, &path) == FcResultMatch) {
@@ -178,7 +178,7 @@ void TextDrawerSDL::PrepareFallbackFonts(std::string_view locale) {
 
 				TTF_CloseFont(openedFont);
 			}
-		}	
+		}
 	}
 #else
 	// We don't have a fallback font for this platform.
@@ -187,12 +187,15 @@ void TextDrawerSDL::PrepareFallbackFonts(std::string_view locale) {
 }
 
 uint32_t TextDrawerSDL::CheckMissingGlyph(std::string_view text) {
-	auto iter = fontMap_.find(fontHash_);
+	auto iter = fontMap_.find(fontStyle_);
 	if (iter == fontMap_.end()) {
 		return 0;
 	}
 
-	TTF_Font *font = iter->second;
+	TTF_Font *font = iter->second.first;
+	if (!font) {
+		return 0;
+	}
 	UTF8 utf8Decoded(text);
 
 	uint32_t missingGlyph = 0;
@@ -245,51 +248,54 @@ int TextDrawerSDL::FindFallbackFonts(uint32_t missingGlyph, int ptSize) {
 	return -1;
 }
 
-uint32_t TextDrawerSDL::SetFont(const char *fontName, int size, int flags) {
-	uint32_t fontHash = fontName && strlen(fontName) ? hash::Adler32((const uint8_t *)fontName, strlen(fontName)) : 0;
-	fontHash ^= size;
-	fontHash ^= flags << 10;
-
-	auto iter = fontMap_.find(fontHash);
+void TextDrawerSDL::SetOrCreateFont(const FontStyle &style) {
+	auto iter = fontMap_.find(style);
 	if (iter != fontMap_.end()) {
-		fontHash_ = fontHash;
-		return fontHash;
+		fontStyle_ = style;
+		return;
 	}
 
-	const char *useFont = fontName ? fontName : "Roboto-Condensed.ttf";
-	const int ptSize = (int)((size + 6) / dpiScale_);
+	TTF_Font *font = nullptr;
+	uint8_t *fileData = nullptr;
+	if (fontMap_.find(style) == fontMap_.end()) {
+		std::string useFont = GetFilenameForFontStyle(style) + ".ttf";
+		const int ptSize = static_cast<int>(style.sizePts / dpiScale_ * 1.25f);
+		INFO_LOG(Log::G3D, "Loading SDL font '%s' from VFS at size %d pts", useFont.c_str(), ptSize);
 
-	TTF_Font *font = TTF_OpenFont(useFont, ptSize);
+		size_t fileSz;
+		uint8_t *fileData = g_VFS.ReadFile(useFont.c_str(), &fileSz);
+		if (fileData) {
+			SDL_RWops *rw = SDL_RWFromMem(fileData, static_cast<int>(fileSz));
+			INFO_LOG(Log::G3D, "Opened font from RW: '%p' '%d'", fileData, (int)fileSz);
+			font = TTF_OpenFontRW(rw, 1, ptSize);
+			if (!font) {
+				ERROR_LOG(Log::G3D, "Failed to load font from asset file: '%s'", useFont.c_str());
+			}
+		} else {
+			ERROR_LOG(Log::G3D, "Failed to load font file %s from VFS", useFont.c_str());
+		}
 
-	if (!font) {
-		File::FileInfo fileInfo;
-   		g_VFS.GetFileInfo("Roboto-Condensed.ttf", &fileInfo);
-		font = TTF_OpenFont(fileInfo.fullName.c_str(), ptSize);
+		// Still, even if it failed and font is nullptr, mark it in the map to avoid retrying.
 	}
 
-	fontMap_[fontHash] = font;
-	fontHash_ = fontHash;
-	return fontHash;
-}
-
-void TextDrawerSDL::SetFont(uint32_t fontHandle) {
-	uint32_t fontHash = fontHandle;
-	auto iter = fontMap_.find(fontHash);
-	if (iter != fontMap_.end()) {
-		fontHash_ = fontHandle;
-	} else {
-		ERROR_LOG(Log::G3D, "Invalid font handle %08x", fontHandle);
-	}
+	fontMap_[style] = std::make_pair(font, fileData);
+	fontStyle_ = style;
 }
 
 void TextDrawerSDL::MeasureStringInternal(std::string_view str, float *w, float *h) {
-	TTF_Font *font = fontMap_.find(fontHash_)->second;
-	int ptSize = TTF_FontHeight(font) / 1.35;
+	TTF_Font *font = fontMap_.find(fontStyle_)->second.first;
+
+	if (!font) {
+		*w = 1.0f;
+		*h = 1.0f;
+		return;
+	}
 
 	uint32_t missingGlyph = CheckMissingGlyph(str);
-		
+
 	if (missingGlyph) {
-		int fallbackFont = FindFallbackFonts(missingGlyph, ptSize);
+		const int ptSize = static_cast<int>(fontStyle_.sizePts / dpiScale_ * 1.25f);
+		const int fallbackFont = FindFallbackFonts(missingGlyph, ptSize);
 		if (fallbackFont >= 0 && fallbackFont < (int)fallbackFonts_.size()) {
 			font = fallbackFonts_[fallbackFont];
 		}
@@ -302,8 +308,8 @@ void TextDrawerSDL::MeasureStringInternal(std::string_view str, float *w, float 
 	std::string text(str);
 	TTF_SizeUTF8(font, text.c_str(), &width, &height);
 
-	*w = width;
-	*h = height;
+	*w = (float)width;
+	*h = (float)height;
 }
 
 bool TextDrawerSDL::DrawStringBitmap(std::vector<uint8_t> &bitmapData, TextStringEntry &entry, Draw::DataFormat texFormat, std::string_view str, int align, bool fullColor) {
@@ -317,25 +323,28 @@ bool TextDrawerSDL::DrawStringBitmap(std::vector<uint8_t> &bitmapData, TextStrin
 	std::string processedStr(str);
 
 	// If a string includes only newlines, SDL2_ttf will refuse to render it
-	// thinking it is empty. Add a space to avoid that. 
+	// thinking it is empty. Add a space to avoid that.
 	bool isAllNewline = processedStr.find_first_not_of('\n') == std::string::npos;
 
 	if (isAllNewline) {
 		processedStr.push_back(' ');
 	}
 
-	auto fontIter = fontMap_.find(fontHash_);
+	auto fontIter = fontMap_.find(fontStyle_);
 	if (fontIter == fontMap_.end()) {
-		ERROR_LOG(Log::G3D, "Font hash not in map: %08x", fontHash_);
+		ERROR_LOG(Log::G3D, "Font style not in map");
 		return false;
 	}
 
-	TTF_Font *font = fontIter->second;
-	int ptSize = TTF_FontHeight(font) / 1.35;
+	TTF_Font *font = fontIter->second.first;
+	if (!font) {
+		return false;
+	}
 
 	uint32_t missingGlyph = CheckMissingGlyph(processedStr);
 
 	if (missingGlyph) {
+		const int ptSize = TTF_FontHeight(font) / 1.25;
 		int fallbackFont = FindFallbackFonts(missingGlyph, ptSize);
 		if (fallbackFont >= 0 && fallbackFont < (int)fallbackFonts_.size()) {
 			font = fallbackFonts_[fallbackFont];
@@ -372,7 +381,7 @@ bool TextDrawerSDL::DrawStringBitmap(std::vector<uint8_t> &bitmapData, TextStrin
 		for (int x = 0; x < entry.bmWidth; x++) {
 			for (int y = 0; y < entry.bmHeight; y++) {
 				const uint64_t index = entry.bmWidth * y + x;
-				const u16 alpha = AlphaToPremul4444(imageData[pitch * y + x]);
+				const u16 alpha = AlphaToPremul4444(imageData[pitch * y + x] >> 24);
 				bitmapData16[index] = alpha;
 			}
 		}
@@ -395,11 +404,18 @@ bool TextDrawerSDL::DrawStringBitmap(std::vector<uint8_t> &bitmapData, TextStrin
 
 void TextDrawerSDL::ClearFonts() {
 	for (auto iter : fontMap_) {
-		TTF_CloseFont(iter.second);
+		if (iter.second.first) {
+			TTF_CloseFont(iter.second.first);
+			delete[] iter.second.second;
+		}
 	}
 	for (auto iter : fallbackFonts_) {
-		TTF_CloseFont(iter);
+		if (iter) {
+			TTF_CloseFont(iter);
+		}
 	}
+
+	// We wipe all the maps, including fontMap_.
 	fontMap_.clear();
 	fallbackFonts_.clear();
 }

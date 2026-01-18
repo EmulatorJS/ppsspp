@@ -39,6 +39,7 @@
 #include "Common/File/DiskFree.h"
 
 #include "Common/Thread/ThreadManager.h"
+#include "Common/UI/ScrollView.h"
 
 #include "Core/Config.h"
 #include "Core/Reporting.h"
@@ -48,7 +49,7 @@
 
 #include "UI/MemStickScreen.h"
 #include "UI/MainScreen.h"
-#include "UI/MiscScreens.h"
+#include "UI/BaseScreens.h"
 #include "UI/OnScreenDisplay.h"
 
 static std::string FormatSpaceString(int64_t space) {
@@ -315,7 +316,7 @@ void MemStickScreen::SetFolderManually(UI::EventParams &params) {
 		size_t pos = newPath.find_last_not_of('/');
 		// Gotta have at least something but a /, and also needs to start with a /.
 		if (newPath.empty() || pos == std::string::npos || newPath[0] != '/') {
-			settingInfo_->Show(sy->T("ChangingMemstickPathInvalid", "That path couldn't be used to save Memory Stick files."), nullptr);
+			g_OSD.Show(OSDType::MESSAGE_WARNING, sy->T("ChangingMemstickPathInvalid", "That path couldn't be used to save Memory Stick files."), 5.0f);
 			return;
 		}
 		if (pos != newPath.size() - 1) {
@@ -447,7 +448,7 @@ void MemStickScreen::dialogFinished(const Screen *dialog, DialogResult result) {
 }
 
 void MemStickScreen::update() {
-	UIDialogScreenWithBackground::update();
+	UIBaseDialogScreen::update();
 	if (done_) {
 		TriggerFinish(DialogResult::DR_OK);
 		done_ = false;
@@ -567,7 +568,7 @@ void ConfirmMemstickMoveScreen::OnMoveDataClick(UI::EventParams &params) {
 }
 
 void ConfirmMemstickMoveScreen::update() {
-	UIDialogScreenWithBackground::update();
+	UIBaseDialogScreen::update();
 	auto ms = GetI18NCategory(I18NCat::MEMSTICK);
 
 	if (moveDataTask_) {

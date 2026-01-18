@@ -17,8 +17,11 @@
 
 #pragma once
 
+#include <vector>
+#include <string>
 #include "Common/Render/TextureAtlas.h"
-#include "MiscScreens.h"
+#include "UI/BaseScreens.h"
+#include "UI/SimpleDialogScreen.h"
 
 namespace UI {
 	class CheckBox;
@@ -31,26 +34,26 @@ struct TouchButtonToggle {
 	std::function<void(UI::EventParams&)> handle;
 };
 
-class TouchControlVisibilityScreen : public UIDialogScreenWithGameBackground {
+class TouchControlVisibilityScreen : public UISimpleBaseDialogScreen {
 public:
-	TouchControlVisibilityScreen(const Path &gamePath) : UIDialogScreenWithGameBackground(gamePath) {}
-	void CreateViews() override;
+	TouchControlVisibilityScreen(const Path &gamePath) : UISimpleBaseDialogScreen(gamePath, SimpleDialogFlags::ContentsCanScroll | SimpleDialogFlags::CustomContextMenu) {}
+	void CreateDialogViews(UI::ViewGroup *parent) override;
+	void CreateContextMenu(UI::ViewGroup *parent) override;
 	void onFinish(DialogResult result) override;
 
 	const char *tag() const override { return "TouchControlVisibility"; }
 
-protected:
-	void OnToggleAll(UI::EventParams &e);
-
+	std::string_view GetTitle() const override;
 private:
 	std::vector<TouchButtonToggle> toggles_;
 	bool nextToggleAll_ = true;
 };
 
-class RightAnalogMappingScreen : public UIDialogScreenWithGameBackground {
+class RightAnalogMappingScreen : public UISimpleBaseDialogScreen {
 public:
-	RightAnalogMappingScreen(const Path &gamePath) : UIDialogScreenWithGameBackground(gamePath) {}
-	void CreateViews() override;
+	RightAnalogMappingScreen(const Path &gamePath) : UISimpleBaseDialogScreen(gamePath, SimpleDialogFlags::ContentsCanScroll) {}
+	void CreateDialogViews(UI::ViewGroup *parent) override;
+	std::string_view GetTitle() const override;
 
 	const char *tag() const override { return "RightAnalogMapping"; }
 };

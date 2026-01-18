@@ -76,7 +76,7 @@ FramebufferManagerCommon::~FramebufferManagerCommon() {
 void FramebufferManagerCommon::Init(int msaaLevel) {
 	// We may need to override the render size if the shader is upscaling or SSAA.
 	NotifyDisplayResized();
-	NotifyRenderResized(msaaLevel);
+	NotifyRenderResized(displayLayoutConfigCopy_, msaaLevel);
 }
 
 // Returns true if we need to stop the render thread
@@ -110,17 +110,20 @@ bool FramebufferManagerCommon::UpdateRenderSize(int msaaLevel) {
 	return newRender || newSettings;
 }
 
-void FramebufferManagerCommon::CheckPostShaders() {
+void FramebufferManagerCommon::CheckPostShaders(const DisplayLayoutConfig &config) {
 	if (updatePostShaders_) {
-		presentation_->UpdatePostShader();
+		presentation_->UpdatePostShader(config);
 		updatePostShaders_ = false;
 	}
 }
 
-void FramebufferManagerCommon::BeginFrame() {
+void FramebufferManagerCommon::BeginFrame(const DisplayLayoutConfig &config) {
 	DecimateFBOs();
-	presentation_->BeginFrame();
+	presentation_->BeginFrame(config);
 	currentRenderVfb_ = nullptr;
+
+	// Hack.
+	displayLayoutConfigCopy_ = config;
 }
 
 bool FramebufferManagerCommon::PresentedThisFrame() const {
@@ -967,7 +970,6 @@ void FramebufferManagerCommon::DestroyFramebuf(VirtualFramebuffer *v) {
 
 void FramebufferManagerCommon::BlitFramebufferDepth(VirtualFramebuffer *src, VirtualFramebuffer *dst, bool allowSizeMismatch) {
 	_dbg_assert_(src && dst);
-
 	_dbg_assert_(src != dst);
 
 	// Check that the depth address is even the same before actually blitting.
@@ -1195,26 +1197,33 @@ void FramebufferManagerCommon::DrawPixels(VirtualFramebuffer *vfb, int dstX, int
 	float v0 = 0.0f, v1 = 1.0f;
 
 	DrawTextureFlags flags;
-	if (useBufferedRendering_ && vfb && vfb->fbo) {
-		if (channel == RASTER_DEPTH || PSP_CoreParameter().compat.flags().NearestFilteringOnFramebufferCreate) {
-			flags = DRAWTEX_NEAREST;
-		} else {
-			flags = DRAWTEX_LINEAR;
+	if (useBufferedRendering_ && vfb) {
+		_dbg_assert_(vfb->fbo);
+		if (vfb->fbo) {
+			if (channel == RASTER_DEPTH || PSP_CoreParameter().compat.flags().NearestFilteringOnFramebufferCreate) {
+				flags = DRAWTEX_NEAREST;
+			} else {
+				flags = DRAWTEX_LINEAR;
+			}
+			draw_->BindFramebufferAsRenderTarget(vfb->fbo, {Draw::RPAction::KEEP, Draw::RPAction::KEEP, Draw::RPAction::KEEP}, tag);
+			SetViewport2D(0, 0, vfb->renderWidth, vfb->renderHeight);
+			draw_->SetScissorRect(0, 0, vfb->renderWidth, vfb->renderHeight);
 		}
-		draw_->BindFramebufferAsRenderTarget(vfb->fbo, { Draw::RPAction::KEEP, Draw::RPAction::KEEP, Draw::RPAction::KEEP }, tag);
-		SetViewport2D(0, 0, vfb->renderWidth, vfb->renderHeight);
-		draw_->SetScissorRect(0, 0, vfb->renderWidth, vfb->renderHeight);
 	} else {
+		// The hacky way to get the display layout config (normally we pass it down, but it would require a lot of plumbing here).
+		// This is only for non-buffered rendering.
+		auto config = g_Config.GetDisplayLayoutConfig(g_display.GetDeviceOrientation());
+		// Here config is valid.
 		_dbg_assert_(channel == RASTER_COLOR);
 		// We are drawing directly to the back buffer so need to flip.
 		// Should more of this be handled by the presentation engine?
 		if (needBackBufferYSwap_)
 			std::swap(v0, v1);
-		flags = g_Config.iDisplayFilter == SCALE_LINEAR ? DRAWTEX_LINEAR : DRAWTEX_NEAREST;
+		flags = config.iDisplayFilter == SCALE_LINEAR ? DRAWTEX_LINEAR : DRAWTEX_NEAREST;
 		flags = flags | DRAWTEX_TO_BACKBUFFER;
-		FRect frame = GetScreenFrame(pixelWidth_, pixelHeight_);
+		FRect frame = GetScreenFrame(config.bIgnoreScreenInsets, pixelWidth_, pixelHeight_);
 		FRect rc;
-		CalculateDisplayOutputRect(&rc, 480.0f, 272.0f, frame, ROTATION_LOCKED_HORIZONTAL);
+		CalculateDisplayOutputRect(config, &rc, 480.0f, 272.0f, frame, ROTATION_LOCKED_HORIZONTAL);
 		SetViewport2D(rc.x, rc.y, rc.w, rc.h);
 		draw_->SetScissorRect(0, 0, pixelWidth_, pixelHeight_);
 	}
@@ -1512,7 +1521,7 @@ Draw::Texture *FramebufferManagerCommon::MakePixelTexture(const u8 *srcPixels, G
 	return tex;
 }
 
-bool FramebufferManagerCommon::DrawFramebufferToOutput(const u8 *srcPixels, int srcStride, GEBufferFormat srcPixelFormat) {
+bool FramebufferManagerCommon::DrawFramebufferToOutput(const DisplayLayoutConfig &config, const u8 *srcPixels, int srcStride, GEBufferFormat srcPixelFormat) {
 	textureCache_->ForgetLastTexture();
 	shaderManager_->DirtyLastShader();
 
@@ -1522,8 +1531,8 @@ bool FramebufferManagerCommon::DrawFramebufferToOutput(const u8 *srcPixels, int 
 	if (!pixelsTex)
 		return false;
 
-	int uvRotation = useBufferedRendering_ ? g_Config.iInternalScreenRotation : ROTATION_LOCKED_HORIZONTAL;
-	OutputFlags flags = g_Config.iDisplayFilter == SCALE_LINEAR ? OutputFlags::LINEAR : OutputFlags::NEAREST;
+	int uvRotation = useBufferedRendering_ ? config.iInternalScreenRotation : ROTATION_LOCKED_HORIZONTAL;
+	OutputFlags flags = config.iDisplayFilter == SCALE_LINEAR ? OutputFlags::LINEAR : OutputFlags::NEAREST;
 	if (needBackBufferYSwap_) {
 		flags |= OutputFlags::BACKBUFFER_FLIPPED;
 	}
@@ -1534,7 +1543,7 @@ bool FramebufferManagerCommon::DrawFramebufferToOutput(const u8 *srcPixels, int 
 
 	presentation_->UpdateUniforms(textureCache_->VideoIsPlaying());
 	presentation_->SourceTexture(pixelsTex, 512, 272);
-	presentation_->CopyToOutput(flags, uvRotation, u0, v0, u1, v1);
+	presentation_->CopyToOutput(config, flags, uvRotation, u0, v0, u1, v1);
 
 	// PresentationCommon sets all kinds of state, we can't rely on anything.
 	gstate_c.Dirty(DIRTY_ALL);
@@ -1550,7 +1559,7 @@ void FramebufferManagerCommon::SetViewport2D(int x, int y, int w, int h) {
 	draw_->SetViewport(viewport);
 }
 
-void FramebufferManagerCommon::CopyDisplayToOutput(bool reallyDirty) {
+void FramebufferManagerCommon::CopyDisplayToOutput(const DisplayLayoutConfig &config, bool reallyDirty) {
 	DownloadFramebufferOnSwitch(currentRenderVfb_);
 	shaderManager_->DirtyLastShader();
 
@@ -1612,7 +1621,7 @@ void FramebufferManagerCommon::CopyDisplayToOutput(bool reallyDirty) {
 		if (vfb) {
 			// Okay, we found one above.
 			// Log should be "Displaying from framebuf" but not worth changing the report.
-			INFO_LOG(Log::FrameBuf, "Rendering from framebuf with offset %08x -> %08x+%dx%d", addr, vfb->fb_address, offsetX, offsetY);
+			DEBUG_LOG(Log::FrameBuf, "Rendering from framebuf with offset %08x -> %08x+%dx%d", addr, vfb->fb_address, offsetX, offsetY);
 		}
 	}
 
@@ -1625,7 +1634,7 @@ void FramebufferManagerCommon::CopyDisplayToOutput(bool reallyDirty) {
 		if (Memory::IsValidAddress(fbaddr)) {
 			// The game is displaying something directly from RAM. In GTA, it's decoded video.
 			// If successful, this effectively calls presentation_->NotifyPresent();
-			if (!DrawFramebufferToOutput(Memory::GetPointerUnchecked(fbaddr), displayStride_, displayFormat_)) {
+			if (!DrawFramebufferToOutput(config, Memory::GetPointerUnchecked(fbaddr), displayStride_, displayFormat_)) {
 				if (useBufferedRendering_) {
 					// Bind and clear the backbuffer. This should be the first time during the frame that it's bound.
 					draw_->BindFramebufferAsRenderTarget(nullptr, { Draw::RPAction::CLEAR, Draw::RPAction::CLEAR, Draw::RPAction::CLEAR }, "CopyDisplayToOutput_DrawError");
@@ -1689,8 +1698,8 @@ void FramebufferManagerCommon::CopyDisplayToOutput(bool reallyDirty) {
 
 		textureCache_->ForgetLastTexture();
 
-		int uvRotation = useBufferedRendering_ ? g_Config.iInternalScreenRotation : ROTATION_LOCKED_HORIZONTAL;
-		OutputFlags flags = g_Config.iDisplayFilter == SCALE_LINEAR ? OutputFlags::LINEAR : OutputFlags::NEAREST;
+		int uvRotation = useBufferedRendering_ ? config.iInternalScreenRotation : ROTATION_LOCKED_HORIZONTAL;
+		OutputFlags flags = config.iDisplayFilter == SCALE_LINEAR ? OutputFlags::LINEAR : OutputFlags::NEAREST;
 		if (needBackBufferYSwap_) {
 			flags |= OutputFlags::BACKBUFFER_FLIPPED;
 		}
@@ -1703,7 +1712,7 @@ void FramebufferManagerCommon::CopyDisplayToOutput(bool reallyDirty) {
 		int actualHeight = (vfb->bufferHeight * vfb->renderHeight) / vfb->height;
 		presentation_->UpdateUniforms(textureCache_->VideoIsPlaying());
 		presentation_->SourceFramebuffer(vfb->fbo, actualWidth, actualHeight);
-		presentation_->CopyToOutput(flags, uvRotation, u0, v0, u1, v1);
+		presentation_->CopyToOutput(config, flags, uvRotation, u0, v0, u1, v1);
 	} else if (useBufferedRendering_) {
 		WARN_LOG(Log::FrameBuf, "Using buffered rendering, and current VFB lacks an FBO: %08x", vfb->fb_address);
 	} else {
@@ -2765,7 +2774,8 @@ void FramebufferManagerCommon::NotifyBlockTransferAfter(u32 dstBasePtr, int dstS
 		bool isDisplayBuffer = CurrentDisplayFramebufAddr() == dstBasePtr;
 		if (isPrevDisplayBuffer || isDisplayBuffer) {
 			FlushBeforeCopy();
-			DrawFramebufferToOutput(Memory::GetPointerUnchecked(dstBasePtr), dstStride, displayFormat_);
+			// HACK
+			DrawFramebufferToOutput(displayLayoutConfigCopy_, Memory::GetPointerUnchecked(dstBasePtr), dstStride, displayFormat_);
 			return;
 		}
 	}
@@ -2832,11 +2842,11 @@ void FramebufferManagerCommon::NotifyDisplayResized() {
 	updatePostShaders_ = true;
 }
 
-void FramebufferManagerCommon::NotifyRenderResized(int msaaLevel) {
+void FramebufferManagerCommon::NotifyRenderResized(const DisplayLayoutConfig &config, int msaaLevel) {
 	gstate_c.skipDrawReason &= ~SKIPDRAW_NON_DISPLAYED_FB;
 
 	int w, h, scaleFactor;
-	presentation_->CalculateRenderResolution(&w, &h, &scaleFactor, &postShaderIsUpscalingFilter_, &postShaderIsSupersampling_);
+	presentation_->CalculateRenderResolution(config, &w, &h, &scaleFactor, &postShaderIsUpscalingFilter_, &postShaderIsSupersampling_);
 	PSP_CoreParameter().renderWidth = w;
 	PSP_CoreParameter().renderHeight = h;
 	PSP_CoreParameter().renderScaleFactor = scaleFactor;
@@ -3520,6 +3530,15 @@ void FramebufferManagerCommon::BlitUsingRaster(
 	bool linearFilter,
 	int scaleFactor,
 	Draw2DPipeline *pipeline, const char *tag) {
+
+	_dbg_assert_(src);
+	_dbg_assert_(dest);
+	_dbg_assert_(pipeline);
+
+	if (!src || !dest || !pipeline) {
+		// Nothing we can do, other than trying to catch it in debug with the asserts above.
+		return;
+	}
 
 	if (pipeline->info.writeChannel == RASTER_DEPTH) {
 		_dbg_assert_(draw_->GetDeviceCaps().fragmentShaderDepthWriteSupported);

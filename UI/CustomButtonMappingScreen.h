@@ -17,31 +17,32 @@
 
 #pragma once
 
-#include "MiscScreens.h"
+#include "UI/BaseScreens.h"
 #include "UI/GamepadEmu.h"
+#include "UI/SimpleDialogScreen.h"
 
 namespace UI {
 	class CheckBox;
 }
 
-class CustomButtonMappingScreen : public UIDialogScreenWithGameBackground {
+class CustomButtonMappingScreen : public UISimpleBaseDialogScreen {
 public:
-	CustomButtonMappingScreen(const Path &gamePath, int id) : UIDialogScreenWithGameBackground(gamePath), id_(id) {}
+	CustomButtonMappingScreen(DeviceOrientation deviceOrientation, const Path &gamePath, int id) : UISimpleBaseDialogScreen(gamePath, SimpleDialogFlags::Default), deviceOrientation_(deviceOrientation), id_(id) {}
 
 	const char *tag() const override { return "CustomButton"; }
 
-	void CreateViews() override;
+	void CreateDialogViews(UI::ViewGroup *parent) override;
 	void onFinish(DialogResult result) override;
 
 protected:
 	void dialogFinished(const Screen *dialog, DialogResult result) override;
+	std::string_view GetTitle() const override;
 
 private:
 	void saveArray();
 
 	bool array[ARRAY_SIZE(CustomKeyData::g_customKeyList)]{};
 	int id_;
-	UI::ScrollView *rightScroll_ = nullptr;
 
 	class ChoiceEventHandler{
 	public:
@@ -50,4 +51,6 @@ private:
 	private:
 		UI::CheckBox *checkbox_;
 	};
+
+	DeviceOrientation deviceOrientation_;
 };

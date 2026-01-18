@@ -105,6 +105,8 @@ public:
 	std::vector<Path> GetSaveDataDirectories();
 
 	std::string GetTitle();
+	std::string GetDBTitle();  // Falls back to GetTitle if not in the DB.
+
 	void SetTitle(const std::string &newTitle);
 
 	const Path &GetFilePath() const {
@@ -195,6 +197,7 @@ public:
 	// redrawing the UI often. Only set flags to GAMEINFO_WANTBG or WANTSND if you really want them 
 	// because they're big. bgTextures and sound may be discarded over time as well.
 	// NOTE: This never returns null, so you don't need to check for that. Do check Ready() flags though.
+	// It's OK to pass in nullptr for draw if you don't need the actual texture right now.
 	std::shared_ptr<GameInfo> GetInfo(Draw::DrawContext *draw, const Path &gamePath, GameInfoFlags wantFlags, GameInfoFlags *outHasFlags = nullptr);
 	void FlushBGs();  // Gets rid of all BG textures. Also gets rid of bg sounds.
 

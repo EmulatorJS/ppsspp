@@ -96,6 +96,7 @@ private:
 	mutable std::mutex missedKeyLock_;
 	std::map<std::string, std::string> missedKeyLog_;
 
+	std::string name_;
 	// Noone else can create these.
 	friend class I18NRepo;
 };

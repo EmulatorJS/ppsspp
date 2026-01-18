@@ -430,10 +430,8 @@ public:
 	PresentMode GetPresentMode() const {
 		switch (vulkan_->GetPresentMode()) {
 		case VK_PRESENT_MODE_FIFO_KHR: return PresentMode::FIFO;
-		case VK_PRESENT_MODE_FIFO_RELAXED_KHR: return PresentMode::FIFO_RELAXED;  // We treat is as FIFO for now (and won't ever enable it anyway...)
 		case VK_PRESENT_MODE_IMMEDIATE_KHR: return PresentMode::IMMEDIATE;
 		case VK_PRESENT_MODE_MAILBOX_KHR: return PresentMode::MAILBOX;
-		case VK_PRESENT_MODE_FIFO_LATEST_READY_KHR: return PresentMode::FIFO_LATEST_READY;
 		default: return PresentMode::FIFO;
 		}
 	}
@@ -503,7 +501,21 @@ public:
 
 	void BeginFrame(DebugFlags debugFlags) override;
 	void EndFrame() override;
+
 	void Present(PresentMode presentMode) override;
+	PresentMode GetCurrentPresentMode() const override {
+		switch (vulkan_->GetPresentMode()) {
+		case VK_PRESENT_MODE_IMMEDIATE_KHR:
+			return PresentMode::IMMEDIATE;
+		case VK_PRESENT_MODE_MAILBOX_KHR:
+			return PresentMode::MAILBOX;
+		case VK_PRESENT_MODE_FIFO_KHR:
+		case VK_PRESENT_MODE_FIFO_RELAXED_KHR:
+		case VK_PRESENT_MODE_FIFO_LATEST_READY_KHR:
+		default:
+			return PresentMode::FIFO;
+		}
+	}
 
 	int GetFrameCount() override {
 		return frameCount_;
@@ -896,6 +908,9 @@ VKContext::VKContext(VulkanContext *vulkan, bool useRenderThread)
 	: vulkan_(vulkan), renderManager_(vulkan, useRenderThread, frameTimeHistory_) {
 	shaderLanguageDesc_.Init(GLSL_VULKAN);
 
+	// Make sure that the surface has been initialized.
+	_dbg_assert_(vulkan->GetAvailablePresentModes().size() > 0);
+
 	caps_.coordConvention = CoordConvention::Vulkan;
 	caps_.setMaxFrameLatencySupported = true;
 	caps_.anisoSupported = vulkan->GetDeviceFeatures().enabled.standard.samplerAnisotropy != 0;
@@ -903,6 +918,9 @@ VKContext::VKContext(VulkanContext *vulkan, bool useRenderThread)
 	caps_.tesselationShaderSupported = vulkan->GetDeviceFeatures().enabled.standard.tessellationShader != 0;
 	caps_.dualSourceBlend = vulkan->GetDeviceFeatures().enabled.standard.dualSrcBlend != 0;
 	caps_.depthClampSupported = vulkan->GetDeviceFeatures().enabled.standard.depthClamp != 0;
+
+	caps_.maxTextureSize = vulkan->GetPhysicalDeviceProperties().properties.limits.maxImageDimension2D;
+	caps_.maxClipPlanes = vulkan->GetPhysicalDeviceProperties().properties.limits.maxClipDistances;
 
 	// Comment out these two to test geometry shader culling on any geometry shader-supporting hardware.
 	caps_.clipDistanceSupported = vulkan->GetDeviceFeatures().enabled.standard.shaderClipDistance != 0;
@@ -935,13 +953,12 @@ VKContext::VKContext(VulkanContext *vulkan, bool useRenderThread)
 	caps_.presentMaxInterval = 1;
 	caps_.presentInstantModeChange = false;  // TODO: Fix this with some work in VulkanContext
 	caps_.presentModesSupported = (PresentMode)0;
+
 	for (auto mode : vulkan->GetAvailablePresentModes()) {
 		switch (mode) {
 		case VK_PRESENT_MODE_FIFO_KHR: caps_.presentModesSupported |= PresentMode::FIFO; break;
 		case VK_PRESENT_MODE_IMMEDIATE_KHR: caps_.presentModesSupported |= PresentMode::IMMEDIATE; break;
 		case VK_PRESENT_MODE_MAILBOX_KHR: caps_.presentModesSupported |= PresentMode::MAILBOX; break;
-		case VK_PRESENT_MODE_FIFO_LATEST_READY_KHR: caps_.presentModesSupported |= PresentMode::FIFO_LATEST_READY; break;
-		case VK_PRESENT_MODE_FIFO_RELAXED_KHR: caps_.presentModesSupported |= PresentMode::FIFO_RELAXED; break;
 		default: break;  // Ignore any other modes.
 		}
 	}
@@ -1208,6 +1225,11 @@ Pipeline *VKContext::CreateGraphicsPipeline(const PipelineDesc &desc, const char
 
 	for (auto &iter : desc.shaders) {
 		VKShaderModule *vkshader = (VKShaderModule *)iter;
+		if (!iter) {
+			ERROR_LOG(Log::G3D, "Null shader in pipeline creation");
+			delete pipeline;
+			return nullptr;
+		}
 		vkshader->AddRef();
 		pipeline->deps.push_back(vkshader);
 		if (vkshader->GetStage() == ShaderStage::Vertex) {

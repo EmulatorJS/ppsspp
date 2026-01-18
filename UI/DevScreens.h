@@ -25,10 +25,13 @@
 #include "Common/Net/HTTPClient.h"
 #include "Common/UI/UIScreen.h"
 #include "UI/TabbedDialogScreen.h"
-#include "UI/MiscScreens.h"
+#include "UI/BaseScreens.h"
+#include "UI/PopupScreens.h"
+#include "UI/SimpleDialogScreen.h"
+
 #include "GPU/Common/ShaderCommon.h"
 
-class DevMenuScreen : public PopupScreen {
+class DevMenuScreen : public UI::PopupScreen {
 public:
 	DevMenuScreen(const Path &gamePath, I18NCat cat) : PopupScreen(T(cat, "Dev Tools")), gamePath_(gamePath) {}
 
@@ -47,7 +50,7 @@ private:
 	Path gamePath_;
 };
 
-class JitDebugScreen : public UIDialogScreenWithBackground {
+class JitDebugScreen : public UIBaseDialogScreen {
 public:
 	JitDebugScreen() {}
 	void CreateViews() override;
@@ -59,14 +62,17 @@ private:
 	void OnDisableAll(UI::EventParams &e);
 };
 
-class LogConfigScreen : public UIDialogScreenWithBackground {
+class LogConfigScreen : public UITwoPaneBaseDialogScreen {
 public:
-	LogConfigScreen() {}
-	void CreateViews() override;
+	LogConfigScreen() : UITwoPaneBaseDialogScreen(Path(), TwoPaneFlags::ContentsCanScroll | TwoPaneFlags::SettingsInContextMenu) {}
+	void CreateSettingsViews(UI::ViewGroup *parent) override;
+	void CreateContentViews(UI::ViewGroup *parent) override;
 
 	const char *tag() const override { return "LogConfig"; }
 
 private:
+	std::string_view GetTitle() const override;
+
 	void OnToggleAll(UI::EventParams &e);
 	void OnEnableAll(UI::EventParams &e);
 	void OnDisableAll(UI::EventParams &e);
@@ -74,7 +80,7 @@ private:
 	void OnLogLevelChange(UI::EventParams &e);
 };
 
-class LogViewScreen : public UIDialogScreenWithBackground {
+class LogViewScreen : public UIBaseDialogScreen {
 public:
 	void CreateViews() override;
 	void update() override;
@@ -99,7 +105,7 @@ private:
 	void OnCompleted(DialogResult result) override;
 };
 
-class GPIGPOScreen : public PopupScreen {
+class GPIGPOScreen : public UI::PopupScreen {
 public:
 	GPIGPOScreen(std::string_view title) : PopupScreen(title, "OK") {}
 	const char *tag() const override { return "GPIGPO"; }
@@ -108,21 +114,21 @@ protected:
 	void CreatePopupContents(UI::ViewGroup *parent) override;
 };
 
-class ShaderListScreen : public UIDialogScreenWithBackground {
+class ShaderListScreen : public UITabbedBaseDialogScreen {
 public:
-	void CreateViews() override;
+	ShaderListScreen() : UITabbedBaseDialogScreen(Path()) {}
+	void CreateTabs() override;
 
 	const char *tag() const override { return "ShaderList"; }
 
 private:
+	bool ForceHorizontalTabs() const override {return true; }
 	int ListShaders(DebugShaderType shaderType, UI::LinearLayout *view);
 
 	void OnShaderClick(UI::EventParams &e);
-
-	UI::TabHolder *tabs_;
 };
 
-class ShaderViewScreen : public UIDialogScreenWithBackground {
+class ShaderViewScreen : public UIBaseDialogScreen {
 public:
 	ShaderViewScreen(std::string id, DebugShaderType type)
 		: id_(id), type_(type) {}
@@ -137,27 +143,28 @@ private:
 	DebugShaderType type_;
 };
 
-class FrameDumpTestScreen : public UIDialogScreenWithBackground {
+class FrameDumpTestScreen : public UITabbedBaseDialogScreen {
 public:
-	FrameDumpTestScreen();
+	FrameDumpTestScreen() : UITabbedBaseDialogScreen(Path()) {}
 	~FrameDumpTestScreen();
 
-	void CreateViews() override;
+	void CreateTabs() override;
 	void update() override;
 
 	const char *tag() const override { return "FrameDumpTest"; }
 
 private:
 	void OnLoadDump(UI::EventParams &e);
+	bool ShowSearchControls() const override { return false; }
 
 	std::vector<std::string> files_;
 	std::shared_ptr<http::Request> listing_;
 	std::shared_ptr<http::Request> dumpDownload_;
 };
 
-class TouchTestScreen : public UIDialogScreenWithGameBackground {
+class TouchTestScreen : public UIBaseDialogScreen {
 public:
-	TouchTestScreen(const Path &gamePath) : UIDialogScreenWithGameBackground(gamePath) {
+	TouchTestScreen(const Path &gamePath) : UIBaseDialogScreen(gamePath) {
 		for (int i = 0; i < MAX_TOUCH_POINTS; i++) {
 			touches_[i].id = -1;
 		}

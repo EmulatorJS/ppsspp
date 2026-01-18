@@ -4,8 +4,11 @@
 
 #include "Common/UI/Context.h"
 #include "Common/Input/InputState.h"
+#include "Common/UI/Screen.h"
 
 namespace UI {
+
+struct Margins;
 
 // The ONLY global is the currently focused item.
 // Can be and often is null.
@@ -17,12 +20,12 @@ void RemoveQueuedEventsByEvent(Event *e);
 void RemoveQueuedEventsByView(View * v);
 
 void EventTriggered(Event *e, EventParams params);
-void DispatchEvents();
+DialogResult DispatchEvents();
 
 class ViewGroup;
 
-void LayoutViewHierarchy(const UIContext &dc, ViewGroup *root, bool ignoreInsets);
-void UpdateViewHierarchy(ViewGroup *root);
+void LayoutViewHierarchy(const UIContext &dc, const UI::Margins &rootMargins, UI::ViewGroup *root, bool ignoreInsets, bool ignoreBottomInset);
+DialogResult UpdateViewHierarchy(ViewGroup *root);
 
 enum class KeyEventResult {
 	IGNORE_KEY,  // Don't let it be processed.

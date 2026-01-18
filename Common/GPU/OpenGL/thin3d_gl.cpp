@@ -368,6 +368,9 @@ public:
 	void BeginFrame(DebugFlags debugFlags) override;
 	void EndFrame() override;
 	void Present(PresentMode mode) override;
+	PresentMode GetCurrentPresentMode() const override {
+		return requestedPresentMode_;
+	}
 
 	int GetFrameCount() override {
 		return frameCount_;
@@ -527,6 +530,8 @@ private:
 		GLPushBuffer *push;
 	};
 	FrameData frameData_[GLRenderManager::MAX_INFLIGHT_FRAMES]{};
+
+	PresentMode requestedPresentMode_{};
 };
 
 static constexpr int MakeIntelSimpleVer(int v1, int v2, int v3) {
@@ -562,7 +567,7 @@ OpenGLContext::OpenGLContext(bool canChangeSwapInterval) : renderManager_(frameT
 				caps_.fragmentShaderInt32Supported = true;
 			}
 		}
-		caps_.texture3DSupported = gl_extensions.OES_texture_3D;
+		caps_.texture3DSupported = gl_extensions.GLES3 || gl_extensions.OES_texture_3D;
 		caps_.textureDepthSupported = gl_extensions.GLES3 || gl_extensions.OES_depth_texture;
 	} else {
 		if (gl_extensions.VersionGEThan(3, 3, 0)) {
@@ -573,6 +578,8 @@ OpenGLContext::OpenGLContext(bool canChangeSwapInterval) : renderManager_(frameT
 		caps_.textureDepthSupported = true;
 	}
 
+	caps_.maxTextureSize = gl_extensions.maxTextureSize;
+	caps_.maxClipPlanes = gl_extensions.IsGLES ? 0 : gl_extensions.maxClipPlanes;
 	caps_.coordConvention = CoordConvention::OpenGL;
 	caps_.setMaxFrameLatencySupported = true;
 	caps_.dualSourceBlend = gl_extensions.ARB_blend_func_extended || gl_extensions.EXT_blend_func_extended;
@@ -812,8 +819,22 @@ void OpenGLContext::EndFrame() {
 }
 
 void OpenGLContext::Present(PresentMode presentMode) {
+	_dbg_assert_msg_((caps_.presentModesSupported & presentMode) != 0, "Present mode %d not supported", (int)presentMode);
+
+	// NOTE: renderManager_.SwapInterval has repeat protection: won't call glSwapInterval if the value is the same as current.
+	switch (presentMode) {
+	case PresentMode::IMMEDIATE:
+		renderManager_.SwapInterval(0);
+		break;
+	case PresentMode::FIFO:
+	default:
+		renderManager_.SwapInterval(1);
+		break;
+	}
+
 	renderManager_.Present();
 	frameCount_++;
+	requestedPresentMode_ = presentMode;
 }
 
 void OpenGLContext::Invalidate(InvalidationFlags flags) {
@@ -1289,6 +1310,12 @@ bool OpenGLPipeline::LinkShaders(const PipelineDesc &desc) {
 		}
 	}
 
+	if (linkShaders.empty()) {
+		// Can't proceed.
+		ERROR_LOG(Log::G3D, "LinkShaders: No valid shaders to link");
+		return false;
+	}
+
 	std::vector<GLRProgram::Semantic> semantics;
 	semantics.reserve(8);
 	// Bind all the common vertex data points. Mismatching ones will be ignored.
@@ -1607,6 +1634,8 @@ bool OpenGLContext::BlitFramebuffer(Framebuffer *fbsrc, int srcX1, int srcY1, in
 void OpenGLContext::BindFramebufferAsTexture(Framebuffer *fbo, int binding, Aspect aspects, int layer) {
 	OpenGLFramebuffer *fb = (OpenGLFramebuffer *)fbo;
 	_assert_(binding < MAX_TEXTURE_SLOTS);
+	_assert_(fb);
+	_assert_(fb->framebuffer_);
 
 	GLuint glAspect = 0;
 	if (aspects & Aspect::COLOR_BIT) {

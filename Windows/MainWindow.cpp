@@ -98,6 +98,8 @@ int verysleepy__useSendMessage = 1;
 const UINT WM_VERYSLEEPY_MSG = WM_APP + 0x3117;
 const UINT WM_USER_GET_BASE_POINTER = WM_APP + 0x3118;  // 0xB118
 const UINT WM_USER_GET_EMULATION_STATE = WM_APP + 0x3119;  // 0xB119
+const UINT WM_USER_GET_CURRENT_GAMEID = WM_APP + 0x311A;  // 0xB11A
+const UINT WM_USER_GET_MODULE_INFO = WM_APP + 0x311B;  // 0xB11B
 
 // Respond TRUE to a message with this param value to indicate support.
 const WPARAM VERYSLEEPY_WPARAM_SUPPORTED = 0;
@@ -209,7 +211,8 @@ namespace MainWindow
 		AssertCurrentThreadName("Main");
 		// Actually, auto mode should be more granular...
 		int width, height;
-		if (g_Config.IsPortrait()) {
+		const DisplayLayoutConfig &config = g_Config.GetDisplayLayoutConfig(g_display.GetDeviceOrientation());
+		if (config.InternalRotationIsPortrait()) {
 			GetWindowSizeAtResolution(272 * (int)zoom, 480 * (int)zoom, &width, &height);
 		} else {
 			GetWindowSizeAtResolution(480 * (int)zoom, 272 * (int)zoom, &width, &height);
@@ -414,7 +417,8 @@ namespace MainWindow
 
 		// First, get the w/h right.
 		if (windowWidth <= 0 || windowHeight <= 0) {
-			bool portrait = g_Config.IsPortrait();
+			DisplayLayoutConfig &config = g_Config.GetDisplayLayoutConfig(g_display.GetDeviceOrientation());
+			const bool portrait = config.InternalRotationIsPortrait();
 
 			// We want to adjust for DPI but still get an integer pixel scaling ratio.
 			double dpi_scale = 96.0 / System_GetPropertyFloat(SYSPROP_DISPLAY_DPI);
@@ -665,6 +669,78 @@ namespace MainWindow
 		case WM_USER_GET_EMULATION_STATE:
 			return (u32)(Core_IsActive() && GetUIState() == UISTATE_INGAME);
 
+		case WM_USER_GET_CURRENT_GAMEID:
+		{
+			// Return game ID as four u32 values
+			// wParam: 0-3 = which u32 to return (chars 0-3, 4-7, 8-11, 12-15)
+			// Returns: packed u32 with 4 bytes of game ID
+			if (!PSP_IsInited())
+			{
+				return 0;
+			}
+			const std::string gameID = Reporting::CurrentGameID();
+			if (gameID.empty())
+			{
+				return 0;
+			}
+			const size_t offset = (wParam & 0x3) * 4;  // 0, 4, 8, 12
+			u32 packed = 0;
+			for (size_t i = 0; i < 4; ++i)
+			{
+				if (offset + i < gameID.length())
+				{
+					const u8 c = static_cast<u8>(gameID[offset + i]);
+					packed |= ((u32)c << (i * 8));
+				}
+			}
+			return packed;
+		}
+		break;
+		case WM_USER_GET_MODULE_INFO:
+		{
+			// Get module information by name
+			// wParam: pointer to module name (null-terminated string)
+			// lParam: 0 = address, 1 = size, 2 = active flag
+			// Returns: u64 packed with module info, or 0 if not found
+			if (!PSP_IsInited() || !g_symbolMap)
+			{
+				return 0;
+			}
+			const char* moduleName = reinterpret_cast<const char*>(wParam);
+			if (!moduleName)
+			{
+				return 0;
+			}
+			// Get all modules from symbol map
+			auto modules = g_symbolMap->getAllModules();
+			for (const auto& module : modules)
+			{
+				if (module.name == moduleName)
+				{
+					switch (lParam)
+					{
+					case 0:
+						// Return address as u32 (low 32 bits)
+						return (u64)module.address;
+					case 1:
+						// Return size as u32 (low 32 bits)
+						return (u64)module.size;
+					case 2:
+						// Return active flag in bit 0, padded with zeros
+						return (u64)(module.active ? 1 : 0);
+					case 3:
+						// Return all info packed: address (bits 0-31), size (bits 32-62), active (bit 63)
+						return ((u64)module.address) | (((u64)module.size) << 32) | (module.active ? (1ULL << 63) : 0);
+					default:
+						return 0;
+					}
+				}
+			}
+			// Module not found
+			return 0;
+		}
+		break;
+
 		// Hack to kill the white line underneath the menubar.
 		// From https://stackoverflow.com/questions/57177310/how-to-paint-over-white-line-between-menu-bar-and-client-area-of-window
 		case WM_NCPAINT:
@@ -689,7 +765,8 @@ namespace MainWindow
 			{
 				MINMAXINFO *minmax = reinterpret_cast<MINMAXINFO *>(lParam);
 				RECT rc = { 0 };
-				bool portrait = g_Config.IsPortrait();
+				const DisplayLayoutConfig &config = g_Config.GetDisplayLayoutConfig(g_display.GetDeviceOrientation());
+				bool portrait = config.InternalRotationIsPortrait();
 				rc.right = portrait ? 272 : 480;
 				rc.bottom = portrait ? 480 : 272;
 				AdjustWindowRect(&rc, WS_OVERLAPPEDWINDOW, TRUE);
@@ -813,7 +890,7 @@ namespace MainWindow
 					key.keyCode = NKCODE_EXT_MOUSEWHEEL_UP;
 				}
 				// There's no release event, but we simulate it in NativeKey/NativeFrame.
-				key.flags = KEY_DOWN | KEY_HASWHEELDELTA | (wheelDelta << 16);
+				key.flags = (KeyInputFlags)((u32)KeyInputFlags::DOWN | (u32)KeyInputFlags::HAS_WHEEL_DELTA | (wheelDelta << 16));
 				NativeKey(key);
 			}
 			break;
@@ -1065,7 +1142,7 @@ namespace MainWindow
 				WindowsRawInput::SetMousePos(x, y);
 
 				TouchInput touch{};
-				touch.flags = TOUCH_DOWN | TOUCH_MOUSE;
+				touch.flags = TouchInputFlags::DOWN | TouchInputFlags::MOUSE;
 				touch.buttons = 1;
 				touch.x = x;
 				touch.y = y;
@@ -1114,7 +1191,7 @@ namespace MainWindow
 
 				// Mouse moves now happen also when no button is pressed.
 				TouchInput touch{};
-				touch.flags = TOUCH_MOVE | TOUCH_MOUSE;
+				touch.flags = TouchInputFlags::MOVE | TouchInputFlags::MOUSE;
 				if (wParam & MK_LBUTTON) {
 					touch.buttons |= 1;
 				}
@@ -1140,7 +1217,7 @@ namespace MainWindow
 
 				TouchInput touch{};
 				touch.buttons = 1;
-				touch.flags = TOUCH_UP | TOUCH_MOUSE;
+				touch.flags = TouchInputFlags::UP | TouchInputFlags::MOUSE;
 				touch.x = x;
 				touch.y = y;
 				NativeTouch(touch);
@@ -1159,7 +1236,7 @@ namespace MainWindow
 
 			TouchInput touch{};
 			touch.buttons = 2;
-			touch.flags = TOUCH_DOWN | TOUCH_MOUSE;
+			touch.flags = TouchInputFlags::DOWN | TouchInputFlags::MOUSE;
 			touch.x = x;
 			touch.y = y;
 			NativeTouch(touch);
@@ -1173,7 +1250,7 @@ namespace MainWindow
 
 			TouchInput touch{};
 			touch.buttons = 2;
-			touch.flags = TOUCH_UP | TOUCH_MOUSE;
+			touch.flags = TouchInputFlags::UP | TouchInputFlags::MOUSE;
 			touch.x = x;
 			touch.y = y;
 			NativeTouch(touch);

@@ -424,7 +424,7 @@ static void DoFrameTiming(bool throttle, bool *skipFrame, float scaledTimestep, 
 	}
 
 	// Auto-frameskip automatically if speed limit is set differently than the default.
-	int frameSkipNum = DisplayCalculateFrameSkip();
+	int frameSkipNum = g_Config.iFrameSkip;
 	if (g_Config.bAutoFrameSkip && !g_Config.bSkipBufferEffects) {
 		// autoframeskip
 		// Argh, we are falling behind! Let's skip a frame and see if we catch up.
@@ -564,8 +564,19 @@ static void NotifyUserIfSlow() {
 	}
 }
 
+static DisplayLayoutConfig g_displayLayoutConfigCached;
+
+void __DisplaySetDisplayLayoutConfig(const DisplayLayoutConfig &config) {
+	g_displayLayoutConfigCached = config;
+}
+
 void __DisplayFlip(int cyclesLate) {
-	_dbg_assert_(gpu);
+	if (!gpu) {
+		_dbg_assert_(gpu);
+		// Something has gone wrong.
+		flippedThisFrame = true;
+		return;
+	}
 
 	__DisplaySetFramerate();
 
@@ -580,22 +591,6 @@ void __DisplayFlip(int cyclesLate) {
 
 	bool duplicateFrames = g_Config.bRenderDuplicateFrames && g_Config.iFrameSkip == 0;
 
-	bool fastForwardSkipFlip = g_Config.iFastForwardMode != (int)FastForwardMode::CONTINUOUS;
-
-	Draw::DrawContext *draw = gpu->GetDrawContext();
-	if (draw) {
-		g_frameTiming.presentMode = ComputePresentMode(draw);
-		if (!draw->GetDeviceCaps().presentInstantModeChange && g_frameTiming.presentMode == Draw::PresentMode::FIFO) {
-			// Some backends can't just flip into MAILBOX/IMMEDIATE mode instantly.
-			// Vulkan doesn't support the interval setting, so we force skipping the flip.
-			// TODO: We'll clean this up in a more backend-independent way later.
-			fastForwardSkipFlip = true;
-		}
-	} else {
-		// Surely can never get here?
-		g_frameTiming.presentMode = Draw::PresentMode::FIFO;
-	}
-
 	if (!g_Config.bSkipBufferEffects) {
 		postEffectRequiresFlip = duplicateFrames || g_Config.bShaderChainRequires60FPS;
 	}
@@ -606,11 +601,14 @@ void __DisplayFlip(int cyclesLate) {
 
 	const bool fbDirty = gpu->FramebufferDirty();
 
+	Draw::DrawContext *draw = gpu->GetDrawContext();
+
 	bool needFlip = fbDirty || noRecentFlip || postEffectRequiresFlip;
 	if (!needFlip) {
 		// Okay, there's no new frame to draw, game might be sitting in a static loading screen
 		// or similar, and not long enough to trigger noRecentFlip. But audio may be playing, so we need to time still.
 		DoFrameIdleTiming();
+		g_frameTiming.ComputePresentMode(draw, false);
 		return;
 	}
 
@@ -624,10 +622,16 @@ void __DisplayFlip(int cyclesLate) {
 	bool forceNoFlip = false;
 	float refreshRate = System_GetPropertyFloat(SYSPROP_DISPLAY_REFRESH_RATE);
 	// Avoid skipping on devices that have 58 or 59 FPS, except when alternate speed is set.
-	bool refreshRateNeedsSkip = FrameTimingLimit() != framerate && FrameTimingLimit() > refreshRate;
+	const double fpsLimit = FrameTimingLimit();
+	bool throttle = fpsLimit != 0.0;
+
+	bool refreshRateNeedsSkip = (fpsLimit != framerate && fpsLimit > refreshRate) || !throttle;
+
+	g_frameTiming.ComputePresentMode(draw, refreshRateNeedsSkip);
+
 	// Alternative to frameskip fast-forward, where we draw everything.
 	// Useful if skipping a frame breaks graphics or for checking drawing speed.
-	if (fastForwardSkipFlip && (!FrameTimingThrottled() || refreshRateNeedsSkip)) {
+	if (g_frameTiming.FastForwardNeedsSkipFlip() && (!FrameTimingThrottled() || refreshRateNeedsSkip)) {
 		static double lastFlip = 0;
 		double now = time_now_d();
 		if ((now - lastFlip) < 1.0f / refreshRate) {
@@ -651,7 +655,7 @@ void __DisplayFlip(int cyclesLate) {
 			}
 		}
 		if (nextFrame) {
-			gpu->CopyDisplayToOutput(fbReallyDirty);
+			gpu->CopyDisplayToOutput(g_displayLayoutConfigCached, fbReallyDirty);
 			if (fbReallyDirty) {
 				DisplayFireActualFlip();
 			}
@@ -662,9 +666,6 @@ void __DisplayFlip(int cyclesLate) {
 		gpuStats.numFlips++;
 	}
 
-	bool throttle = FrameTimingThrottled();
-
-	int fpsLimit = FrameTimingLimit();
 	float scaledTimestep = (float)numVBlanksSinceFlip * timePerVblank;
 	if (fpsLimit > 0 && fpsLimit != framerate) {
 		scaledTimestep *= (float)framerate / fpsLimit;
@@ -673,7 +674,7 @@ void __DisplayFlip(int cyclesLate) {
 	DoFrameTiming(throttle, &skipFrame, scaledTimestep, nextFrame);
 
 	int maxFrameskip = 8;
-	int frameSkipNum = DisplayCalculateFrameSkip();
+	const int frameSkipNum = g_Config.iFrameSkip;
 	if (throttle) {
 		// 4 here means 1 drawn, 4 skipped - so 12 fps minimum.
 		maxFrameskip = frameSkipNum;
@@ -756,6 +757,7 @@ void hleLagSync(u64 userdata, int cyclesLate) {
 	double now = before;
 	while (now < goal && goal < now + 0.01) {
 		// Tight loop on win32 - intentionally, as timing is otherwise not precise enough.
+		// TODO: Use the precise waits if available
 #ifndef _WIN32
 		const double left = goal - now;
 		if (left > 0.0f && left < 1.0f) {  // Sanity check

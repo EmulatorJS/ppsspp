@@ -44,6 +44,7 @@
 #include "Core/WebServer.h"
 #include "Core/HLE/sceUtility.h"
 #include "Core/SaveState.h"
+#include "GPU/GPUCommon.h"
 #include "GPU/Common/FramebufferManagerCommon.h"
 #include "Common/Log.h"
 #include "Common/Log/LogManager.h"
@@ -218,7 +219,7 @@ bool RunAutoTest(HeadlessHost *headlessHost, CoreParameter &coreParameter, const
 	PSP_UpdateDebugStats((DebugOverlay)g_Config.iDebugOverlay == DebugOverlay::DEBUG_STATS || g_Config.bLogFrameDrops);
 
 	if (gpu) {
-		gpu->BeginHostFrame();
+		gpu->BeginHostFrame(g_Config.GetDisplayLayoutConfig(DeviceOrientation::Landscape));
 	}
 	Draw::DrawContext *draw = coreParameter.graphicsContext ? coreParameter.graphicsContext->GetDrawContext() : nullptr;
 	if (draw) {
@@ -268,7 +269,7 @@ bool RunAutoTest(HeadlessHost *headlessHost, CoreParameter &coreParameter, const
 		draw->BindFramebufferAsRenderTarget(nullptr, { Draw::RPAction::CLEAR, Draw::RPAction::DONT_CARE, Draw::RPAction::DONT_CARE }, "Headless");
 		// Vulkan may get angry if we don't do a final present.
 		if (gpu)
-			gpu->CopyDisplayToOutput(true);
+			gpu->CopyDisplayToOutput(g_Config.GetDisplayLayoutConfig(DeviceOrientation::Landscape), true);
 
 		draw->EndFrame();
 	}
@@ -536,7 +537,6 @@ int main(int argc, const char* argv[])
 	g_Config.iButtonPreference = PSP_SYSTEMPARAM_BUTTON_CROSS;
 	g_Config.iLockParentalLevel = 9;
 	g_Config.iInternalResolution = 1;
-	g_Config.iFastForwardMode = (int)FastForwardMode::CONTINUOUS;
 	g_Config.bEnableLogging = (fullLog || outputDebugStringLog);
 	g_Config.bSoftwareSkinning = true;
 	g_Config.bVertexDecoderJit = true;

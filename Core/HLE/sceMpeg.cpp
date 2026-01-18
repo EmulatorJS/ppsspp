@@ -50,6 +50,10 @@ static const int MPEG_PCM_ES_OUTPUT_SIZE = 320;
 static const int MPEG_DATA_ES_SIZE = 0xA0000;
 static const int MPEG_DATA_ES_OUTPUT_SIZE = 0xA0000;
 
+// MPEG AVC Resource Management
+static const int MPEG_AVC_RESOURCE_SIZE = 0x20000;
+static const int MPEG_AVC_RESOURCE_FLAG = 0x4;
+
 // MPEG analysis results.
 static const int MPEG_VERSION_0012 = 0;
 static const int MPEG_VERSION_0013 = 1;
@@ -163,6 +167,11 @@ static u32 mpegLibCrc = 0;
 static u32 streamIdGen;
 static int actionPostPut;
 std::map<u32, MpegContext *> g_mpegCtxs;
+
+// MPEG AVC Resource Management
+static u32 sceMpegAvcResourceAddr = 0;
+static u32 sceMpegAvcResourceDataAddr = 0;
+static int sceMpegAvcResourceFlags = 0;
 
 MpegContext::MpegContext() {
 	memcpy(mpegheader, defaultMpegheader, 2048);
@@ -442,7 +451,7 @@ static u32 sceMpegRingbufferConstruct(u32 ringbufferAddr, u32 numPackets, u32 da
 	if (ring->semaID != 0) {
 		// I'm starting to think this is just padding or something.
 		// It's not written by this function.
-		WARN_LOG(Log::Mpeg, "Detected semaID %d", ring->semaID);
+		WARN_LOG(Log::Mpeg, "Detected 'semaID' (might not be) %d (%08x)", ring->semaID, ring->semaID);
 	}
 	ring->mpeg = 0;
 	// This isn't in ver 0104, but it is in 0105.
@@ -572,7 +581,7 @@ static int sceMpegQueryStreamOffset(u32 mpeg, u32 bufferAddr, u32 offsetAddr)
 	}
 
 	// Kinda destructive, no? Shouldn't this just do what sceMpegQueryStreamSize does?
-	AnalyzeMpeg(Memory::GetPointerWriteUnchecked(bufferAddr), Memory::ValidSize(bufferAddr, 32768), ctx);
+	AnalyzeMpeg(Memory::GetPointerWriteUnchecked(bufferAddr), Memory::ClampValidSizeAt(bufferAddr, 32768), ctx);
 
 	if (ctx->mpegMagic != PSMF_MAGIC) {
 		Memory::WriteUnchecked_U32(0, offsetAddr);
@@ -599,7 +608,7 @@ static u32 sceMpegQueryStreamSize(u32 bufferAddr, u32 sizeAddr)
 	ctx.mediaengine = nullptr;  // makes sure we don't actually load the stream.
 	ctx.isAnalyzed = false;
 
-	AnalyzeMpeg(Memory::GetPointerWriteUnchecked(bufferAddr), Memory::ValidSize(bufferAddr, 32768), &ctx);
+	AnalyzeMpeg(Memory::GetPointerWriteUnchecked(bufferAddr), Memory::ClampValidSizeAt(bufferAddr, 32768), &ctx);
 
 	if (ctx.mpegMagic != PSMF_MAGIC) {
 		Memory::WriteUnchecked_U32(0, sizeAddr);
@@ -929,16 +938,14 @@ static bool decodePmpVideo(PSPPointer<SceMpegRingBuffer> ringbuffer, u32 pmpctxA
 			avcodec_send_packet(pCodecCtx, &packet);
 		int len = avcodec_receive_frame(pCodecCtx, pFrame);
 		if (len == 0) {
-			len = pFrame->pkt_size;
 			got_picture = 1;
 		} else if (len == AVERROR(EAGAIN)) {
-			len = 0;
 			got_picture = 0;
 		} else {
 			got_picture = 0;
 		}
 #else
-		int len = avcodec_decode_video2(pCodecCtx, pFrame, &got_picture, &packet);
+		avcodec_decode_video2(pCodecCtx, pFrame, &got_picture, &packet);
 #endif
 		DEBUG_LOG(Log::Mpeg, "got_picture %d", got_picture);
 		if (got_picture){
@@ -1398,7 +1405,7 @@ void PostPutAction::run(MipsCall &call) {
 		// TODO: Faster / less wasteful validation.
 		auto demuxer = std::make_unique<MpegDemux>(packetsAddedThisRound * 2048, 0);
 		int readOffset = ringbuffer->packetsRead % (s32)ringbuffer->packets;
-		uint32_t bufSize = Memory::ValidSize(ringbuffer->data + readOffset * 2048, packetsAddedThisRound * 2048);
+		uint32_t bufSize = Memory::ClampValidSizeAt(ringbuffer->data + readOffset * 2048, packetsAddedThisRound * 2048);
 		const u8 *buf = Memory::GetPointer(ringbuffer->data + readOffset * 2048);
 		bool invalid = false;
 		for (uint32_t i = 0; i < bufSize / 2048; ++i) {
@@ -1435,7 +1442,7 @@ void PostPutAction::run(MipsCall &call) {
 			packetsAddedThisRound = ringbuffer->packets - ringbuffer->packetsAvail;
 		}
 		const u8 *data = Memory::GetPointer(ringbuffer->data + writeOffset * 2048);
-		uint32_t dataSize = Memory::ValidSize(ringbuffer->data + writeOffset * 2048, packetsAddedThisRound * 2048);
+		uint32_t dataSize = Memory::ClampValidSizeAt(ringbuffer->data + writeOffset * 2048, packetsAddedThisRound * 2048);
 		int actuallyAdded = ctx->mediaengine == NULL ? 8 : ctx->mediaengine->addStreamData(data, dataSize) / 2048;
 		if (actuallyAdded != packetsAddedThisRound) {
 			WARN_LOG_REPORT(Log::Mpeg, "sceMpegRingbufferPut(): unable to enqueue all added packets, going to overwrite some frames.");
@@ -1963,8 +1970,12 @@ static u32 sceMpegQueryUserdataEsSize(u32 mpeg, u32 esSizeAddr, u32 outSizeAddr)
 }
 
 static u32 sceMpegAvcResourceGetAvcDecTopAddr(u32 mpeg) {
-	// it's just a random address
-	return hleLogError(Log::Mpeg, 0x12345678, "UNIMPL");
+	if ((sceMpegAvcResourceFlags & MPEG_AVC_RESOURCE_FLAG) == 0) {
+		return hleLogDebug(Log::Mpeg, 0);
+	}
+
+	u32 addr = sceMpegAvcResourceDataAddr & 0xFFC00000;
+	return hleLogDebug(Log::Mpeg, addr);
 }
 
 static u32 sceMpegAvcResourceFinish(u32 mpeg) {
@@ -1972,8 +1983,11 @@ static u32 sceMpegAvcResourceFinish(u32 mpeg) {
 }
 
 static u32 sceMpegAvcResourceGetAvcEsBuf(u32 mpeg) {
-	ERROR_LOG_REPORT_ONCE(mpegResourceEsBuf, Log::Mpeg, "UNIMPL sceMpegAvcResourceGetAvcEsBuf(%08x)", mpeg);
-	return hleNoLog(0);
+	if ((sceMpegAvcResourceFlags & MPEG_AVC_RESOURCE_FLAG) == 0) {
+		return hleLogDebug(Log::Mpeg, 0);
+	}
+
+	return hleLogDebug(Log::Mpeg, sceMpegAvcResourceDataAddr);
 }
 
 static u32 sceMpegAvcResourceInit(u32 mpeg) {
@@ -1981,7 +1995,18 @@ static u32 sceMpegAvcResourceInit(u32 mpeg) {
 		return hleLogError(Log::Mpeg, SCE_MPEG_ERROR_INVALID_VALUE);
 	}
 
-	return hleLogError(Log::Mpeg, 0, "UNIMPL");
+	if ((sceMpegAvcResourceFlags & MPEG_AVC_RESOURCE_FLAG) != 0) {
+		return hleLogError(Log::Mpeg, SCE_MPEG_ERROR_ALREADY_INIT);
+	}
+
+	// Allocate memory for the AVC resource
+	// In a real implementation, this would use sceKernelCreateFpl and sceKernelAllocateFpl
+	// For PPSSPP, we'll simulate the allocation
+	sceMpegAvcResourceAddr = 0x10000000; // Simulated base address
+	sceMpegAvcResourceDataAddr = sceMpegAvcResourceAddr + 8; // Offset for data
+	sceMpegAvcResourceFlags |= MPEG_AVC_RESOURCE_FLAG;
+
+	return hleLogDebug(Log::Mpeg, 0);
 }
 
 // TODO: SIMD this (or rather, the caller).

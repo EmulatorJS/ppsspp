@@ -153,6 +153,7 @@ void Compatibility::CheckSettings(IniFile &iniFile, const std::string &gameID) {
 	CheckSetting(iniFile, gameID, "ForceHLEPsmf", &flags_.ForceHLEPsmf);
 	CheckSetting(iniFile, gameID, "SaveStatesNotRecommended", &flags_.SaveStatesNotRecommended);
 	CheckSetting(iniFile, gameID, "IgnoreEnqueue", &flags_.IgnoreEnqueue);
+	CheckSetting(iniFile, gameID, "MsgDialogAutoStatus", &flags_.MsgDialogAutoStatus);
 }
 
 void Compatibility::CheckVRSettings(IniFile &iniFile, const std::string &gameID) {
@@ -169,13 +170,18 @@ void Compatibility::CheckVRSettings(IniFile &iniFile, const std::string &gameID)
 
 void Compatibility::CheckSetting(IniFile &iniFile, const std::string &gameID, const char *option, bool *flag) {
 	if (ignored_.find(option) == ignored_.end()) {
-		iniFile.Get(option, gameID.c_str(), flag, *flag);
+		Section *section = iniFile.GetSection(option);
+		if (!section) {
+			// Not found, skip.
+			return;
+		}
+		section->Get(gameID, flag);
 
 		// Shortcut for debugging, sometimes useful to globally enable compat flags.
 		bool all = false;
-		iniFile.Get(option, "ALL", &all, false);
+		section->Get("ALL", &all);
 		if (all) {
-			*flag |= all;
+			*flag = true;
 			if (!activeList_.empty()) {
 				activeList_ += "\n";
 			}
@@ -186,14 +192,16 @@ void Compatibility::CheckSetting(IniFile &iniFile, const std::string &gameID, co
 
 void Compatibility::CheckSetting(IniFile &iniFile, const std::string &gameID, const char *option, float *flag) {
 	std::string value;
-	if (iniFile.Get(option, gameID.c_str(), &value, "0")) {
+	Section *section = iniFile.GetSection(option);
+	if (section && section->Get(gameID.c_str(), &value)) {
 		*flag = stof(value);
 	}
 }
 
 void Compatibility::CheckSetting(IniFile &iniFile, const std::string &gameID, const char *option, int *flag) {
 	std::string value;
-	if (iniFile.Get(option, gameID.c_str(), &value, "0")) {
+	Section *section = iniFile.GetSection(option);
+	if (section && section->Get(gameID.c_str(), &value)) {
 		*flag = stof(value);
 	}
 }

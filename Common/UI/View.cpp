@@ -21,7 +21,6 @@
 
 namespace UI {
 
-static constexpr Size ITEM_HEIGHT = 64.f;
 static constexpr float MIN_TEXT_SCALE = 0.8f;
 static constexpr float MAX_ITEM_SIZE = 65535.0f;
 
@@ -46,7 +45,7 @@ void MeasureBySpec(Size sz, float contentDim, MeasureSpec spec, float *measured)
 	}
 }
 
-static void ApplyBoundBySpec(float &bound, MeasureSpec spec) {
+void ApplyBoundBySpec(float &bound, MeasureSpec spec) {
 	switch (spec.type) {
 	case AT_MOST:
 		bound = bound < spec.size ? bound : spec.size;
@@ -222,6 +221,9 @@ void Clickable::DrawBG(UIContext &dc, const Style &style) {
 void Clickable::ClickInternal() {
 	UI::EventParams e{};
 	e.v = this;
+	if (hasAutoResult_) {
+		e.bubbleResult = autoResult_;
+	}
 	OnClick.Trigger(e);
 };
 
@@ -242,11 +244,11 @@ bool Clickable::Touch(const TouchInput &input) {
 	}
 
 	// Ignore buttons other than the left one.
-	if ((input.flags & TOUCH_MOUSE) && (input.buttons & 1) == 0) {
+	if ((input.flags & TouchInputFlags::MOUSE) && (input.buttons & 1) == 0) {
 		return contains;
 	}
 
-	if (input.flags & TOUCH_DOWN) {
+	if (input.flags & TouchInputFlags::DOWN) {
 		if (bounds_.Contains(input.x, input.y)) {
 			if (IsFocusMovementEnabled())
 				SetFocusedView(this);
@@ -256,12 +258,12 @@ bool Clickable::Touch(const TouchInput &input) {
 			down_ = false;
 			dragging_ = false;
 		}
-	} else if (input.flags & TOUCH_MOVE) {
+	} else if (input.flags & TouchInputFlags::MOVE) {
 		if (dragging_)
 			down_ = bounds_.Contains(input.x, input.y);
 	}
-	if (input.flags & TOUCH_UP) {
-		if ((input.flags & TOUCH_CANCEL) == 0 && dragging_ && bounds_.Contains(input.x, input.y)) {
+	if (input.flags & TouchInputFlags::UP) {
+		if ((input.flags & TouchInputFlags::CANCEL) == 0 && dragging_ && bounds_.Contains(input.x, input.y)) {
 			ClickInternal();
 		}
 		down_ = false;
@@ -359,13 +361,13 @@ bool Clickable::Key(const KeyInput &key) {
 	// TODO: Replace most of Update with this.
 
 	bool ret = false;
-	if (key.flags & KEY_DOWN) {
+	if (key.flags & KeyInputFlags::DOWN) {
 		if (IsAcceptKey(key)) {
 			down_ = true;
 			ret = true;
 		}
 	}
-	if (key.flags & KEY_UP) {
+	if (key.flags & KeyInputFlags::UP) {
 		if (IsAcceptKey(key)) {
 			if (down_) {
 				ClickInternal();
@@ -387,7 +389,7 @@ bool StickyChoice::Touch(const TouchInput &touch) {
 		return contains;
 	}
 
-	if (touch.flags & TOUCH_DOWN) {
+	if (touch.flags & TouchInputFlags::DOWN) {
 		if (contains) {
 			if (IsFocusMovementEnabled())
 				SetFocusedView(this);
@@ -405,7 +407,7 @@ bool StickyChoice::Key(const KeyInput &key) {
 	}
 
 	// TODO: Replace most of Update with this.
-	if (key.flags & KEY_DOWN) {
+	if (key.flags & KeyInputFlags::DOWN) {
 		if (IsAcceptKey(key)) {
 			down_ = true;
 			UI::PlayUISound(UI::UISound::TOGGLE_ON);
@@ -469,29 +471,40 @@ void Choice::ClickInternal() {
 void Choice::GetContentDimensionsBySpec(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert, float &w, float &h) const {
 	float totalW = 0.0f;
 	float totalH = 0.0f;
-	if (image_.isValid()) {
-		dc.Draw()->GetAtlas()->measureImage(image_, &w, &h);
-		totalW = w + 6;
-		totalH = h;
-	}
-	if (!text_.empty()) {
-		const int paddingX = 12;
-		float availWidth = horiz.size - paddingX * 2 - textPadding_.horiz() - totalW;
+	if (!text_.empty() && !hideTitle_) {
+		int paddingLeft = 12;
+		int paddingRight = 12;
+		if (rightIconImage_.isValid()) {
+			float imgW, imgH;
+			dc.Draw()->GetAtlas()->measureImage(rightIconImage_, &imgW, &imgH);
+			paddingRight = std::max(ITEM_HEIGHT, imgW);
+		}
+
+		float availWidth = horiz.size - paddingLeft - paddingRight - textPadding_.horiz() - totalW;
 		if (availWidth < 0.0f) {
 			// Let it have as much space as it needs.
 			availWidth = MAX_ITEM_SIZE;
 		}
 		if (horiz.type != EXACTLY && layoutParams_->width > 0.0f && availWidth > layoutParams_->width)
 			availWidth = layoutParams_->width;
-		float scale = dc.CalculateTextScale(text_, availWidth, bounds_.h);
-		Bounds availBounds(0, 0, availWidth, vert.size);
+		float scale = dc.CalculateTextScale(text_, availWidth);
 		float textW = 0.0f, textH = 0.0f;
-		dc.MeasureTextRect(dc.GetTheme().uiFont, scale, scale, text_, availBounds, &textW, &textH, FLAG_WRAP_TEXT);
+		dc.MeasureTextRect(dc.GetTheme().uiFont, scale, scale, text_, availWidth, &textW, &textH, FLAG_WRAP_TEXT);
 		totalH = std::max(totalH, textH);
 		totalW += textW;
+		if (image_.isValid()) {
+			totalW += 12;
+			totalW += totalH;
+		}
+	} else {
+		if (image_.isValid()) {
+			dc.Draw()->GetAtlas()->measureImage(image_, &w, &h);
+			totalW = w * imgScale_ + 6;
+			totalH = h * imgScale_;
+		}
 	}
 
-	w = totalW + 24;
+	w = totalW + (text_.empty() ? 16 : 24);
 	h = totalH + 16;
 	h = std::max(h, ITEM_HEIGHT);
 }
@@ -506,35 +519,51 @@ void Choice::Draw(UIContext &dc) {
 
 	if (image_.isValid() && text_.empty()) {
 		dc.Draw()->DrawImageRotated(image_, bounds_.centerX(), bounds_.centerY(), imgScale_, imgRot_, style.fgColor, imgFlipH_);
+		if (shine_) {
+			Bounds b = Bounds::FromCenter(bounds_.centerX(), bounds_.centerY(), bounds_.h * 0.4f);
+			DrawIconShine(dc, b.Inset(5.0f, 5.0f), 0.65f, false);
+		}
 	} else if (!text_.empty() && !hideTitle_) {
 		dc.SetFontStyle(dc.GetTheme().uiFont);
 
-		int paddingX = 12;
-		float availWidth = bounds_.w - paddingX * 2 - textPadding_.horiz();
+		int paddingLeft = 12;
+		int paddingRight = 12;
 
 		if (image_.isValid()) {
+			paddingLeft = 0;
 			const AtlasImage *image = dc.Draw()->GetAtlas()->getImage(image_);
 			if (image) {
 				_dbg_assert_(image);
-				paddingX += image->w + 6;
-				availWidth -= image->w + 6;
 				// TODO: Use scale rotation and flip here as well (DrawImageRotated is always ALIGN_CENTER for now)
-				dc.Draw()->DrawImage(image_, bounds_.x + 6, bounds_.centerY(), 1.0f, style.fgColor, ALIGN_LEFT | ALIGN_VCENTER);
+				dc.Draw()->DrawImage(image_, bounds_.x + bounds_.h * 0.5f + paddingLeft, bounds_.centerY(), 1.0f, style.fgColor, ALIGN_CENTER);
+
+				paddingLeft += bounds_.h;
 			}
 		}
+
+		if (rightIconImage_.isValid()) {
+			float imgW, imgH;
+			dc.Draw()->GetAtlas()->measureImage(rightIconImage_, &imgW, &imgH);
+			paddingRight = std::max(ITEM_HEIGHT, imgW);
+		}
+
+		float availWidth = bounds_.w - (paddingLeft + paddingRight + textPadding_.horiz());
 
 		if (centered_) {
 			dc.DrawTextRectSqueeze(text_, bounds_, style.fgColor, ALIGN_CENTER | FLAG_WRAP_TEXT | drawTextFlags_);
 		} else {
 			if (rightIconImage_.isValid()) {
 				uint32_t col = rightIconKeepColor_ ? 0xffffffff : style.fgColor; // Don't apply theme to gold icon
+
+				float iconX = bounds_.x2() - paddingRight + ITEM_HEIGHT * 0.5f;
+
 				if (shine_) {
-					Bounds b = Bounds::FromCenter(bounds_.x2() - 32 - paddingX, bounds_.centerY(), bounds_.h * 0.4f);
+					Bounds b = Bounds::FromCenter(iconX, bounds_.centerY(), bounds_.h * 0.4f);
 					DrawIconShine(dc, b.Inset(5.0f, 5.0f), 0.65f, false);
 				}
-				dc.Draw()->DrawImageRotated(rightIconImage_, bounds_.x2() - 32 - paddingX, bounds_.centerY(), rightIconScale_, rightIconRot_, col, rightIconFlipH_);
+				dc.Draw()->DrawImageRotated(rightIconImage_, iconX, bounds_.centerY(), rightIconScale_, rightIconRot_, col, rightIconFlipH_);
 			}
-			Bounds textBounds(bounds_.x + paddingX + textPadding_.left, bounds_.y, availWidth, bounds_.h);
+			Bounds textBounds(bounds_.x + paddingLeft + textPadding_.left, bounds_.y, availWidth, bounds_.h);
 			dc.DrawTextRectSqueeze(text_, textBounds, style.fgColor, ALIGN_VCENTER | FLAG_WRAP_TEXT | drawTextFlags_);
 		}
 		dc.SetFontScale(1.0f, 1.0f);
@@ -566,7 +595,7 @@ void InfoItem::Draw(UIContext &dc) {
 	Bounds padBounds = bounds_.Expand(-paddingX, 0);
 
 	float leftWidth, leftHeight;
-	dc.MeasureTextRect(dc.GetTheme().uiFont, 1.0f, 1.0f, text_, padBounds, &leftWidth, &leftHeight, ALIGN_VCENTER);
+	dc.MeasureTextRect(dc.GetTheme().uiFont, 1.0f, 1.0f, text_, padBounds.w, &leftWidth, &leftHeight, ALIGN_VCENTER);
 
 	dc.SetFontStyle(dc.GetTheme().uiFont);
 	dc.DrawTextRect(text_, padBounds, style.fgColor, ALIGN_VCENTER);
@@ -591,21 +620,18 @@ void ItemHeader::Draw(UIContext &dc) {
 
 	const UI::Style &style = popupStyle_ ? dc.GetTheme().popupStyle : dc.GetTheme().headerStyle;
 	dc.FillRect(style.background, bounds_);
-	dc.DrawText(text_, bounds_.x + 4, bounds_.centerY(), style.fgColor, ALIGN_LEFT | ALIGN_VCENTER);
+	dc.DrawText(text_, bounds_.x + 8, bounds_.centerY(), style.fgColor, ALIGN_LEFT | ALIGN_VCENTER);
 	dc.Draw()->DrawImageCenterTexel(dc.GetTheme().whiteImage, bounds_.x, bounds_.y2()-2, bounds_.x2(), bounds_.y2(), style.fgColor);
 }
 
 void ItemHeader::GetContentDimensionsBySpec(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert, float &w, float &h) const {
-	Bounds bounds(0, 0, layoutParams_->width, layoutParams_->height);
-	if (bounds.w < 0) {
+	float availWidth = layoutParams_->width;
+	if (availWidth < 0) {
 		// If there's no size, let's grow as big as we want.
-		bounds.w = horiz.size == 0 ? MAX_ITEM_SIZE : horiz.size;
+		availWidth = horiz.size == 0 ? MAX_ITEM_SIZE : horiz.size;
 	}
-	if (bounds.h < 0) {
-		bounds.h = vert.size == 0 ? MAX_ITEM_SIZE : vert.size;
-	}
-	ApplyBoundsBySpec(bounds, horiz, vert);
-	dc.MeasureTextRect(dc.GetTheme().uiFontSmall, 1.0f, 1.0f, text_, bounds, &w, &h, ALIGN_LEFT | ALIGN_VCENTER);
+	ApplyBoundBySpec(availWidth, horiz);
+	dc.MeasureTextRect(dc.GetTheme().uiFontSmall, 1.0f, 1.0f, text_, availWidth, &w, &h, ALIGN_LEFT | ALIGN_VCENTER);
 }
 
 std::string ItemHeader::DescribeText() const {
@@ -630,7 +656,7 @@ void CollapsibleHeader::Draw(UIContext &dc) {
 	float xoff = 37.0f;
 
 	dc.SetFontStyle(dc.GetTheme().uiFontSmall);
-	dc.DrawText(text_, bounds_.x + 4 + xoff, bounds_.centerY(), style.fgColor, ALIGN_LEFT | ALIGN_VCENTER);
+	dc.DrawText(text_, bounds_.x + 6 + xoff, bounds_.centerY(), style.fgColor, ALIGN_LEFT | ALIGN_VCENTER);
 	dc.Draw()->DrawImageCenterTexel(dc.GetTheme().whiteImage, bounds_.x, bounds_.y2() - 2, bounds_.x2(), bounds_.y2(), style.fgColor);
 	if (hasSubItems_) {
 		dc.Draw()->DrawImageRotated(ImageID("I_ARROW"), bounds_.x + 20.0f, bounds_.y + 20.0f, 1.0f, *toggle_ ? -M_PI / 2 : M_PI, style.fgColor);
@@ -638,16 +664,13 @@ void CollapsibleHeader::Draw(UIContext &dc) {
 }
 
 void CollapsibleHeader::GetContentDimensionsBySpec(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert, float &w, float &h) const {
-	Bounds bounds(0, 0, layoutParams_->width, layoutParams_->height);
-	if (bounds.w < 0) {
+	float availWidth = layoutParams_->width;
+	if (availWidth < 0) {
 		// If there's no size, let's grow as big as we want.
-		bounds.w = horiz.size == 0 ? MAX_ITEM_SIZE : horiz.size;
+		availWidth = horiz.size == 0 ? MAX_ITEM_SIZE : horiz.size;
 	}
-	if (bounds.h < 0) {
-		bounds.h = vert.size == 0 ? MAX_ITEM_SIZE : vert.size;
-	}
-	ApplyBoundsBySpec(bounds, horiz, vert);
-	dc.MeasureTextRect(dc.GetTheme().uiFontSmall, 1.0f, 1.0f, text_, bounds, &w, &h, ALIGN_LEFT | ALIGN_VCENTER);
+	ApplyBoundBySpec(availWidth, horiz);
+	dc.MeasureTextRect(dc.GetTheme().uiFontSmall, 1.0f, 1.0f, text_, availWidth, &w, &h, ALIGN_LEFT | ALIGN_VCENTER);
 }
 
 void CollapsibleHeader::GetContentDimensions(const UIContext &dc, float &w, float &h) const {
@@ -833,11 +856,10 @@ void CheckBox::GetContentDimensions(const UIContext &dc, float &w, float &h) con
 	}
 
 	if (!text_.empty()) {
-		float scale = dc.CalculateTextScale(text_, availWidth, bounds_.h);
+		float scale = dc.CalculateTextScale(text_, availWidth);
 
 		float actualWidth, actualHeight;
-		Bounds availBounds(0, 0, availWidth, bounds_.h);
-		dc.MeasureTextRect(dc.GetTheme().uiFont, scale, scale, text_, availBounds, &actualWidth, &actualHeight, ALIGN_VCENTER | FLAG_WRAP_TEXT);
+		dc.MeasureTextRect(dc.GetTheme().uiFont, scale, scale, text_, availWidth, &actualWidth, &actualHeight, ALIGN_VCENTER | FLAG_WRAP_TEXT);
 		h = std::max(actualHeight, ITEM_HEIGHT);
 	} else {
 		h = std::max(imageH, ITEM_HEIGHT);
@@ -1028,28 +1050,60 @@ void ImageView::Draw(UIContext &dc) {
 
 const float bulletOffset = 25;
 
-void TextView::GetContentDimensionsBySpec(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert, float &w, float &h) const {
-	Bounds bounds(0, 0, layoutParams_->width, layoutParams_->height);
-	if (bounds.w < 0) {
-		// If there's no size, let's grow as big as we want.
-		bounds.w = horiz.size == 0 ? MAX_ITEM_SIZE : horiz.size;
-	}
-	if (bounds.h < 0) {
-		bounds.h = vert.size == 0 ? MAX_ITEM_SIZE : vert.size;
-	}
-	ApplyBoundsBySpec(bounds, horiz, vert);
-	if (bullet_) {
-		bounds.w -= bulletOffset;
-	}
-	const FontStyle *style = &dc.GetTheme().uiFont;
+void SimpleTextView::GetContentDimensions(const UIContext &dc, float &w, float &h) const {
+	dc.MeasureText(*ComputeStyle(dc), 1.0f, 1.0f, text_, &w, &h, 0);
+}
+
+void SimpleTextView::Draw(UIContext &dc) {
+	uint32_t textColor = dc.GetTheme().itemStyle.fgColor;
+	dc.SetFontStyle(*ComputeStyle(dc));
+	dc.DrawText(text_, bounds_.x, bounds_.y, textColor, 0);
+}
+
+const FontStyle *SimpleTextView::ComputeStyle(const UIContext &dc) const {
 	if (small_) {
-		style = &dc.GetTheme().uiFontSmall;
+		return &dc.GetTheme().uiFontSmall;
 	} else if (big_) {
-		style = &dc.GetTheme().uiFontBig;
+		return &dc.GetTheme().uiFontBig;
+	} else {
+		return &dc.GetTheme().uiFont;
 	}
-	dc.MeasureTextRect(*style, 1.0f, 1.0f, text_, bounds, &w, &h, textAlign_);
-	w += pad_ * 2.0f;
-	h += pad_ * 2.0f;
+}
+
+const FontStyle *GetTextStyle(const UIContext &dc, TextSize size) {
+	const FontStyle *style = &dc.GetTheme().uiFont;
+	switch (size) {
+	case TextSize::Tiny:
+		style = &dc.GetTheme().uiFontTiny;
+		break;
+	case TextSize::Small:
+		style = &dc.GetTheme().uiFontSmall;
+		break;
+	case TextSize::Big:
+		style = &dc.GetTheme().uiFontBig;
+		break;
+	default:
+		break;
+	}
+	return style;
+}
+
+void TextView::GetContentDimensionsBySpec(const UIContext &dc, MeasureSpec horiz, MeasureSpec vert, float &w, float &h) const {
+	float availWidth = layoutParams_->width;
+	if (availWidth < 0) {
+		// If there's no size, let's grow as big as we want.
+		availWidth = horiz.size == 0 ? MAX_ITEM_SIZE : horiz.size;
+	}
+	ApplyBoundBySpec(availWidth, horiz);
+	if (bullet_) {
+		availWidth -= bulletOffset;
+	}
+	const FontStyle *style = GetTextStyle(dc, textSize_);
+	float measuredW;
+	float measuredH;
+	dc.MeasureTextRect(*style, 1.0f, 1.0f, text_, availWidth, &measuredW, &measuredH, textAlign_);
+	w = measuredW + pad_.horiz();
+	h = measuredH + pad_.vert();
 	if (bullet_) {
 		w += bulletOffset;
 	}
@@ -1078,12 +1132,8 @@ void TextView::Draw(UIContext &dc) {
 		style.background.color &= 0x7fffffff;
 		dc.FillRect(style.background, bounds_);
 	}
-	const FontStyle *style = &dc.GetTheme().uiFont;
-	if (small_) {
-		style = &dc.GetTheme().uiFontSmall;
-	} else if (big_) {
-		style = &dc.GetTheme().uiFontBig;
-	}
+
+	const FontStyle *style = GetTextStyle(dc, textSize_);
 	dc.SetFontStyle(*style);
 
 	Bounds textBounds = bounds_;
@@ -1101,10 +1151,10 @@ void TextView::Draw(UIContext &dc) {
 
 	if (shadow_) {
 		uint32_t shadowColor = 0x80000000;
-		dc.DrawTextRect(text_, textBounds.Offset(1.0f + pad_, 1.0f + pad_), shadowColor, textAlign_);
+		dc.DrawTextRect(text_, textBounds.Offset(1.0f + pad_.left, 1.0f + pad_.top), shadowColor, textAlign_);
 	}
-	dc.DrawTextRect(text_, textBounds.Offset(pad_, pad_), textColor, textAlign_);
-	if (small_ || big_) {
+	dc.DrawTextRect(text_, textBounds.Offset(pad_.left, pad_.top), textColor, textAlign_);
+	if (textSize_ != TextSize::Normal) {
 		// If we changed font style, reset it.
 		dc.SetFontStyle(dc.GetTheme().uiFont);
 	}
@@ -1117,11 +1167,11 @@ bool ClickableTextView::Touch(const TouchInput &input) {
 	bool contains = bounds_.Contains(input.x, input.y);
 
 	// Ignore buttons other than the left one.
-	if ((input.flags & TOUCH_MOUSE) && (input.buttons & 1) == 0) {
+	if ((input.flags & TouchInputFlags::MOUSE) && (input.buttons & 1) == 0) {
 		return contains;
 	}
 
-	if (input.flags & TOUCH_DOWN) {
+	if (input.flags & TouchInputFlags::DOWN) {
 		if (bounds_.Contains(input.x, input.y)) {
 			if (IsFocusMovementEnabled())
 				SetFocusedView(this);
@@ -1131,12 +1181,12 @@ bool ClickableTextView::Touch(const TouchInput &input) {
 			down_ = false;
 			dragging_ = false;
 		}
-	} else if (input.flags & TOUCH_MOVE) {
+	} else if (input.flags & TouchInputFlags::MOVE) {
 		if (dragging_)
 			down_ = bounds_.Contains(input.x, input.y);
 	}
-	if (input.flags & TOUCH_UP) {
-		if ((input.flags & TOUCH_CANCEL) == 0 && dragging_ && bounds_.Contains(input.x, input.y)) {
+	if (input.flags & TouchInputFlags::UP) {
+		if ((input.flags & TouchInputFlags::CANCEL) == 0 && dragging_ && bounds_.Contains(input.x, input.y)) {
 			EventParams e{};
 			e.v = this;
 			OnClick.Trigger(e);
@@ -1233,7 +1283,7 @@ static std::string FirstLine(const std::string &text) {
 }
 
 bool TextEdit::Touch(const TouchInput &touch) {
-	if (touch.flags & TOUCH_DOWN) {
+	if (touch.flags & TouchInputFlags::DOWN) {
 		if (bounds_.Contains(touch.x, touch.y)) {
 			SetFocusedView(this, true);
 			return true;
@@ -1247,7 +1297,7 @@ bool TextEdit::Key(const KeyInput &input) {
 		return false;
 	bool textChanged = false;
 	// Process hardcoded navigation keys. These aren't chars.
-	if (input.flags & KEY_DOWN) {
+	if (input.flags & KeyInputFlags::DOWN) {
 		switch (input.keyCode) {
 		case NKCODE_CTRL_LEFT:
 		case NKCODE_CTRL_RIGHT:
@@ -1350,7 +1400,7 @@ bool TextEdit::Key(const KeyInput &input) {
 		}
 	}
 
-	if (input.flags & KEY_UP) {
+	if (input.flags & KeyInputFlags::UP) {
 		switch (input.keyCode) {
 		case NKCODE_CTRL_LEFT:
 		case NKCODE_CTRL_RIGHT:
@@ -1362,7 +1412,7 @@ bool TextEdit::Key(const KeyInput &input) {
 	}
 
 	// Process chars.
-	if (input.flags & KEY_CHAR) {
+	if (input.flags & KeyInputFlags::CHAR) {
 		const int unichar = input.keyCode;
 		if (unichar >= 0x20 && !ctrlDown_) {  // Ignore control characters.
 			// Insert it! (todo: do it with a string insert)
@@ -1439,20 +1489,20 @@ void Spinner::Draw(UIContext &dc) {
 
 bool TriggerButton::Touch(const TouchInput &input) {
 	bool contains = bounds_.Contains(input.x, input.y);
-	if (input.flags & TOUCH_DOWN) {
+	if (input.flags & TouchInputFlags::DOWN) {
 		if (contains) {
 			down_ |= 1 << input.id;
 		}
 	}
 
-	if (input.flags & TOUCH_MOVE) {
+	if (input.flags & TouchInputFlags::MOVE) {
 		if (contains)
 			down_ |= 1 << input.id;
 		else
 			down_ &= ~(1 << input.id);
 	}
 
-	if (input.flags & TOUCH_UP) {
+	if (input.flags & TouchInputFlags::UP) {
 		down_ &= ~(1 << input.id);
 	}
 
@@ -1475,7 +1525,7 @@ void TriggerButton::GetContentDimensions(const UIContext &dc, float &w, float &h
 }
 
 bool Slider::Key(const KeyInput &input) {
-	if (HasFocus() && (input.flags & (KEY_DOWN | KEY_IS_REPEAT)) == KEY_DOWN) {
+	if (HasFocus() && (input.flags & KeyInputFlags::DOWN) && !(input.flags & KeyInputFlags::IS_REPEAT)) {
 		if (ApplyKey(input.keyCode)) {
 			Clamp();
 			repeat_ = 0;
@@ -1483,7 +1533,7 @@ bool Slider::Key(const KeyInput &input) {
 			return true;
 		}
 		return false;
-	} else if ((input.flags & KEY_UP) && input.keyCode == repeatCode_) {
+	} else if ((input.flags & KeyInputFlags::UP) && input.keyCode == repeatCode_) {
 		repeat_ = -1;
 		return false;
 	} else {
@@ -1676,7 +1726,7 @@ void Slider::GetContentDimensions(const UIContext &dc, float &w, float &h) const
 }
 
 bool SliderFloat::Key(const KeyInput &input) {
-	if (HasFocus() && (input.flags & (KEY_DOWN | KEY_IS_REPEAT)) == KEY_DOWN) {
+	if (HasFocus() && (input.flags & KeyInputFlags::DOWN) && !(input.flags & KeyInputFlags::IS_REPEAT)) {
 		if (ApplyKey(input.keyCode)) {
 			Clamp();
 			repeat_ = 0;
@@ -1684,7 +1734,7 @@ bool SliderFloat::Key(const KeyInput &input) {
 			return true;
 		}
 		return false;
-	} else if ((input.flags & KEY_UP) && input.keyCode == repeatCode_) {
+	} else if ((input.flags & KeyInputFlags::UP) && input.keyCode == repeatCode_) {
 		repeat_ = -1;
 		return false;
 	} else {

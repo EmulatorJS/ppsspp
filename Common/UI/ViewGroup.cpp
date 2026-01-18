@@ -24,22 +24,22 @@
 
 namespace UI {
 
-static constexpr Size ITEM_HEIGHT = 64.f;
-
-void ApplyGravity(const Bounds &outer, const Margins &margins, float w, float h, int gravity, Bounds &inner) {
+void ApplyGravity(const Bounds &outer, const Margins &margins, float w, float h, Gravity gravity, Bounds &inner) {
 	inner.w = w;
 	inner.h = h;
 
-	switch (gravity & G_HORIZMASK) {
-	case G_LEFT: inner.x = outer.x + margins.left; break;
-	case G_RIGHT: inner.x = outer.x + outer.w - w - margins.right; break;
-	case G_HCENTER: inner.x = outer.x + (outer.w - w) * 0.5f; break;
+	switch ((Gravity)((int)gravity & (int)Gravity::G_HORIZMASK)) {
+	case Gravity::G_LEFT: inner.x = outer.x + margins.left; break;
+	case Gravity::G_RIGHT: inner.x = outer.x + outer.w - w - margins.right; break;
+	case Gravity::G_HCENTER: inner.x = outer.x + (outer.w - w) * 0.5f; break;
+	default: break;
 	}
 
-	switch (gravity & G_VERTMASK) {
-	case G_TOP: inner.y = outer.y + margins.top; break;
-	case G_BOTTOM: inner.y = outer.y + outer.h - h - margins.bottom; break;
-	case G_VCENTER: inner.y = outer.y + (outer.h - h) * 0.5f; break;
+	switch ((Gravity)((int)gravity & (int)Gravity::G_VERTMASK)) {
+	case Gravity::G_TOP: inner.y = outer.y + margins.top; break;
+	case Gravity::G_BOTTOM: inner.y = outer.y + outer.h - h - margins.bottom; break;
+	case Gravity::G_VCENTER: inner.y = outer.y + (outer.h - h) * 0.5f; break;
+	default: break;
 	}
 }
 
@@ -109,7 +109,7 @@ bool ViewGroup::Touch(const TouchInput &input) {
 		if (view->GetVisibility() == V_VISIBLE) {
 			bool touch = view->Touch(input);
 			any = any || touch;
-			if (exclusiveTouch_ && touch && (input.flags & TOUCH_DOWN)) {
+			if (exclusiveTouch_ && touch && (input.flags & TouchInputFlags::DOWN)) {
 				break;
 			}
 		}
@@ -703,7 +703,7 @@ void LinearLayout::Layout() {
 
 		const LinearLayoutParams *linLayoutParams = views_[i]->GetLayoutParams()->As<LinearLayoutParams>();
 
-		Gravity gravity = G_TOPLEFT;
+		Gravity gravity = Gravity::G_TOPLEFT;
 		Margins margins = defaultMargins_;
 		if (linLayoutParams) {
 			if (linLayoutParams->HasMargins())
@@ -805,10 +805,12 @@ void AnchorLayout::MeasureViews(const UIContext &dc, MeasureSpec horiz, MeasureS
 			width = params->width;
 			height = params->height;
 
-			if (!params->center) {
+			if (!(params->centering & Centering::Horizontal)) {
 				if (params->left > NONE && params->right > NONE) {
 					width = measuredWidth_ - params->left - params->right;
 				}
+			}
+			if (!(params->centering & Centering::Vertical)) {
 				if (params->top > NONE && params->bottom > NONE) {
 					height = measuredHeight_ - params->top - params->bottom;
 				}
@@ -839,22 +841,22 @@ static void ApplyAnchorLayoutParams(float measuredWidth, float measuredHeight, c
 	if (vBounds->h > container.h) vBounds->h = container.h;
 
 	float left = 0, top = 0, right = 0, bottom = 0;
-	bool center = false;
+	Centering centering = Centering::None;
 	if (params) {
 		left = params->left;
 		top = params->top;
 		right = params->right;
 		bottom = params->bottom;
-		center = params->center;
+		centering = params->centering;
 	}
 
 	if (left > NONE) {
 		vBounds->x = container.x + left;
-		if (center)
+		if (centering & Centering::Horizontal)
 			vBounds->x -= vBounds->w * 0.5f;
 	} else if (right > NONE) {
 		vBounds->x = container.x2() - right - vBounds->w;
-		if (center) {
+		if (centering & Centering::Horizontal) {
 			vBounds->x += vBounds->w * 0.5f;
 		}
 	} else {
@@ -864,11 +866,11 @@ static void ApplyAnchorLayoutParams(float measuredWidth, float measuredHeight, c
 
 	if (top > NONE) {
 		vBounds->y = container.y + top;
-		if (center)
+		if (centering & Centering::Vertical)
 			vBounds->y -= vBounds->h * 0.5f;
 	} else if (bottom > NONE) {
 		vBounds->y = container.y2() - bottom - vBounds->h;
-		if (center)
+		if (centering & Centering::Vertical)
 			vBounds->y += vBounds->h * 0.5f;
 	} else {
 		// Both top and bottom are NONE. Center.
@@ -927,7 +929,7 @@ void GridLayout::Layout() {
 
 		const GridLayoutParams *lp = views_[i]->GetLayoutParams()->As<GridLayoutParams>();
 		Bounds itemBounds, innerBounds;
-		Gravity grav = lp ? lp->gravity : G_CENTER;
+		Gravity grav = lp ? lp->gravity : Gravity::G_CENTER;
 
 		itemBounds.x = bounds_.x + x;
 		itemBounds.y = bounds_.y + y;
@@ -955,300 +957,6 @@ void GridLayout::Layout() {
 std::string GridLayoutList::DescribeText() const {
 	auto u = GetI18NCategory(I18NCat::UI_ELEMENTS);
 	return DescribeListOrdered(u->T("List:"));
-}
-
-TabHolder::TabHolder(Orientation orientation, float stripSize, View *bannerView, LayoutParams *layoutParams)
-	: LinearLayout(Opposite(orientation), layoutParams) {
-	SetSpacing(0.0f);
-	if (orientation == ORIENT_HORIZONTAL) {
-		tabStrip_ = new ChoiceStrip(orientation, new LayoutParams(WRAP_CONTENT, WRAP_CONTENT));
-		tabStrip_->SetTopTabs(true);
-		tabScroll_ = new ScrollView(orientation, new LayoutParams(FILL_PARENT, WRAP_CONTENT));
-		tabScroll_->Add(tabStrip_);
-		Add(tabScroll_);
-	} else {
-		tabContainer_ = new LinearLayout(ORIENT_VERTICAL, new LayoutParams(stripSize, FILL_PARENT));
-		tabStrip_ = new ChoiceStrip(orientation, new LayoutParams(FILL_PARENT, FILL_PARENT));
-		tabStrip_->SetTopTabs(true);
-		tabScroll_ = new ScrollView(orientation, new LinearLayoutParams(1.0f));
-		tabScroll_->Add(tabStrip_);
-		tabContainer_->Add(tabScroll_);
-		Add(tabContainer_);
-	}
-	tabStrip_->OnChoice.Handle(this, &TabHolder::OnTabClick);
-
-	Add(new Spacer(4.0f))->SetSeparator();
-
-	ViewGroup *contentHolder_ = new LinearLayout(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, FILL_PARENT, 1.0f));
-	if (bannerView) {
-		contentHolder_->Add(bannerView);
-		bannerView_ = bannerView;
-	}
-	contents_ = contentHolder_->Add(new AnchorLayout(new LinearLayoutParams(FILL_PARENT, FILL_PARENT, 1.0f)));
-	contents_->SetClip(true);
-	Add(contentHolder_);
-}
-
-void TabHolder::AddBack(UIScreen *parent) {
-	if (tabContainer_) {
-		auto di = GetI18NCategory(I18NCat::DIALOG);
-		tabContainer_->Add(new Choice(di->T("Back"), "", false, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, 0.0f, Margins(0, 0, 10, 10))))->OnClick.Handle<UIScreen>(parent, &UIScreen::OnBack);
-	}
-}
-
-void TabHolder::AddTabContents(std::string_view title, ViewGroup *tabContents) {
-	tabs_.push_back(tabContents);
-	tabStrip_->AddChoice(title);
-	contents_->Add(tabContents);
-	if (tabs_.size() > 1)
-		tabContents->SetVisibility(V_GONE);
-	tabContents->ReplaceLayoutParams(new AnchorLayoutParams(FILL_PARENT, FILL_PARENT));
-
-	// Will be filled in later.
-	tabTweens_.push_back(nullptr);
-	// This entry doesn't need one.
-	createFuncs_.push_back(nullptr);
-}
-
-void TabHolder::AddTabDeferred(std::string_view title, std::function<ViewGroup *()> createCb) {
-	tabs_.push_back(nullptr);  // marker
-	tabStrip_->AddChoice(title);
-	tabTweens_.push_back(nullptr);
-	createFuncs_.push_back(createCb);
-
-	if (tabs_.size() == 1) {
-		EnsureTab(0);
-	}
-}
-
-void TabHolder::EnsureAllCreated() {
-	for (int i = 0; i < createFuncs_.size(); i++) {
-		if (createFuncs_[i]) {
-			EnsureTab(i);
-			tabs_[i]->SetVisibility(i == currentTab_ ? V_VISIBLE : V_GONE);
-		}
-	}
-}
-
-bool TabHolder::EnsureTab(int index) {
-	_dbg_assert_(index >= 0 && index < createFuncs_.size());
-
-	if (!tabs_[index]) {
-		_dbg_assert_(index < createFuncs_.size());
-		_dbg_assert_(createFuncs_[index]);
-		std::function<UI::ViewGroup * ()> func;
-		createFuncs_[index].swap(func);
-
-		ViewGroup *tabContents = func();
-		tabs_[index] = tabContents;
-		contents_->Add(tabContents);
-
-		tabContents->ReplaceLayoutParams(new AnchorLayoutParams(FILL_PARENT, FILL_PARENT));
-		return true;
-	} else {
-		return false;
-	}
-}
-
-bool TabHolder::SetCurrentTab(int tab, bool skipTween) {
-	if (tab >= (int)tabs_.size()) {
-		// Ignore
-		return false;
-	}
-
-	bool created = false;
-
-	if (tab != currentTab_) {
-		_dbg_assert_(tabs_[currentTab_]);  // we should always have a tab to switch *from*.
-		created = EnsureTab(tab);
-	}
-
-	auto setupTween = [&](View *view, AnchorTranslateTween *&tween) {
-		_dbg_assert_(view != nullptr);
-		if (tween)
-			return;
-
-		tween = new AnchorTranslateTween(0.15f, bezierEaseInOut);
-		tween->Finish.Add([&](EventParams &e) {
-			e.v->SetVisibility(tabs_[currentTab_] == e.v ? V_VISIBLE : V_GONE);
-		});
-		view->AddTween(tween)->Persist();
-	};
-
-	if (tab != currentTab_) {
-		Orientation orient = Opposite(orientation_);
-		// Direction from which the new tab will come.
-		float dir = tab < currentTab_ ? -1.0f : 1.0f;
-
-		// First, setup any missing tweens.
-		setupTween(tabs_[currentTab_], tabTweens_[currentTab_]);
-		setupTween(tabs_[tab], tabTweens_[tab]);
-
-		// Currently displayed, so let's reset it.
-		if (skipTween) {
-			tabs_[currentTab_]->SetVisibility(V_GONE);
-			tabTweens_[tab]->Reset(Point2D(0.0f, 0.0f));
-			tabTweens_[tab]->Apply(tabs_[tab]);
-		} else {
-			tabTweens_[currentTab_]->Reset(Point2D(0.0f, 0.0f));
-
-			if (orient == ORIENT_HORIZONTAL) {
-				tabTweens_[tab]->Reset(Point2D(bounds_.w * dir, 0.0f));
-				tabTweens_[currentTab_]->Divert(Point2D(bounds_.w * -dir, 0.0f));
-			} else {
-				tabTweens_[tab]->Reset(Point2D(0.0f, bounds_.h * dir));
-				tabTweens_[currentTab_]->Divert(Point2D(0.0f, bounds_.h * -dir));
-			}
-			// Actually move it to the initial position now, just to avoid any flicker.
-			tabTweens_[tab]->Apply(tabs_[tab]);
-			tabTweens_[tab]->Divert(Point2D(0.0f, 0.0f));
-		}
-		tabs_[tab]->SetVisibility(V_VISIBLE);
-
-		currentTab_ = tab;
-	}
-	tabStrip_->SetSelection(tab, false);
-
-	return created;
-}
-
-void TabHolder::OnTabClick(EventParams &e) {
-	// We have e.b set when it was an explicit click action.
-	// In that case, we make the view gone and then visible - this scrolls scrollviews to the top.
-	if (e.b != 0) {
-		EnsureTab(e.a);
-		SetCurrentTab((int)e.a);
-	}
-}
-
-void TabHolder::PersistData(PersistStatus status, std::string anonId, PersistMap &storage) {
-	ViewGroup::PersistData(status, anonId, storage);
-
-	std::string tag = Tag();
-	if (tag.empty()) {
-		tag = anonId;
-	}
-
-	PersistBuffer &buffer = storage["TabHolder::" + tag];
-	switch (status) {
-	case PERSIST_SAVE:
-		buffer.resize(1);
-		buffer[0] = currentTab_;
-		break;
-
-	case PERSIST_RESTORE:
-		if (buffer.size() == 1) {
-			if (SetCurrentTab(buffer[0], true)) {
-				// Re-run PersistData. TODO: Only need to do it for the new tab.
-				ViewGroup::PersistData(status, anonId, storage);
-			}
-		}
-		break;
-	}
-}
-
-ChoiceStrip::ChoiceStrip(Orientation orientation, LayoutParams *layoutParams)
-		: LinearLayout(orientation, layoutParams) {
-	SetSpacing(0.0f);
-}
-
-void ChoiceStrip::AddChoice(std::string_view title) {
-	StickyChoice *c = new StickyChoice(title, "",
-			orientation_ == ORIENT_HORIZONTAL ?
-			nullptr :
-			new LinearLayoutParams(FILL_PARENT, ITEM_HEIGHT));
-	c->OnClick.Handle(this, &ChoiceStrip::OnChoiceClick);
-	Add(c);
-	if (selected_ == (int)views_.size() - 1)
-		c->Press();
-}
-
-void ChoiceStrip::AddChoice(ImageID buttonImage) {
-	StickyChoice *c = new StickyChoice(buttonImage,
-			orientation_ == ORIENT_HORIZONTAL ?
-			nullptr :
-			new LinearLayoutParams(FILL_PARENT, ITEM_HEIGHT));
-	c->OnClick.Handle(this, &ChoiceStrip::OnChoiceClick);
-	Add(c);
-	if (selected_ == (int)views_.size() - 1)
-		c->Press();
-}
-
-void ChoiceStrip::OnChoiceClick(EventParams &e) {
-	// Unstick the other choices that weren't clicked.
-	for (int i = 0; i < (int)views_.size(); i++) {
-		if (views_[i] != e.v) {
-			Choice(i)->Release();
-		} else {
-			selected_ = i;
-		}
-	}
-
-	EventParams e2{};
-	e2.v = views_[selected_];
-	e2.a = selected_;
-	// Set to 1 to indicate an explicit click.
-	e2.b = 1;
-	// Dispatch immediately (we're already on the UI thread as we're in an event handler).
-	OnChoice.Dispatch(e2);
-}
-
-void ChoiceStrip::SetSelection(int sel, bool triggerClick) {
-	int prevSelected = selected_;
-	StickyChoice *prevChoice = Choice(selected_);
-	if (prevChoice)
-		prevChoice->Release();
-	selected_ = sel;
-	StickyChoice *newChoice = Choice(selected_);
-	if (newChoice) {
-		newChoice->Press();
-
-		if (topTabs_ && prevSelected != selected_) {
-			EventParams e{};
-			e.v = views_[selected_];
-			e.a = selected_;
-			// Set to 0 to indicate a selection change (not a click.)
-			e.b = triggerClick ? 1 : 0;
-			OnChoice.Trigger(e);
-		}
-	}
-}
-
-void ChoiceStrip::EnableChoice(int choice, bool enabled) {
-	if (choice < (int)views_.size()) {
-		Choice(choice)->SetEnabled(enabled);
-	}
-}
-
-bool ChoiceStrip::Key(const KeyInput &input) {
-	bool ret = false;
-	if (topTabs_ && (input.flags & KEY_DOWN)) {
-		if (IsTabLeftKey(input)) {
-			if (selected_ > 0) {
-				SetSelection(selected_ - 1, true);
-				UI::PlayUISound(UI::UISound::TOGGLE_OFF);  // Maybe make specific sounds for this at some point?
-			}
-			ret = true;
-		} else if (IsTabRightKey(input)) {
-			if (selected_ < (int)views_.size() - 1) {
-				SetSelection(selected_ + 1, true);
-				UI::PlayUISound(UI::UISound::TOGGLE_ON);
-			}
-			ret = true;
-		}
-	}
-	return ret || ViewGroup::Key(input);
-}
-
-std::string ChoiceStrip::DescribeText() const {
-	auto u = GetI18NCategory(I18NCat::UI_ELEMENTS);
-	return DescribeListUnordered(u->T("Choices:"));
-}
-
-StickyChoice *ChoiceStrip::Choice(int index) {
-	if ((size_t)index < views_.size())
-		return static_cast<StickyChoice *>(views_[index]);
-	return nullptr;
 }
 
 CollapsibleSection::CollapsibleSection(std::string_view title, LayoutParams *layoutParams) : LinearLayout(ORIENT_VERTICAL, layoutParams) {

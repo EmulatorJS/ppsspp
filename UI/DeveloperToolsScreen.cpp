@@ -17,6 +17,7 @@
 
 #include <string>
 
+#include "android/jni/app-android.h"
 #include "Common/UI/View.h"
 #include "Common/UI/ViewGroup.h"
 #include "Common/System/OSD.h"
@@ -43,6 +44,7 @@
 #include "UI/GameSettingsScreen.h"
 #include "UI/OnScreenDisplay.h"
 #include "UI/IconCache.h"
+#include "UI/MiscViews.h"
 
 #if PPSSPP_PLATFORM(ANDROID)
 
@@ -152,14 +154,16 @@ void DeveloperToolsScreen::CreateGeneralTab(UI::LinearLayout *list) {
 #endif
 
 	list->Add(new Choice(dev->T("JIT debug tools")))->OnClick.Handle(this, &DeveloperToolsScreen::OnJitDebugTools);
-	list->Add(new CheckBox(&g_Config.bShowDeveloperMenu, dev->T("Show Developer Menu")));
+	list->Add(new CheckBox(&g_Config.bShowDeveloperMenu, dev->T("Show in-game developer menu")));
 
 	AddOverlayList(list, screenManager());
 
 	list->Add(new ItemHeader(sy->T("General")));
 
 	list->Add(new CheckBox(&g_Config.bEnableLogging, dev->T("Enable Logging")))->OnClick.Handle(this, &DeveloperToolsScreen::OnLoggingChanged);
-	list->Add(new Choice(dev->T("Logging Channels")))->OnClick.Handle(this, &DeveloperToolsScreen::OnLogConfig);
+	list->Add(new Choice(dev->T("Logging Channels")))->OnClick.Add([this](UI::EventParams &e) {
+		screenManager()->push(new LogConfigScreen());
+	});
 	list->Add(new CheckBox(&g_Config.bEnableFileLogging, dev->T("Log to file")))->SetEnabledPtr(&g_Config.bEnableLogging);
 	list->Add(new CheckBox(&g_Config.bLogFrameDrops, dev->T("Log Dropped Frame Statistics")));
 	if (GetGPUBackend() == GPUBackend::VULKAN) {
@@ -180,7 +184,7 @@ void DeveloperToolsScreen::CreateGeneralTab(UI::LinearLayout *list) {
 	});
 
 #if PPSSPP_PLATFORM(ANDROID)
-	static const char *framerateModes[] = { "Default", "Request 60Hz", "Force 60Hz" };
+	static const char *framerateModes[] = { "Default", "Request 60 Hz", "Force 60Hz" };
 	PopupMultiChoice *framerateMode = list->Add(new PopupMultiChoice(&g_Config.iDisplayFramerateMode, gr->T("Framerate mode"), framerateModes, 0, ARRAY_SIZE(framerateModes), I18NCat::GRAPHICS, screenManager()));
 	framerateMode->SetEnabledFunc([]() { return System_GetPropertyInt(SYSPROP_SYSTEMVERSION) >= 30; });
 	framerateMode->OnChoice.Add([](UI::EventParams &e) {
@@ -373,16 +377,18 @@ void DeveloperToolsScreen::CreateUITab(UI::LinearLayout *list) {
 	list->Add(new ItemHeader(si->T("Slider test")));
 	list->Add(new Slider(&testSliderValue_, 0, 100, 1, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT)));
 
+	static const char *positions[] = {"Bottom Left", "Bottom Center", "Bottom Right", "Top Left", "Top Center", "Top Right", "Center Left", "Center Right", "None"};
+
 	list->Add(new ItemHeader(si->T("Notification tests")));
 	list->Add(new Choice(si->T("Error")))->OnClick.Add([&](UI::EventParams &) {
 		std::string str = "Error " + CodepointToUTF8(0x1F41B) + CodepointToUTF8(0x1F41C) + CodepointToUTF8(0x1F914);
 		g_OSD.Show(OSDType::MESSAGE_ERROR, str);
 	});
 	list->Add(new Choice(si->T("Warning")))->OnClick.Add([&](UI::EventParams &) {
-		g_OSD.Show(OSDType::MESSAGE_WARNING, "Warning", "Some\nAdditional\nDetail");
+		g_OSD.Show(OSDType::MESSAGE_WARNING, "Warning, a pretty long warning heading", "Some\nAdditional\nDetail, some of which is very, very long and wide and will need line wrapping on most screens.");
 	});
 	list->Add(new Choice(si->T("Info")))->OnClick.Add([&](UI::EventParams &) {
-		g_OSD.Show(OSDType::MESSAGE_INFO, "Info");
+		g_OSD.Show(OSDType::MESSAGE_INFO, "Info, info info info info info info info info info info");
 	});
 	// This one is clickable
 	list->Add(new Choice(si->T("Success")))->OnClick.Add([&](UI::EventParams &) {
@@ -423,13 +429,14 @@ void DeveloperToolsScreen::CreateUITab(UI::LinearLayout *list) {
 		g_OSD.ShowLeaderboardTracker(1, "", false);
 	});
 
-	static const char *positions[] = {"Bottom Left", "Bottom Center", "Bottom Right", "Top Left", "Top Center", "Top Right", "Center Left", "Center Right", "None"};
-
 	list->Add(new ItemHeader(ac->T("Notifications")));
-	list->Add(new PopupMultiChoice(&g_Config.iAchievementsLeaderboardTrackerPos, ac->T("Leaderboard tracker"), positions, 0, ARRAY_SIZE(positions), I18NCat::DIALOG, screenManager()))->SetEnabledPtr(&g_Config.bAchievementsEnable);
+	list->Add(new PopupMultiChoice(&g_Config.iNotificationPos, "General notifications", positions, 0, ARRAY_SIZE(positions), I18NCat::DIALOG, screenManager()));
+	list->Add(new PopupMultiChoice(&g_Config.iAchievementsLeaderboardTrackerPos, ac->T("Leaderboard tracker"), positions, 0, ARRAY_SIZE(positions), I18NCat::DIALOG, screenManager()));
+	list->Add(new CheckBox(&pretendIngame_, ac->T("Pretend to be in-game (for testing)")));
 
 #ifdef _DEBUG
 	// Untranslated string because this is debug mode only, only for PPSSPP developers.
+	list->Add(new ItemHeader(ac->T("Assert")));
 	list->Add(new Choice("Assert"))->OnClick.Add([=](UI::EventParams &) {
 		_dbg_assert_msg_(false, "Test assert message");
 	});
@@ -467,11 +474,6 @@ void DeveloperToolsScreen::CreateGraphicsTab(UI::LinearLayout *list) {
 	list->Add(new ItemHeader(sy->T("General")));
 	list->Add(new CheckBox(&g_Config.bVendorBugChecksEnabled, dev->T("Enable driver bug workarounds")));
 	list->Add(new CheckBox(&g_Config.bShaderCache, dev->T("Enable shader cache")));
-
-	static const char *ffModes[] = { "Render all frames", "", "Frame Skipping" };
-	PopupMultiChoice *ffMode = list->Add(new PopupMultiChoice(&g_Config.iFastForwardMode, dev->T("Fast-forward mode"), ffModes, 0, ARRAY_SIZE(ffModes), I18NCat::GRAPHICS, screenManager()));
-	ffMode->SetEnabledFunc([]() { return !g_Config.bVSync; });
-	ffMode->HideChoice(1);  // not used
 
 	auto displayRefreshRate = list->Add(new PopupSliderChoice(&g_Config.iDisplayRefreshRate, 60, 1000, 60, dev->T("Display refresh rate"), 1, screenManager()));
 	displayRefreshRate->SetFormat(si->T("%d Hz"));
@@ -561,6 +563,29 @@ void DeveloperToolsScreen::CreateGraphicsTab(UI::LinearLayout *list) {
 	}
 }
 
+void DeveloperToolsScreen::CreateCrashHistoryTab(UI::LinearLayout *list) {
+	using namespace UI;
+	auto dev = GetI18NCategory(I18NCat::DEVELOPER);
+	auto di = GetI18NCategory(I18NCat::DIALOG);
+	std::vector<std::string> reports = Android_GetNativeCrashHistory(20);
+    list->Add(new ItemHeader(dev->T("Crash history")));
+	if (reports.empty()) {
+		list->Add(new TextView(di->T("None")));
+		return;
+	}
+	for (size_t i = 0; i < reports.size(); i++) {
+		std::string name = StringFromFormat("Crash %d", (int)i);
+		CollapsibleSection *section = list->Add(new CollapsibleSection(name));
+		const std::string report = reports[i];
+		if (report.size() > 150) {
+			section->Add(new Choice(di->T("Copy to clipboard"), ImageID("I_FILE_COPY")))->OnClick.Add([report](UI::EventParams&) {
+				System_CopyStringToClipboard(report);
+			});
+		}
+		section->Add(new TextView(report, FLAG_WRAP_TEXT | FLAG_DYNAMIC_ASCII, true));
+	}
+}
+
 void DeveloperToolsScreen::CreateTabs() {
 	auto dev = GetI18NCategory(I18NCat::DEVELOPER);
 	auto sy = GetI18NCategory(I18NCat::SYSTEM);
@@ -599,6 +624,14 @@ void DeveloperToolsScreen::CreateTabs() {
 		CreateMIPSTracerTab(parent);
 	});
 #endif
+//#if PPSSPP_PLATFORM(ANDROID) 
+	if (System_GetPropertyInt(SYSPROP_SYSTEMVERSION) >= 30) {
+		AddTab("Crash history", dev->T("Crash history"), [this](UI::LinearLayout *parent) {
+			CreateCrashHistoryTab(parent);
+		});
+	}
+//#endif
+
 	// Reconsider whenever recreating views.
 	hasTexturesIni_ = HasIni::MAYBE;
 }
@@ -628,10 +661,6 @@ void DeveloperToolsScreen::OnOpenTexturesIniFile(UI::EventParams &e) {
 
 		hasTexturesIni_ = HasIni::YES;
 	}
-}
-
-void DeveloperToolsScreen::OnLogConfig(UI::EventParams &e) {
-	screenManager()->push(new LogConfigScreen());
 }
 
 void DeveloperToolsScreen::OnJitDebugTools(UI::EventParams &e) {
@@ -718,9 +747,14 @@ void DeveloperToolsScreen::OnMIPSTracerClearTracer(UI::EventParams &e) {
 }
 
 void DeveloperToolsScreen::update() {
-	UIDialogScreenWithBackground::update();
+	UIBaseDialogScreen::update();
 	allowDebugger_ = !WebServerStopped(WebServerFlags::DEBUGGER);
 	canAllowDebugger_ = !WebServerStopping(WebServerFlags::DEBUGGER);
+
+	// For the UI tab's notification tests.
+	if (pretendIngame_) {
+		g_OSD.NudgeIngameNotifications();
+	}
 }
 
 void DeveloperToolsScreen::MemoryMapTest() {

@@ -219,10 +219,11 @@ void LogManager::SaveConfig(Section *section) {
 
 void LogManager::LoadConfig(const Section *section) {
 	for (int i = 0; i < (int)Log::NUMBER_OF_LOGS; i++) {
-		bool enabled = false;
-		int level = 0;
-		section->Get((std::string(g_logTypeNames[i]) + "Enabled"), &enabled, true);
-		section->Get((std::string(g_logTypeNames[i]) + "Level"), &level, (int)LogLevel::LERROR);
+		// Defaults. Get now doesn't write the output if it fails.
+		bool enabled = true;
+		int level = (int)LogLevel::LERROR;
+		section->Get((std::string(g_logTypeNames[i]) + "Enabled"), &enabled);
+		section->Get((std::string(g_logTypeNames[i]) + "Level"), &level);
 		g_log[i].enabled = enabled;
 		g_log[i].level = (LogLevel)level;
 	}
@@ -379,6 +380,10 @@ void OutputDebugStringUTF8(const char *p) {
 	INFO_LOG(Log::System, "%s", p);
 }
 
+#endif
+
+#ifdef HAVE_LIBRETRO_VFS
+#undef fprintf
 #endif
 
 void LogManager::StdioLog(const LogMessage &message) {

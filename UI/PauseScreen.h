@@ -23,10 +23,11 @@
 #include "Common/File/Path.h"
 #include "Common/UI/UIScreen.h"
 #include "Common/UI/ViewGroup.h"
-#include "UI/MiscScreens.h"
+#include "UI/BaseScreens.h"
 #include "UI/Screen.h"
+#include "UI/GameInfoCache.h"
 
-class GamePauseScreen : public UIDialogScreenWithGameBackground {
+class GamePauseScreen : public UIBaseDialogScreen {
 public:
 	GamePauseScreen(const Path &filename, bool bootPending);
 	~GamePauseScreen();
@@ -39,10 +40,10 @@ public:
 protected:
 	void CreateViews() override;
 	void update() override;
-	void CallbackDeleteConfig(bool yes);
+	UI::Margins RootMargins() const override;
 
 private:
-	void CreateSavestateControls(UI::LinearLayout *viewGroup, bool vertical);
+	void CreateSavestateControls(UI::LinearLayout *viewGroup);
 
 	void OnGameSettings(UI::EventParams &e);
 	void OnExit(UI::EventParams &e);
@@ -52,18 +53,19 @@ private:
 	void OnLoadUndo(UI::EventParams &e);
 	void OnLastSaveUndo(UI::EventParams &e);
 
-	void OnScreenshotClicked(UI::EventParams &e);
-
 	void OnCreateConfig(UI::EventParams &e);
 	void OnDeleteConfig(UI::EventParams &e);
 
 	void OnState(UI::EventParams &e);
+	void ShowContextMenu(UI::View *menuButton, bool portrait);
+
+	void AddExtraOptions(UI::ViewGroup *parent);
 
 	// hack
 	bool finishNextFrame_ = false;
 	DialogResult finishNextFrameResult_ = DR_CANCEL;
 
-	UI::Button *playButton_ = nullptr;
+	UI::Choice *playButton_ = nullptr;
 
 	// State change tracking, a bit ugly heh, but works.
 	bool lastOnline_ = false;
@@ -73,6 +75,8 @@ private:
 	bool lastDNSConfigLoaded_ = false;
 
 	bool bootPending_ = false;
+
+	std::string saveStatePrefix_;
 };
 
 std::string GetConfirmExitMessage();

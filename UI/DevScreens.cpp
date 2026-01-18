@@ -38,6 +38,7 @@
 #include "Common/Data/Encoding/Utf8.h"
 #include "Common/Net/HTTPClient.h"
 #include "Common/UI/Context.h"
+#include "Common/UI/PopupScreens.h"
 #include "Common/UI/View.h"
 #include "Common/UI/ViewGroup.h"
 #include "Common/UI/UI.h"
@@ -65,7 +66,7 @@
 #include "GPU/Debugger/Record.h"
 #include "GPU/GPUCommon.h"
 #include "GPU/GPUState.h"
-#include "UI/MiscScreens.h"
+#include "UI/BaseScreens.h"
 #include "UI/DevScreens.h"
 #include "UI/MainScreen.h"
 #include "UI/EmuScreen.h"
@@ -253,7 +254,7 @@ void LogViewScreen::UpdateLog() {
 }
 
 void LogViewScreen::update() {
-	UIDialogScreenWithBackground::update();
+	UIBaseDialogScreen::update();
 	if (toBottom_) {
 		toBottom_ = false;
 		scroll_->ScrollToBottom();
@@ -277,33 +278,34 @@ void LogViewScreen::CreateViews() {
 	UpdateLog();
 }
 
-void LogConfigScreen::CreateViews() {
+std::string_view LogConfigScreen::GetTitle() const {
+	auto dev = GetI18NCategory(I18NCat::DEVELOPER);
+	return dev->T("Logging Channels");
+}
+
+void LogConfigScreen::CreateSettingsViews(UI::ViewGroup *parent) {
 	using namespace UI;
 
 	auto di = GetI18NCategory(I18NCat::DIALOG);
 	auto dev = GetI18NCategory(I18NCat::DEVELOPER);
 
-	root_ = new ScrollView(ORIENT_VERTICAL);
+	parent->Add(new Choice(di->T("Toggle All")))->OnClick.Handle(this, &LogConfigScreen::OnToggleAll);
+	parent->Add(new Choice(di->T("Enable All")))->OnClick.Handle(this, &LogConfigScreen::OnEnableAll);
+	parent->Add(new Choice(di->T("Disable All")))->OnClick.Handle(this, &LogConfigScreen::OnDisableAll);
+	parent->Add(new Choice(dev->T("Log Level")))->OnClick.Handle(this, &LogConfigScreen::OnLogLevel);
+}
 
-	LinearLayout *vert = root_->Add(new LinearLayout(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT)));
-	vert->SetSpacing(0);
+void LogConfigScreen::CreateContentViews(UI::ViewGroup *parent) {
+	using namespace UI;
 
-	LinearLayout *topbar = new LinearLayout(ORIENT_HORIZONTAL);
-	topbar->Add(new Choice(di->T("Back")))->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
-	topbar->Add(new Choice(di->T("Toggle All")))->OnClick.Handle(this, &LogConfigScreen::OnToggleAll);
-	topbar->Add(new Choice(di->T("Enable All")))->OnClick.Handle(this, &LogConfigScreen::OnEnableAll);
-	topbar->Add(new Choice(di->T("Disable All")))->OnClick.Handle(this, &LogConfigScreen::OnDisableAll);
-	topbar->Add(new Choice(dev->T("Log Level")))->OnClick.Handle(this, &LogConfigScreen::OnLogLevel);
+	auto di = GetI18NCategory(I18NCat::DIALOG);
+	auto dev = GetI18NCategory(I18NCat::DEVELOPER);
 
-	vert->Add(topbar);
-
-	vert->Add(new ItemHeader(dev->T("Logging Channels")));
-
-	int cellSize = 400;
+	int cellSize = 350;
 
 	UI::GridLayoutSettings gridsettings(cellSize, 64, 5);
 	gridsettings.fillCells = true;
-	GridLayout *grid = vert->Add(new GridLayoutList(gridsettings, new LayoutParams(FILL_PARENT, WRAP_CONTENT)));
+	GridLayout *grid = parent->Add(new GridLayoutList(gridsettings, new LayoutParams(FILL_PARENT, WRAP_CONTENT)));
 
 	for (int i = 0; i < LogManager::GetNumChannels(); i++) {
 		Log type = (Log)i;
@@ -421,7 +423,7 @@ void JitDebugScreen::CreateViews() {
 	vert->SetSpacing(0);
 
 	LinearLayout *topbar = new LinearLayout(ORIENT_HORIZONTAL);
-	topbar->Add(new Choice(di->T("Back")))->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
+	topbar->Add(new Choice(ImageID("I_NAVIGATE_BACK")))->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
 	topbar->Add(new Choice(di->T("Disable All")))->OnClick.Handle(this, &JitDebugScreen::OnDisableAll);
 	topbar->Add(new Choice(di->T("Enable All")))->OnClick.Handle(this, &JitDebugScreen::OnEnableAll);
 
@@ -466,31 +468,23 @@ struct { DebugShaderType type; const char *name; } shaderTypes[] = {
 	{ SHADER_TYPE_SAMPLER, "Sampler" },
 };
 
-void ShaderListScreen::CreateViews() {
+void ShaderListScreen::CreateTabs() {
 	using namespace UI;
 
-	auto di = GetI18NCategory(I18NCat::DIALOG);
-
-	LinearLayout *layout = new LinearLayout(ORIENT_VERTICAL);
-	root_ = layout;
-
-	tabs_ = new TabHolder(ORIENT_HORIZONTAL, 40, nullptr, new LinearLayoutParams(1.0));
-	tabs_->SetTag("DevShaderList");
-	layout->Add(tabs_);
-	layout->Add(new Button(di->T("Back")))->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
 	for (size_t i = 0; i < ARRAY_SIZE(shaderTypes); i++) {
-		ScrollView *scroll = new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(1.0));
-		LinearLayout *shaderList = new LinearLayoutList(ORIENT_VERTICAL, new LayoutParams(FILL_PARENT, WRAP_CONTENT));
-		int count = ListShaders(shaderTypes[i].type, shaderList);
-		scroll->Add(shaderList);
-		tabs_->AddTab(StringFromFormat("%s (%d)", shaderTypes[i].name, count), scroll);
+		int count = (int)gpu->DebugGetShaderIDs(shaderTypes[i].type).size();
+		AddTab(shaderTypes[i].name, StringFromFormat("%s (%d)", shaderTypes[i].name, count), [this, i](UI::LinearLayout *tabContent) {
+			LinearLayout *shaderList = new LinearLayoutList(ORIENT_VERTICAL, new LayoutParams(FILL_PARENT, WRAP_CONTENT));
+			int count = ListShaders(shaderTypes[i].type, shaderList);
+			tabContent->Add(shaderList);
+		});
 	}
 }
 
 void ShaderListScreen::OnShaderClick(UI::EventParams &e) {
 	using namespace UI;
 	std::string id = e.v->Tag();
-	DebugShaderType type = shaderTypes[tabs_->GetCurrentTab()].type;
+	DebugShaderType type = shaderTypes[GetCurrentTab()].type;
 	screenManager()->push(new ShaderViewScreen(id, type));
 }
 
@@ -502,7 +496,13 @@ void ShaderViewScreen::CreateViews() {
 	LinearLayout *layout = new LinearLayout(ORIENT_VERTICAL);
 	root_ = layout;
 
-	layout->Add(new TextView(gpu->DebugGetShaderString(id_, type_, SHADER_STRING_SHORT_DESC), FLAG_DYNAMIC_ASCII | FLAG_WRAP_TEXT, false));
+	LinearLayout *topbar = new LinearLayout(ORIENT_HORIZONTAL);
+	topbar->Add(new Choice(ImageID("I_NAVIGATE_BACK"), new LinearLayoutParams()))->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
+	topbar->Add(new Choice(ImageID("I_FILE_COPY"), new LinearLayoutParams()))->OnClick.Add([this](UI::EventParams &e) {
+		System_CopyStringToClipboard(gpu->DebugGetShaderString(id_, type_, SHADER_STRING_SHORT_DESC));
+	});
+	topbar->Add(new TextView(gpu->DebugGetShaderString(id_, type_, SHADER_STRING_SHORT_DESC), FLAG_DYNAMIC_ASCII | FLAG_WRAP_TEXT, false));
+	layout->Add(topbar);
 
 	ScrollView *scroll = new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(1.0));
 	scroll->SetTag("DevShaderView");
@@ -518,58 +518,42 @@ void ShaderViewScreen::CreateViews() {
 	for (const auto &line : lines) {
 		lineLayout->Add(new TextView(line, FLAG_DYNAMIC_ASCII | FLAG_WRAP_TEXT, true));
 	}
-
-	layout->Add(new Button(di->T("Back")))->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
 }
 
 bool ShaderViewScreen::key(const KeyInput &ki) {
-	if (ki.flags & KEY_CHAR) {
+	if (ki.flags & KeyInputFlags::CHAR) {
 		if (ki.unicodeChar == 'C' || ki.unicodeChar == 'c') {
 			System_CopyStringToClipboard(gpu->DebugGetShaderString(id_, type_, SHADER_STRING_SHORT_DESC));
 		}
 	}
-	return UIDialogScreenWithBackground::key(ki);
+	return UIBaseDialogScreen::key(ki);
 }
 
 
 const std::string framedumpsBaseUrl = "http://framedump.ppsspp.org/repro/";
 
-FrameDumpTestScreen::FrameDumpTestScreen() {
-
-}
-
 FrameDumpTestScreen::~FrameDumpTestScreen() {
 	g_DownloadManager.CancelAll();
 }
 
-void FrameDumpTestScreen::CreateViews() {
+void FrameDumpTestScreen::CreateTabs() {
 	using namespace UI;
 
-	root_ = new AnchorLayout(new LayoutParams(FILL_PARENT, FILL_PARENT));
 	auto di = GetI18NCategory(I18NCat::DIALOG);
+	auto dev = GetI18NCategory(I18NCat::DEVELOPER);
 
-	TabHolder *tabHolder;
-	tabHolder = new TabHolder(ORIENT_VERTICAL, 200, nullptr, new AnchorLayoutParams(10, 0, 10, 0, false));
-	root_->Add(tabHolder);
-	tabHolder->AddBack(this);
-	tabHolder->SetTag("DumpTypes");
-	root_->SetDefaultFocusView(tabHolder);
+	AddTab("General", dev->T("Dumps"), [this](UI::LinearLayout *parent) {
+		parent->Add(new ItemHeader("GE Frame Dumps"));
 
-	ViewGroup *dumpsScroll = new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, FILL_PARENT));
-	dumpsScroll->SetTag("GameSettingsGraphics");
-	LinearLayout *dumps = new LinearLayoutList(ORIENT_VERTICAL);
-	dumps->SetSpacing(0);
-	dumpsScroll->Add(dumps);
-	tabHolder->AddTab("Dumps", dumpsScroll);
+		for (auto &file : files_) {
+			std::string url = framedumpsBaseUrl + file;
+			Choice *c = parent->Add(new Choice(file));
+			c->SetTag(url);
+			c->OnClick.Handle<FrameDumpTestScreen>(this, &FrameDumpTestScreen::OnLoadDump);
+		}
+	});
 
-	dumps->Add(new ItemHeader("GE Frame Dumps"));
-
-	for (auto &file : files_) {
-		std::string url = framedumpsBaseUrl + file;
-		Choice *c = dumps->Add(new Choice(file));
-		c->SetTag(url);
-		c->OnClick.Handle<FrameDumpTestScreen>(this, &FrameDumpTestScreen::OnLoadDump);
-	}
+	EnsureTabs();
 }
 
 void FrameDumpTestScreen::OnLoadDump(UI::EventParams &params) {
@@ -620,8 +604,8 @@ void FrameDumpTestScreen::update() {
 }
 
 void TouchTestScreen::touch(const TouchInput &touch) {
-	UIDialogScreenWithGameBackground::touch(touch);
-	if (touch.flags & TOUCH_DOWN) {
+	UIBaseDialogScreen::touch(touch);
+	if (touch.flags & TouchInputFlags::DOWN) {
 		bool found = false;
 		for (int i = 0; i < MAX_TOUCH_POINTS; i++) {
 			if (touches_[i].id == touch.id) {
@@ -642,7 +626,7 @@ void TouchTestScreen::touch(const TouchInput &touch) {
 			}
 		}
 	}
-	if (touch.flags & TOUCH_MOVE) {
+	if (touch.flags & TouchInputFlags::MOVE) {
 		bool found = false;
 		for (int i = 0; i < MAX_TOUCH_POINTS; i++) {
 			if (touches_[i].id == touch.id) {
@@ -655,7 +639,7 @@ void TouchTestScreen::touch(const TouchInput &touch) {
 			WARN_LOG(Log::System, "Move with buttons %d without touch down: %d", touch.buttons, touch.id);
 		}
 	}
-	if (touch.flags & TOUCH_UP) {
+	if (touch.flags & TouchInputFlags::UP) {
 		bool found = false;
 		for (int i = 0; i < MAX_TOUCH_POINTS; i++) {
 			if (touches_[i].id == touch.id) {
@@ -701,7 +685,6 @@ void TouchTestScreen::CreateViews() {
 #if PPSSPP_PLATFORM(ANDROID)
 	root_->Add(new Choice(gr->T("Recreate Activity")))->OnClick.Handle(this, &TouchTestScreen::OnRecreateActivity);
 #endif
-	root_->Add(new CheckBox(&g_Config.bImmersiveMode, gr->T("FullScreen", "Full Screen")))->OnClick.Handle(this, &TouchTestScreen::OnImmersiveModeChange);
 	root_->Add(new Button(di->T("Back"), new LinearLayoutParams(FILL_PARENT, 64, Margins(10, 0))))->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
 }
 
@@ -724,10 +707,10 @@ bool TouchTestScreen::key(const KeyInput &key) {
 	UIScreen::key(key);
 	char buf[512];
 	snprintf(buf, sizeof(buf), "%s (%d) Device ID: %d [%s%s%s%s]", KeyMap::GetKeyName(key.keyCode).c_str(), key.keyCode, key.deviceId,
-		(key.flags & KEY_IS_REPEAT) ? "REP" : "",
-		(key.flags & KEY_UP) ? "UP" : "",
-		(key.flags & KEY_DOWN) ? "DOWN" : "",
-		(key.flags & KEY_CHAR) ? "CHAR" : "");
+		(key.flags & KeyInputFlags::IS_REPEAT) ? "REP" : "",
+		(key.flags & KeyInputFlags::UP) ? "UP" : "",
+		(key.flags & KeyInputFlags::DOWN) ? "DOWN" : "",
+		(key.flags & KeyInputFlags::CHAR) ? "CHAR" : "");
 	keyEventLog_.push_back(buf);
 	UpdateLogView();
 	return true;

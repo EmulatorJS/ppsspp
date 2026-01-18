@@ -1,3 +1,5 @@
+HAVE_LIBRETRO_VFS ?= 1
+
 FFMPEGDIR		= $(CORE_DIR)/ffmpeg
 LIBRETRODIR		= $(CORE_DIR)/libretro
 COREDIR			= $(CORE_DIR)/Core
@@ -883,6 +885,7 @@ SOURCES_CXX += \
 	       $(COREDIR)/Reporting.cpp \
 	       $(COREDIR)/RetroAchievements.cpp \
 	       $(COREDIR)/SaveState.cpp \
+	       $(COREDIR)/SaveStateRewind.cpp \
 	       $(COREDIR)/Screenshot.cpp \
 	       $(COREDIR)/System.cpp \
 	       $(COREDIR)/Util/AtracTrack.cpp \
@@ -891,7 +894,9 @@ SOURCES_CXX += \
 	       $(COREDIR)/Util/PPGeDraw.cpp \
 	       $(COREDIR)/Util/RecentFiles.cpp \
 	       $(COREDIR)/Util/AudioFormat.cpp \
+	       $(COREDIR)/Util/PathUtil.cpp \
 	       $(COREDIR)/Util/PortManager.cpp \
+	       $(COREDIR)/Util/GameDB.cpp \
 	       $(CORE_DIR)/UI/GameInfoCache.cpp
 
 SOURCES_CXX += $(COREDIR)/HLE/__sceAudio.cpp
@@ -1122,19 +1127,21 @@ SOURCES_C += \
 endif
 
 ifeq ($(HAVE_LIBRETRO_VFS), 1)
-DEFINES += -DHAVE_LIBRETRO_VFS
-INCFLAGS += -I$(LIBRETROCOMMONDIR)/include
+COREFLAGS += -DHAVE_LIBRETRO_VFS
 SOURCES_C += $(LIBRETROCOMMONDIR)/compat/compat_posix_string.c \
              $(LIBRETROCOMMONDIR)/compat/fopen_utf8.c \
-             $(LIBRETROCOMMONDIR)/encodings/encoding_utf.c \
              $(LIBRETROCOMMONDIR)/compat/compat_strl.c \
+             $(LIBRETROCOMMONDIR)/encodings/encoding_utf.c \
              $(LIBRETROCOMMONDIR)/file/file_path.c \
+             $(LIBRETROCOMMONDIR)/file/file_path_io.c \
              $(LIBRETROCOMMONDIR)/streams/file_stream.c \
              $(LIBRETROCOMMONDIR)/streams/file_stream_transforms.c \
              $(LIBRETROCOMMONDIR)/string/stdstring.c \
              $(LIBRETROCOMMONDIR)/time/rtime.c \
              $(LIBRETROCOMMONDIR)/vfs/vfs_implementation.c
 endif
+
+INCFLAGS += -I$(LIBRETROCOMMONDIR)/include
 
 GIT_VERSION_SRC = $(CORE_DIR)/git-version.cpp
 GIT_VERSION := $(shell git describe --always || echo v-1.unknown)

@@ -11,7 +11,7 @@
 static void controllerButtonPressed(BOOL pressed, InputKeyCode keyCode) {
 	KeyInput key;
 	key.deviceId = DEVICE_ID_PAD_0;
-	key.flags = pressed ? KEY_DOWN : KEY_UP;
+	key.flags = pressed ? KeyInputFlags::DOWN : KeyInputFlags::UP;
 	key.keyCode = keyCode;
 	NativeKey(key);
 }
@@ -86,7 +86,6 @@ bool InitController(GCController *controller) {
 		analogTriggerPressed(JOYSTICK_AXIS_RTRIGGER, value);
 	};
 
-#if defined(__IPHONE_12_1) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_12_1
 	if ([extendedProfile respondsToSelector:@selector(leftThumbstickButton)] && extendedProfile.leftThumbstickButton != nil) {
 		extendedProfile.leftThumbstickButton.valueChangedHandler = ^(GCControllerButtonInput *button, float value, BOOL pressed) {
 			controllerButtonPressed(pressed, NKCODE_BUTTON_THUMBL);
@@ -97,8 +96,7 @@ bool InitController(GCController *controller) {
 			controllerButtonPressed(pressed, NKCODE_BUTTON_THUMBR);
 		};
 	}
-#endif
-#if defined(__IPHONE_13_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_13_0
+
 	if ([extendedProfile respondsToSelector:@selector(buttonOptions)] && extendedProfile.buttonOptions != nil) {
 		extendedProfile.buttonOptions.valueChangedHandler = ^(GCControllerButtonInput *button, float value, BOOL pressed) {
 			controllerButtonPressed(pressed, NKCODE_BUTTON_SELECT);
@@ -109,14 +107,14 @@ bool InitController(GCController *controller) {
 			controllerButtonPressed(pressed, NKCODE_BUTTON_START);
 		};
 	}
-#endif
-#if defined(__IPHONE_14_0) && __IPHONE_OS_VERSION_MAX_ALLOWED >= __IPHONE_14_0
-	if ([extendedProfile respondsToSelector:@selector(buttonHome)] && extendedProfile.buttonHome != nil) {
-		extendedProfile.buttonHome.valueChangedHandler = ^(GCControllerButtonInput *button, float value, BOOL pressed) {
-			controllerButtonPressed(pressed, NKCODE_HOME);
-		};
+
+	if (@available(iOS 14.0, *)) {
+		if ([extendedProfile respondsToSelector:@selector(buttonHome)] && extendedProfile.buttonHome != nil) {
+			extendedProfile.buttonHome.valueChangedHandler = ^(GCControllerButtonInput *button, float value, BOOL pressed) {
+				controllerButtonPressed(pressed, NKCODE_HOME);
+			};
+		}
 	}
-#endif
 
 	extendedProfile.leftThumbstick.xAxis.valueChangedHandler = ^(GCControllerAxisInput *axis, float value) {
 		AxisInput axisInput;
@@ -179,9 +177,9 @@ void TouchTracker::SendTouchEvent(float x, float y, int code, int pointerId) {
 	input.x = scaledX;
 	input.y = scaledY;
 	switch (code) {
-		case 1: input.flags = TOUCH_DOWN; break;
-		case 2: input.flags = TOUCH_UP; break;
-		default: input.flags = TOUCH_MOVE; break;
+		case 1: input.flags = TouchInputFlags::DOWN; break;
+		case 2: input.flags = TouchInputFlags::UP; break;
+		default: input.flags = TouchInputFlags::MOVE; break;
 	}
 	input.id = pointerId;
 	NativeTouch(input);
@@ -299,7 +297,7 @@ void ICadeTracker::ButtonDown(iCadeState button) {
 		NativeAxis(&axis, 1);
 	} else {
 		KeyInput key;
-		key.flags = KEY_DOWN;
+		key.flags = KeyInputFlags::DOWN;
 		key.keyCode = iCadeToKeyMap[button];
 		key.deviceId = DEVICE_ID_PAD_0;
 		NativeKey(key);
@@ -324,7 +322,7 @@ void ICadeTracker::ButtonUp(iCadeState button) {
 		// Pressing Start twice within 1 second will take to the Emu menu
 		if ((lastStartPress + 1.0f) > time_now_d()) {
 			KeyInput key;
-			key.flags = KEY_DOWN;
+			key.flags = KeyInputFlags::DOWN;
 			key.keyCode = NKCODE_ESCAPE;
 			key.deviceId = DEVICE_ID_KEYBOARD;
 			NativeKey(key);
@@ -367,7 +365,7 @@ void ICadeTracker::ButtonUp(iCadeState button) {
 		NativeAxis(&axis, 1);
 	} else {
 		KeyInput key;
-		key.flags = KEY_UP;
+		key.flags = KeyInputFlags::UP;
 		key.keyCode = iCadeToKeyMap[button];
 		key.deviceId = DEVICE_ID_PAD_0;
 		NativeKey(key);
@@ -388,7 +386,7 @@ void SendKeyboardChars(std::string_view str) {
 		uint32_t codePoint = chars.next();
 		KeyInput input{};
 		input.deviceId = DEVICE_ID_KEYBOARD;
-		input.flags = KEY_CHAR;
+		input.flags = KeyInputFlags::CHAR;
 		input.unicodeChar = codePoint;
 		NativeKey(input);
 	}
@@ -406,7 +404,7 @@ void KeyboardPressesBegan(NSSet<UIPress *> *presses, UIPressesEvent *event) {
 				KeyInput input{};
 				input.deviceId = DEVICE_ID_KEYBOARD;
 				input.keyCode = code;
-				input.flags = KEY_DOWN;
+				input.flags = KeyInputFlags::DOWN;
 				NativeKey(input);
 				INFO_LOG(Log::System, "pressesBegan %d", code);
 			}
@@ -430,7 +428,7 @@ void KeyboardPressesEnded(NSSet<UIPress *> *presses, UIPressesEvent *event) {
 				KeyInput input{};
 				input.deviceId = DEVICE_ID_KEYBOARD;
 				input.keyCode = code;
-				input.flags = KEY_UP;
+				input.flags = KeyInputFlags::UP;
 				NativeKey(input);
 				INFO_LOG(Log::System, "pressesEnded %d", code);
 			}

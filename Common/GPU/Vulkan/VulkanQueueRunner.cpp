@@ -174,7 +174,6 @@ bool VulkanQueueRunner::InitDepthStencilBuffer(VkCommandBuffer cmd, VulkanBarrie
 	return true;
 }
 
-
 void VulkanQueueRunner::DestroyBackBuffers() {
 	if (depth_.view) {
 		vulkan_->Delete().QueueDeleteImageView(depth_.view);
@@ -323,7 +322,9 @@ void VulkanQueueRunner::RunSteps(std::vector<VKRStep *> &steps, int curFrame, Fr
 					// So only acquire once.
 					if (!frameData.hasAcquired) {
 						frameData.AcquireNextImage(vulkan_);
-						SetBackbuffer(framebuffers_[frameData.curSwapchainImage], frameDataShared.swapchainImages_[frameData.curSwapchainImage].image);
+						if (frameData.hasAcquired && frameData.curSwapchainImage != (uint32_t)-1) {
+							SetBackbuffer(framebuffers_[frameData.curSwapchainImage], frameDataShared.swapchainImages_[frameData.curSwapchainImage].image);
+						}
 					}
 
 					if (!frameData.hasPresentCommands) {
@@ -551,10 +552,10 @@ void VulkanQueueRunner::ApplyMGSHack(std::vector<VKRStep *> &steps) {
 					if (rc.offset.y < minScissorY) {
 						minScissorY = rc.offset.y;
 					}
-					if (rc.offset.x + rc.extent.width > maxScissorX) {
+					if (rc.offset.x + (int)rc.extent.width > maxScissorX) {
 						maxScissorX = rc.offset.x + rc.extent.width;
 					}
-					if (rc.offset.y + rc.extent.height > maxScissorY) {
+					if (rc.offset.y + (int)rc.extent.height > maxScissorY) {
 						maxScissorY = rc.offset.y + rc.extent.height;
 					}
 					break;

@@ -26,17 +26,20 @@
 
 #include "Common/UI/View.h"
 #include "Common/UI/UIScreen.h"
+#include "Common/UI/PopupScreens.h"
 #include "Common/Data/Text/I18n.h"
 
 #include "Core/ControlMapper.h"
 
-#include "UI/MiscScreens.h"
+#include "UI/BaseScreens.h"
+#include "UI/TabbedDialogScreen.h"
+#include "UI/SimpleDialogScreen.h"
 
 class SingleControlMapper;
 
-class ControlMappingScreen : public UIDialogScreenWithGameBackground {
+class ControlMappingScreen : public UITwoPaneBaseDialogScreen {
 public:
-	explicit ControlMappingScreen(const Path &gamePath) : UIDialogScreenWithGameBackground(gamePath) {
+	ControlMappingScreen(const Path &gamePath) : UITwoPaneBaseDialogScreen(gamePath, TwoPaneFlags::SettingsInContextMenu | TwoPaneFlags::ContentsCanScroll) {
 		categoryToggles_[0] = true;
 		categoryToggles_[1] = true;
 		categoryToggles_[2] = true;
@@ -45,22 +48,24 @@ public:
 	const char *tag() const override { return "ControlMapping"; }
 
 protected:
-	void CreateViews() override;
+	void CreateSettingsViews(UI::ViewGroup *parent) override;
+	void CreateContentViews(UI::ViewGroup *parent) override;
 	void update() override;
+
+	std::string_view GetTitle() const override;
 
 private:
 	void OnAutoConfigure(UI::EventParams &params);
 
 	void dialogFinished(const Screen *dialog, DialogResult result) override;
 
-	UI::ScrollView *rightScroll_ = nullptr;
 	std::vector<SingleControlMapper *> mappers_;
 	int keyMapGeneration_ = -1;
 
 	bool categoryToggles_[10]{};
 };
 
-class KeyMappingNewKeyDialog : public PopupScreen {
+class KeyMappingNewKeyDialog : public UI::PopupScreen {
 public:
 	explicit KeyMappingNewKeyDialog(int btn, bool replace, std::function<void(KeyMap::MultiInputMapping)> callback, I18NCat i18n)
 		: PopupScreen(T(i18n, "Map Key"), "Cancel", ""), pspBtn_(btn), callback_(callback) {}
@@ -93,7 +98,7 @@ private:
 	double delayUntil_ = 0.0f;
 };
 
-class KeyMappingNewMouseKeyDialog : public PopupScreen {
+class KeyMappingNewMouseKeyDialog : public UI::PopupScreen {
 public:
 	KeyMappingNewMouseKeyDialog(int btn, bool replace, std::function<void(KeyMap::MultiInputMapping)> callback, I18NCat i18n)
 		: PopupScreen(T(i18n, "Map Mouse"), "", ""), callback_(callback) {}
@@ -120,9 +125,9 @@ private:
 
 class JoystickHistoryView;
 
-class AnalogSetupScreen : public UIDialogScreenWithGameBackground {
+class AnalogCalibrationScreen : public UITwoPaneBaseDialogScreen {
 public:
-	AnalogSetupScreen(const Path &gamePath);
+	AnalogCalibrationScreen(const Path &gamePath);
 
 	bool key(const KeyInput &key) override;
 	void axis(const AxisInput &axis) override;
@@ -132,8 +137,10 @@ public:
 	const char *tag() const override { return "AnalogSetup"; }
 
 protected:
-	void CreateViews() override;
+	void CreateSettingsViews(UI::ViewGroup *parent) override;
+	void CreateContentViews(UI::ViewGroup *parent) override;
 
+	std::string_view GetTitle() const override;
 private:
 	void OnResetToDefaults(UI::EventParams &e);
 
@@ -149,9 +156,9 @@ private:
 
 class MockPSP;
 
-class VisualMappingScreen : public UIDialogScreenWithGameBackground {
+class VisualMappingScreen : public UIBaseDialogScreen {
 public:
-	VisualMappingScreen(const Path &gamePath) : UIDialogScreenWithGameBackground(gamePath) {}
+	VisualMappingScreen(const Path &gamePath) : UIBaseDialogScreen(gamePath) {}
 
 	const char *tag() const override { return "VisualMapping"; }
 

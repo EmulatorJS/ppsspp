@@ -9,6 +9,7 @@
 #include "Common/TimeUtil.h"
 #include "Core/Loaders.h"
 #include "Core/Util/RecentFiles.h"
+#include "Core/Util/PathUtil.h"
 #include "Core/Config.h"
 
 RecentFilesManager g_recentFiles;
@@ -89,7 +90,7 @@ void RecentFilesManager::Load(const Section *recent, int maxRecent) {
 		std::string fileName;
 
 		snprintf(keyName, sizeof(keyName), "FileName%d", i);
-		if (recent->Get(keyName, &fileName, "") && !fileName.empty()) {
+		if (recent->Get(keyName, &fileName) && !fileName.empty()) {
 			newRecent.push_back(fileName);
 		}
 	}

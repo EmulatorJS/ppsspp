@@ -20,11 +20,20 @@
 #include <cstdint>
 #include <cmath>
 #include <string>
+#include <string_view>
 #ifndef _MSC_VER
 #include <strings.h>
 #endif
 #include "Common/Common.h"
 #include "Common/CommonFuncs.h"
+
+struct ConfigBlock {
+	virtual ~ConfigBlock() = default;
+	virtual bool CanResetToDefault() const { return false; }
+	// If a block returns false here (like Config itself does), resetting to default will happen by the old per-setting mechanism.
+	virtual bool ResetToDefault(std::string_view blockName) { return false; }
+	virtual size_t Size() const { return sizeof(ConfigBlock); }  // For sanity checks
+};
 
 constexpr int PSP_MODEL_FAT = 0;
 constexpr int PSP_MODEL_SLIM = 1;
@@ -34,6 +43,8 @@ constexpr int VOLUME_FULL = 10;
 constexpr int VOLUMEHI_FULL = 100;  // for newer volume params. will convert them all later
 constexpr int AUDIOSAMPLES_MIN = 0;
 constexpr int AUDIOSAMPLES_MAX = 2048;
+constexpr float NO_DEFAULT_FLOAT = -1000000.0f;
+constexpr int NO_DEFAULT_INT = -1000000;
 
 // This matches exactly the old shift-based curve.
 float Volume10ToMultiplier(int volume);
@@ -48,11 +59,11 @@ int MultiplierToVolume100(float multiplier);
 float UIScaleFactorToMultiplier(int factor);
 
 struct ConfigTouchPos {
-	float x;
-	float y;
-	float scale;
+	float x = -1.0f;
+	float y = -1.0f;
+	float scale = 1.0f;
 	// Note: Show is not used for all settings.
-	bool show;
+	bool show = true;
 };
 
 struct ConfigCustomButton {
@@ -75,8 +86,8 @@ enum {
 	ROTATION_LOCKED_HORIZONTAL = 1,
 	ROTATION_LOCKED_VERTICAL = 2,
 	ROTATION_LOCKED_HORIZONTAL180 = 3,
-	ROTATION_LOCKED_VERTICAL180 = 4,
-	ROTATION_AUTO_HORIZONTAL = 5,
+	ROTATION_LOCKED_VERTICAL180 = 4,  // Deprecated
+	ROTATION_AUTO_HORIZONTAL = 5,     // Deprecated
 };
 
 enum TextureFiltering {
@@ -122,6 +133,7 @@ enum class AudioSyncMode {
 	CLASSIC_PITCH = 1,
 };
 
+// TODO: We can make this more fine-grained.
 enum class RestoreSettingsBits : int {
 	SETTINGS = 1,
 	CONTROLS = 2,
@@ -146,16 +158,6 @@ ENUM_CLASS_BITOPS(DisableHLEFlags);
 
 std::string GPUBackendToString(GPUBackend backend);
 GPUBackend GPUBackendFromString(std::string_view backend);
-
-// Vulkan present modes, linearized. Currently in order of lowest to highest latency, hopefully won't change in the future.
-// NOTE: These values DO NOT match the flags in DrawContext caps - these are not used as a bitfield.
-enum class PresentMode {
-	Immediate = 0,  // VK_PRESENT_MODE_IMMEDIATE_KHR
-	Mailbox = 1,    // VK_PRESENT_MODE_MAILBOX_KHR
-	FifoLatestReady = 2, // VK_PRESENT_MODE_FIFO_LATEST_READY_KHR
-	FifoRelaxed = 3, // VK_PRESENT_MODE_FIFO_RELAXED_KHR
-	Fifo = 4,       // VK_PRESENT_MODE_FIFO_KHR
-};
 
 // For iIOTimingMethod.
 enum IOTimingMethods {

@@ -18,11 +18,14 @@
 #pragma once
 
 #include <functional>
+#include <string_view>
 
 #include "Common/File/Path.h"
 #include "Common/UI/UIScreen.h"
 #include "Common/UI/ViewGroup.h"
-#include "UI/MiscScreens.h"
+#include "Common/UI/TabHolder.h"
+#include "Common/UI/PopupScreens.h"
+#include "UI/BaseScreens.h"
 #include "Common/File/PathBrowser.h"
 
 enum GameBrowserFlags {
@@ -36,13 +39,14 @@ enum class BrowseFlags {
 	ARCHIVES = 4,
 	PIN = 8,
 	HOMEBREW_STORE = 16,
-	STANDARD = 1 | 2 | 4 | 8,
+	UPLOAD_BUTTON = 32,
+	STANDARD = 1 | 2 | 4 | 8 | 32,
 };
 ENUM_CLASS_BITOPS(BrowseFlags);
 
 class GameBrowser : public UI::LinearLayout {
 public:
-	GameBrowser(int token, const Path &path, BrowseFlags browseFlags, bool *gridStyle, ScreenManager *screenManager, std::string_view lastText, std::string_view lastLink, UI::LayoutParams *layoutParams = nullptr);
+	GameBrowser(int token, const Path &path, BrowseFlags browseFlags, bool portrait, bool *gridStyle, ScreenManager *screenManager, std::string_view lastText, std::string_view lastLink, UI::LayoutParams *layoutParams = nullptr);
 
 	UI::Event OnChoice;
 	UI::Event OnHoldChoice;
@@ -74,7 +78,6 @@ protected:
 private:
 	bool IsCurrentPathPinned();
 	std::vector<Path> GetPinnedPaths() const;
-	std::string GetBaseName(const std::string &path) const;
 
 	void GameButtonClick(UI::EventParams &e);
 	void GameButtonHoldClick(UI::EventParams &e);
@@ -111,12 +114,15 @@ private:
 	float lastScale_ = 1.0f;
 	bool lastLayoutWasGrid_ = true;
 	ScreenManager *screenManager_;
-	int token_;
+	int token_ = -1;
+	bool portrait_ = false;
+	Path aliasMatch_;
+	std::string aliasDisplay_;
 };
 
 class RemoteISOBrowseScreen;
 
-class MainScreen : public UIScreenWithBackground {
+class MainScreen : public UIBaseScreen {
 public:
 	MainScreen();
 	~MainScreen();
@@ -132,6 +138,11 @@ public:
 
 protected:
 	void CreateViews() override;
+	void CreateRecentTab();
+	GameBrowser *CreateBrowserTab(const Path &path, std::string_view title, std::string_view howToTitle, std::string_view howToUri, BrowseFlags browseFlags, bool *bGridView, float *scrollPos);
+	UI::ViewGroup *CreateLogoView(bool portrait, UI::LayoutParams *layoutParams);
+	void CreateMainButtons(UI::ViewGroup *parent, bool vertical);
+
 	void DrawBackground(UIContext &dc) override;
 	void update() override;
 	void sendMessage(UIMessage message, const char *value) override;
@@ -166,7 +177,6 @@ protected:
 	bool lockBackgroundAudio_ = false;
 	bool lastVertical_ = false;
 	bool confirmedTemporary_ = false;
-	UI::ScrollView *scrollAllGames_ = nullptr;
 	bool searchKeyModifier_ = false;
 	bool searchChanged_ = false;
 	std::string searchFilter_;
@@ -174,7 +184,7 @@ protected:
 	friend class RemoteISOBrowseScreen;
 };
 
-class UmdReplaceScreen : public UIDialogScreenWithBackground {
+class UmdReplaceScreen : public UIBaseDialogScreen {
 public:
 	const char *tag() const override { return "UmdReplace"; }
 
@@ -187,7 +197,7 @@ private:
 	void OnGameSettings(UI::EventParams &e);
 };
 
-class GridSettingsPopupScreen : public PopupScreen {
+class GridSettingsPopupScreen : public UI::PopupScreen {
 public:
 	GridSettingsPopupScreen(std::string_view label) : PopupScreen(label) {}
 	void CreatePopupContents(UI::ViewGroup *parent) override;

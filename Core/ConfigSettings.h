@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <unordered_map>
+
 #include "Core/ConfigValues.h"
 
 class Path;
@@ -16,8 +17,10 @@ enum class CfgFlag : u8 {
 };
 ENUM_CLASS_BITOPS(CfgFlag);
 
+struct ConfigBlock;
+
 struct ConfigSetting {
-	enum Type {
+	enum class Type {
 		TYPE_TERMINATOR,
 		TYPE_BOOL,
 		TYPE_INT,
@@ -38,32 +41,20 @@ struct ConfigSetting {
 		float f;
 		const char *s;
 		const char *p;  // not sure how much point..
-		const std::vector<std::string> *v;
+		const std::vector<std::string_view> *v;
 		ConfigTouchPos touchPos;
 		ConfigCustomButton customButton;
-	};
-	union SettingPtr {
-		bool *b;
-		int *i;
-		uint32_t *u;
-		uint64_t *lu;
-		float *f;
-		std::string *s;
-		std::vector<std::string> *v;
-		Path *p;
-		ConfigTouchPos *touchPos;
-		ConfigCustomButton *customButton;
 	};
 
 	typedef bool (*BoolDefaultCallback)();
 	typedef int (*IntDefaultCallback)();
-	typedef uint32_t(*Uint32DefaultCallback)();
-	typedef uint64_t(*Uint64DefaultCallback)();
+	typedef uint32_t (*Uint32DefaultCallback)();
+	typedef uint64_t (*Uint64DefaultCallback)();
 	typedef float (*FloatDefaultCallback)();
 	typedef std::string (*StringDefaultCallback)();
-	typedef ConfigTouchPos(*TouchPosDefaultCallback)();
-	typedef const char *(*PathDefaultCallback)();
-	typedef ConfigCustomButton(*CustomButtonDefaultCallback)();
+	typedef ConfigTouchPos (*TouchPosDefaultCallback)();
+	typedef Path (*PathDefaultCallback)();
+	typedef ConfigCustomButton (*CustomButtonDefaultCallback)();
 
 	union DefaultCallback {
 		BoolDefaultCallback b;
@@ -77,160 +68,151 @@ struct ConfigSetting {
 		CustomButtonDefaultCallback customButton;
 	};
 
-	ConfigSetting(const char *ini, bool *v, bool def, CfgFlag flags = CfgFlag::DEFAULT) noexcept
-		: iniKey_(ini), type_(TYPE_BOOL), flags_(flags) {
-		ptr_.b = v;
-		cb_.b = nullptr;
+	// The configBlock you pass in here is just to be able to calculate the offset of the setting within the block so it can be
+	// applied to other blocks.
+	ConfigSetting(std::string_view ini, ConfigBlock *configBlock, bool *v, bool def, CfgFlag flags) noexcept
+		: iniKey_(ini), type_(Type::TYPE_BOOL), flags_(flags), offset_((const char *)v - (const char *)configBlock) {
+		defaultCallback_.b = nullptr;
 		default_.b = def;
-		getPtrLUT()[v] = this;
 	}
 
-	ConfigSetting(const char *ini, int *v, int def, CfgFlag flags = CfgFlag::DEFAULT) noexcept
-		: iniKey_(ini), type_(TYPE_INT), flags_(flags) {
-		ptr_.i = v;
-		cb_.i = nullptr;
+	ConfigSetting(std::string_view ini, ConfigBlock *configBlock, bool *v, CfgFlag flags) noexcept
+		: iniKey_(ini), type_(Type::TYPE_BOOL), flags_(flags), offset_((const char *)v - (const char *)configBlock) {
+		defaultCallback_.b = nullptr;
+		default_.b = false;  // unused with this constructor
+	}
+
+	ConfigSetting(std::string_view ini, ConfigBlock *configBlock, int *v, int def, CfgFlag flags) noexcept
+		: iniKey_(ini), type_(Type::TYPE_INT), flags_(flags), offset_((const char *)v - (const char *)configBlock) {
+		defaultCallback_.i = nullptr;
 		default_.i = def;
-		getPtrLUT()[v] = this;
 	}
 
-	ConfigSetting(const char *ini, int *v, int def, std::string (*transTo)(int), int (*transFrom)(const std::string &), CfgFlag flags = CfgFlag::DEFAULT) noexcept
-		: iniKey_(ini), type_(TYPE_INT), flags_(flags), translateTo_(transTo), translateFrom_(transFrom) {
-		ptr_.i = v;
-		cb_.i = nullptr;
+	ConfigSetting(std::string_view ini, ConfigBlock *configBlock, int *v, CfgFlag flags) noexcept
+		: iniKey_(ini), type_(Type::TYPE_INT), flags_(flags), offset_((const char *)v - (const char *)configBlock) {
+		defaultCallback_.i = nullptr;
+		default_.i = 0;  // unused with this constructor
+	}
+
+	ConfigSetting(std::string_view ini, ConfigBlock *configBlock, int *v, int def, std::string (*transTo)(int), int (*transFrom)(const std::string &), CfgFlag flags) noexcept
+		: iniKey_(ini), type_(Type::TYPE_INT), flags_(flags), translateTo_(transTo), translateFrom_(transFrom), offset_((const char *)v - (const char *)configBlock) {
+		defaultCallback_.i = nullptr;
 		default_.i = def;
-		getPtrLUT()[v] = this;
 	}
 
-	ConfigSetting(const char *ini, uint32_t *v, uint32_t def, CfgFlag flags = CfgFlag::DEFAULT) noexcept
-		: iniKey_(ini), type_(TYPE_UINT32), flags_(flags) {
-		ptr_.u = v;
-		cb_.u = nullptr;
+	ConfigSetting(std::string_view ini, ConfigBlock *configBlock, uint32_t *v, uint32_t def, CfgFlag flags) noexcept
+		: iniKey_(ini), type_(Type::TYPE_UINT32), flags_(flags), offset_((const char *)v - (const char *)configBlock) {
+		defaultCallback_.u = nullptr;
 		default_.u = def;
-		getPtrLUT()[v] = this;
 	}
 
-	ConfigSetting(const char *ini, uint64_t *v, uint64_t def, CfgFlag flags = CfgFlag::DEFAULT) noexcept
-		: iniKey_(ini), type_(TYPE_UINT64), flags_(flags) {
-		ptr_.lu = v;
-		cb_.lu = nullptr;
+	ConfigSetting(std::string_view ini, ConfigBlock *configBlock, uint64_t *v, uint64_t def, CfgFlag flags) noexcept
+		: iniKey_(ini), type_(Type::TYPE_UINT64), flags_(flags), offset_((const char *)v - (const char *)configBlock) {
+		defaultCallback_.lu = nullptr;
 		default_.lu = def;
-		getPtrLUT()[v] = this;
 	}
 
-	ConfigSetting(const char *ini, float *v, float def, CfgFlag flags = CfgFlag::DEFAULT) noexcept
-		: iniKey_(ini), type_(TYPE_FLOAT), flags_(flags) {
-		ptr_.f = v;
-		cb_.f = nullptr;
+	ConfigSetting(std::string_view ini, ConfigBlock *configBlock, float *v, float def, CfgFlag flags) noexcept
+		: iniKey_(ini), type_(Type::TYPE_FLOAT), flags_(flags), offset_((const char *)v - (const char *)configBlock) {
+		defaultCallback_.f = nullptr;
 		default_.f = def;
-		getPtrLUT()[v] = this;
 	}
 
-	ConfigSetting(const char *ini, std::string *v, const char *def, CfgFlag flags = CfgFlag::DEFAULT) noexcept
-		: iniKey_(ini), type_(TYPE_STRING), flags_(flags) {
-		ptr_.s = v;
-		cb_.s = nullptr;
+	ConfigSetting(std::string_view ini, ConfigBlock *configBlock, float *v, CfgFlag flags) noexcept
+		: iniKey_(ini), type_(Type::TYPE_FLOAT), flags_(flags), offset_((const char *)v - (const char *)configBlock) {
+		defaultCallback_.f = nullptr;
+		default_.f = 0.0f;
+	}
+
+	ConfigSetting(std::string_view ini, ConfigBlock *configBlock, std::string *v, const char *def, CfgFlag flags) noexcept
+		: iniKey_(ini), type_(Type::TYPE_STRING), flags_(flags), offset_((const char *)v - (const char *)configBlock) {
+		defaultCallback_.s = nullptr;
 		default_.s = def;
-		getPtrLUT()[v] = this;
 	}
 
-	ConfigSetting(const char *ini, std::vector<std::string> *v, const std::vector<std::string> *def, CfgFlag flags = CfgFlag::DEFAULT) noexcept
-		: iniKey_(ini), type_(TYPE_STRING_VECTOR), flags_(flags) {
-		ptr_.v = v;
+	ConfigSetting(std::string_view ini, ConfigBlock *configBlock, std::vector<std::string> *v, const std::vector<std::string_view> *def, CfgFlag flags) noexcept
+		: iniKey_(ini), type_(Type::TYPE_STRING_VECTOR), flags_(flags), offset_((const char *)v - (const char *)configBlock) {
 		default_.v = def;
-		getPtrLUT()[v] = this;
 	}
 
-	ConfigSetting(const char *ini, Path *v, const char *def, CfgFlag flags = CfgFlag::DEFAULT) noexcept
-		: iniKey_(ini), type_(TYPE_PATH), flags_(flags) {
-		ptr_.p = v;
-		cb_.p = nullptr;
+	ConfigSetting(std::string_view ini, ConfigBlock *configBlock, Path *v, const char *def, CfgFlag flags) noexcept
+		: iniKey_(ini), type_(Type::TYPE_PATH), flags_(flags), offset_((const char *)v - (const char *)configBlock) {
+		defaultCallback_.p = nullptr;
 		default_.p = def;
-		getPtrLUT()[v] = this;
 	}
 
-	ConfigSetting(const char *iniX, const char *iniY, const char *iniScale, const char *iniShow, ConfigTouchPos *v, ConfigTouchPos def, CfgFlag flags = CfgFlag::DEFAULT) noexcept
-		: iniKey_(iniX), ini2_(iniY), ini3_(iniScale), ini4_(iniShow), type_(TYPE_TOUCH_POS), flags_(flags) {
-		ptr_.touchPos = v;
-		cb_.touchPos = nullptr;
+	ConfigSetting(const char *iniX, const char *iniY, const char *iniScale, const char *iniShow, ConfigBlock *configBlock, ConfigTouchPos *v, ConfigTouchPos def, CfgFlag flags) noexcept
+		: iniKey_(iniX), ini2_(iniY), ini3_(iniScale), ini4_(iniShow), type_(Type::TYPE_TOUCH_POS), flags_(flags), offset_((const char *)v - (const char *)configBlock) {
+		defaultCallback_.touchPos = nullptr;
 		default_.touchPos = def;
-		getPtrLUT()[v] = this;
 	}
 
-	ConfigSetting(const char *iniKey, const char *iniImage, const char *iniShape, const char *iniToggle, const char *iniRepeat, ConfigCustomButton *v, ConfigCustomButton def, CfgFlag flags = CfgFlag::DEFAULT) noexcept
-		: iniKey_(iniKey), ini2_(iniImage), ini3_(iniShape), ini4_(iniToggle), ini5_(iniRepeat), type_(TYPE_CUSTOM_BUTTON), flags_(flags) {
-		ptr_.customButton = v;
-		cb_.customButton = nullptr;
+	ConfigSetting(const char *iniKey, const char *iniImage, const char *iniShape, const char *iniToggle, const char *iniRepeat, ConfigBlock *configBlock, ConfigCustomButton *v, ConfigCustomButton def, CfgFlag flags) noexcept
+		: iniKey_(iniKey), ini2_(iniImage), ini3_(iniShape), ini4_(iniToggle), ini5_(iniRepeat), type_(Type::TYPE_CUSTOM_BUTTON), flags_(flags), offset_((const char *)v - (const char *)configBlock) {
+		defaultCallback_.customButton = nullptr;
 		default_.customButton = def;
-		getPtrLUT()[v] = this;
 	}
 
-	ConfigSetting(const char *ini, bool *v, BoolDefaultCallback def, CfgFlag flags = CfgFlag::DEFAULT) noexcept
-		: iniKey_(ini), type_(TYPE_BOOL), flags_(flags) {
-		ptr_.b = v;
-		cb_.b = def;
-		getPtrLUT()[v] = this;
+	ConfigSetting(std::string_view ini, ConfigBlock *configBlock, bool *v, BoolDefaultCallback def, CfgFlag flags) noexcept
+		: iniKey_(ini), type_(Type::TYPE_BOOL), flags_(flags), offset_((const char *)v - (const char *)configBlock) {
+		defaultCallback_.b = def;
 	}
 
-	ConfigSetting(const char *ini, int *v, IntDefaultCallback def, CfgFlag flags = CfgFlag::DEFAULT) noexcept
-		: iniKey_(ini), type_(TYPE_INT), flags_(flags) {
-		ptr_.i = v;
-		cb_.i = def;
-		getPtrLUT()[v] = this;
+	ConfigSetting(std::string_view ini, ConfigBlock *configBlock, int *v, IntDefaultCallback def, CfgFlag flags) noexcept
+		: iniKey_(ini), type_(Type::TYPE_INT), flags_(flags), offset_((const char *)v - (const char *)configBlock) {
+		defaultCallback_.i = def;
 	}
 
-	ConfigSetting(const char *ini, int *v, IntDefaultCallback def, std::string(*transTo)(int), int(*transFrom)(const std::string &), CfgFlag flags = CfgFlag::DEFAULT) noexcept
-		: iniKey_(ini), type_(TYPE_INT), flags_(flags), translateTo_(transTo), translateFrom_(transFrom) {
-		ptr_.i = v;
-		cb_.i = def;
-		getPtrLUT()[v] = this;
+	ConfigSetting(std::string_view ini, ConfigBlock *configBlock, int *v, IntDefaultCallback def, std::string(*transTo)(int), int(*transFrom)(const std::string &), CfgFlag flags) noexcept
+		: iniKey_(ini), type_(Type::TYPE_INT), flags_(flags), offset_((const char *)v - (const char *)configBlock), translateTo_(transTo), translateFrom_(transFrom) {
+		defaultCallback_.i = def;
 	}
 
-	ConfigSetting(const char *ini, uint32_t *v, Uint32DefaultCallback def, CfgFlag flags = CfgFlag::DEFAULT) noexcept
-		: iniKey_(ini), type_(TYPE_UINT32), flags_(flags) {
-		ptr_.u = v;
-		cb_.u = def;
-		getPtrLUT()[v] = this;
+	ConfigSetting(std::string_view ini, ConfigBlock *configBlock, uint32_t *v, Uint32DefaultCallback def, CfgFlag flags) noexcept
+		: iniKey_(ini), type_(Type::TYPE_UINT32), flags_(flags), offset_((const char *)v - (const char *)configBlock) {
+		defaultCallback_.u = def;
 	}
 
-	ConfigSetting(const char *ini, float *v, FloatDefaultCallback def, CfgFlag flags = CfgFlag::DEFAULT) noexcept
-		: iniKey_(ini), type_(TYPE_FLOAT), flags_(flags) {
-		ptr_.f = v;
-		cb_.f = def;
-		getPtrLUT()[v] = this;
+	ConfigSetting(std::string_view ini, ConfigBlock *configBlock, float *v, FloatDefaultCallback def, CfgFlag flags) noexcept
+		: iniKey_(ini), type_(Type::TYPE_FLOAT), flags_(flags), offset_((const char *)v - (const char *)configBlock) {
+		defaultCallback_.f = def;
 	}
 
-	ConfigSetting(const char *ini, std::string *v, StringDefaultCallback def, CfgFlag flags = CfgFlag::DEFAULT) noexcept
-		: iniKey_(ini), type_(TYPE_STRING), flags_(flags) {
-		ptr_.s = v;
-		cb_.s = def;
-		getPtrLUT()[v] = this;
+	ConfigSetting(std::string_view ini, ConfigBlock *configBlock, std::string *v, StringDefaultCallback def, CfgFlag flags) noexcept
+		: iniKey_(ini), type_(Type::TYPE_STRING), flags_(flags), offset_((const char *)v - (const char *)configBlock) {
+		defaultCallback_.s = def;
 	}
 
-	ConfigSetting(const char *iniX, const char *iniY, const char *iniScale, const char *iniShow, ConfigTouchPos *v, TouchPosDefaultCallback def, CfgFlag flags = CfgFlag::DEFAULT) noexcept
-		: iniKey_(iniX), ini2_(iniY), ini3_(iniScale), ini4_(iniShow), type_(TYPE_TOUCH_POS), flags_(flags) {
-		ptr_.touchPos = v;
-		cb_.touchPos = def;
-		getPtrLUT()[v] = this;
+	ConfigSetting(std::string_view iniX, const char *iniY, const char *iniScale, const char *iniShow, ConfigBlock *configBlock, ConfigTouchPos *v, TouchPosDefaultCallback def, CfgFlag flags) noexcept
+		: iniKey_(iniX), ini2_(iniY), ini3_(iniScale), ini4_(iniShow), type_(Type::TYPE_TOUCH_POS), flags_(flags), offset_((const char *)v - (const char *)configBlock) {
+		defaultCallback_.touchPos = def;
 	}
 
-	// Should actually be called ReadFromIni or something.
-	bool Get(const Section *section) const;
+	bool ReadFromIniSection(ConfigBlock *configBlock, const Section *section, bool applyDefaultIfMissing) const;
+
+	void CopyFromBlock(const ConfigBlock *other);
 
 	// Yes, this can be const because what's modified is not the ConfigSetting struct, but the value which is stored elsewhere.
 	// Should actually be called WriteToIni or something.
-	void Set(Section *section) const;
+	void WriteToIniSection(const ConfigBlock *configBlock, Section *section) const;
 
 	// If log is true, logs if the setting changed.
-	bool RestoreToDefault(bool log) const;
+	bool RestoreToDefault(ConfigBlock *configBlock, bool log) const;
 
-	void ReportSetting(UrlEncoder &data, const std::string &prefix) const;
+	void ReportSetting(const ConfigBlock *configBlock, UrlEncoder &data, const std::string &prefix) const;
 
 	// Easy flag accessors.
+	CfgFlag Flags() const { return flags_; }
 	bool PerGame() const { return flags_ & CfgFlag::PER_GAME; }
 	bool SaveSetting() const { return !(flags_ & CfgFlag::DONT_SAVE); }
 	bool Report() const { return flags_ & CfgFlag::REPORT; }
 
-	const char *iniKey_ = nullptr;
+	int GetDefaultInt() const {
+		_dbg_assert_(type_ == Type::TYPE_INT);
+		return defaultCallback_.i ? defaultCallback_.i() : default_.i;
+	}
+
+	std::string_view iniKey_;
 	const char *ini2_ = nullptr;
 	const char *ini3_ = nullptr;
 	const char *ini4_ = nullptr;
@@ -239,23 +221,20 @@ struct ConfigSetting {
 	const Type type_;
 
 	// Returns false if per-game settings are not currently used
-	static bool perGame(void *ptr);
+	static bool PerGame(void *ptr);
+
+	const void *GetVoidPtr(ConfigBlock *configBlock) const {
+		char *configBlockBase = (char *)configBlock;
+		return (const void *)(configBlockBase + offset_);
+	}
 
 private:
 	CfgFlag flags_;
-	SettingPtr ptr_{};
 	DefaultValue default_{};
-	DefaultCallback cb_{};
+	DefaultCallback defaultCallback_{};
+	u32 offset_;
 
 	// We only support transform for ints.
 	std::string (*translateTo_)(int) = nullptr;
 	int (*translateFrom_)(const std::string &) = nullptr;
-
-	static std::unordered_map<void*, ConfigSetting*>& getPtrLUT();
-};
-
-struct ConfigSectionSettings {
-	const char *section;
-	const ConfigSetting *settings;
-	size_t settingsCount;
 };

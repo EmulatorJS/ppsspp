@@ -17,6 +17,7 @@
 #include "Common/System/OSD.h"
 #include "Common/System/NativeApp.h"
 #include "Common/System/Request.h"
+#include "Common/System/Display.h"
 #include "Common/File/FileUtil.h"
 #include "Common/Log.h"
 #include "Common/Log/LogManager.h"
@@ -295,9 +296,6 @@ namespace MainWindow {
 		TranslateMenuItem(menu, ID_OPTIONS_FRAMESKIP_MENU, g_Config.bSystemControls ? L"\tF7" : L"");
 		TranslateMenuItem(menu, ID_OPTIONS_FRAMESKIP_AUTO);
 		TranslateMenuItem(menu, ID_OPTIONS_FRAMESKIP_0);
-		TranslateMenuItem(menu, ID_OPTIONS_FRAMESKIPTYPE_MENU);
-		TranslateMenuItem(menu, ID_OPTIONS_FRAMESKIPTYPE_COUNT);
-		TranslateMenuItem(menu, ID_OPTIONS_FRAMESKIPTYPE_PRCNT);
 		// Skip frameskipping 1-8..
 		TranslateMenuItem(menu, ID_OPTIONS_TEXTUREFILTERING_MENU);
 		TranslateMenuItem(menu, ID_OPTIONS_TEXTUREFILTERING_AUTO);
@@ -331,18 +329,39 @@ namespace MainWindow {
 	}
 
 	void TranslateMenus(HWND hWnd, HMENU menu) {
-		bool changed = false;
 
 		const std::string curLanguageID = g_i18nrepo.LanguageID();
 		if (curLanguageID != menuLanguageID || KeyMap::HasChanged(menuKeymapGeneration)) {
 			DoTranslateMenus(hWnd, menu);
 			menuLanguageID = curLanguageID;
-			changed = true;
 		}
 
-		if (changed) {
-			DrawMenuBar(hWnd);
+		// Dynamically create the save state slot selector menu.
+		// TODO: In the future, maybe change it to separate save and load submenus?
+		HMENU fileMenu = GetSubmenuById(menu, ID_FILE_MENU);
+		HMENU saveStateSlots = GetSubmenuById(fileMenu, ID_FILE_SAVESTATE_SLOT_MENU);
+		while (GetMenuItemCount(saveStateSlots) > 0) {
+			RemoveMenu(saveStateSlots, 0, MF_BYPOSITION);
 		}
+
+		auto di = GetI18NCategory(I18NCat::DIALOG);
+		// Add new items
+		for (int i = 0; i < g_Config.iSaveStateSlotCount; ++i) {
+			std::string number = StringFromFormat("%d", i + 1);
+			if (i < 10) {
+				// Add an accelerator for the first 10 slots.
+				number = "&" + number;
+			}
+			std::string label = ApplySafeSubstitutions(di->T("Slot %1"), number);
+			AppendMenu(
+				saveStateSlots,
+				MF_STRING,
+				ID_FILE_SAVESTATE_SLOT_BASE + i,
+				ConvertUTF8ToWString(label).c_str()
+			);
+		}
+
+		DrawMenuBar(hWnd);
 	}
 
 	void BrowseAndBootDone(std::string filename);
@@ -437,26 +456,6 @@ namespace MainWindow {
 		g_OSD.Show(OSDType::MESSAGE_INFO, messageStream.str());
 	}
 
-	static void setFrameSkippingType(int fskipType = -1) {
-		if (fskipType >= 0 && fskipType <= 1) {
-			g_Config.iFrameSkipType = fskipType;
-		} else {
-			g_Config.iFrameSkipType = 0;
-		}
-
-		auto gr = GetI18NCategory(I18NCat::GRAPHICS);
-
-		std::ostringstream messageStream;
-		messageStream << gr->T("Frame Skipping Type") << ":" << " ";
-
-		if (g_Config.iFrameSkipType == 0)
-			messageStream << gr->T("Number of Frames");
-		else
-			messageStream << gr->T("Percent of FPS");
-
-		g_OSD.Show(OSDType::MESSAGE_INFO, messageStream.str());
-	}
-
 	static void RestartApp() {
 		if (System_GetPropertyBool(SYSPROP_DEBUGGER_PRESENT)) {
 			PostMessage(MainWindow::GetHWND(), WM_USER_RESTART_EMUTHREAD, 0, 0);
@@ -533,10 +532,30 @@ namespace MainWindow {
 			UmdSwitchAction(NON_EPHEMERAL_TOKEN);
 			break;
 
-		case ID_EMULATION_ROTATION_H:   g_Config.iInternalScreenRotation = ROTATION_LOCKED_HORIZONTAL; break;
-		case ID_EMULATION_ROTATION_V:   g_Config.iInternalScreenRotation = ROTATION_LOCKED_VERTICAL; break;
-		case ID_EMULATION_ROTATION_H_R: g_Config.iInternalScreenRotation = ROTATION_LOCKED_HORIZONTAL180; break;
-		case ID_EMULATION_ROTATION_V_R: g_Config.iInternalScreenRotation = ROTATION_LOCKED_VERTICAL180; break;
+		case ID_EMULATION_ROTATION_H:
+		{
+			DisplayLayoutConfig &displayLayoutConfig = g_Config.GetDisplayLayoutConfig(g_display.GetDeviceOrientation());
+			displayLayoutConfig.iInternalScreenRotation = ROTATION_LOCKED_HORIZONTAL;
+			break;
+		}
+		case ID_EMULATION_ROTATION_V:
+		{
+			DisplayLayoutConfig &displayLayoutConfig = g_Config.GetDisplayLayoutConfig(g_display.GetDeviceOrientation());
+			displayLayoutConfig.iInternalScreenRotation = ROTATION_LOCKED_VERTICAL;
+			break;
+		}
+		case ID_EMULATION_ROTATION_H_R:
+		{
+			DisplayLayoutConfig &displayLayoutConfig = g_Config.GetDisplayLayoutConfig(g_display.GetDeviceOrientation());
+			displayLayoutConfig.iInternalScreenRotation = ROTATION_LOCKED_HORIZONTAL180;
+			break;
+		}
+		case ID_EMULATION_ROTATION_V_R:
+		{
+			DisplayLayoutConfig &displayLayoutConfig = g_Config.GetDisplayLayoutConfig(g_display.GetDeviceOrientation());
+			displayLayoutConfig.iInternalScreenRotation = ROTATION_LOCKED_VERTICAL180;
+			break;
+		}
 
 		case ID_EMULATION_CHEATS:
 			g_Config.bEnableCheats = !g_Config.bEnableCheats;
@@ -587,20 +606,10 @@ namespace MainWindow {
 			break;
 		}
 
-		case ID_FILE_SAVESTATE_SLOT_1:
-		case ID_FILE_SAVESTATE_SLOT_2:
-		case ID_FILE_SAVESTATE_SLOT_3:
-		case ID_FILE_SAVESTATE_SLOT_4:
-		case ID_FILE_SAVESTATE_SLOT_5:
-			if (!Achievements::WarnUserIfHardcoreModeActive(true) && !NetworkWarnUserIfOnlineAndCantSavestate()) {
-				g_Config.iCurrentStateSlot = wmId - ID_FILE_SAVESTATE_SLOT_1;
-			}
-			break;
-
 		case ID_FILE_QUICKLOADSTATE:
 			if (!Achievements::WarnUserIfHardcoreModeActive(false) && !NetworkWarnUserIfOnlineAndCantSavestate()) {
 				SetCursor(LoadCursor(0, IDC_WAIT));
-				SaveState::LoadSlot(PSP_CoreParameter().fileToStart, g_Config.iCurrentStateSlot, SaveStateActionFinished);
+				SaveState::LoadSlot(SaveState::GetGamePrefix(g_paramSFO), g_Config.iCurrentStateSlot, SaveStateActionFinished);
 			}
 			break;
 
@@ -609,7 +618,7 @@ namespace MainWindow {
 			if (!Achievements::WarnUserIfHardcoreModeActive(false) && !NetworkWarnUserIfOnlineAndCantSavestate()) {
 				if (!KeyMap::PspButtonHasMappings(VIRTKEY_LOAD_STATE)) {
 					SetCursor(LoadCursor(0, IDC_WAIT));
-					SaveState::LoadSlot(PSP_CoreParameter().fileToStart, g_Config.iCurrentStateSlot, SaveStateActionFinished);
+					SaveState::LoadSlot(SaveState::GetGamePrefix(g_paramSFO), g_Config.iCurrentStateSlot, SaveStateActionFinished);
 				}
 			}
 			break;
@@ -618,7 +627,7 @@ namespace MainWindow {
 		{
 			if (!Achievements::WarnUserIfHardcoreModeActive(true) && !NetworkWarnUserIfOnlineAndCantSavestate()) {
 				SetCursor(LoadCursor(0, IDC_WAIT));
-				SaveState::SaveSlot(PSP_CoreParameter().fileToStart, g_Config.iCurrentStateSlot, SaveStateActionFinished);
+				SaveState::SaveSlot(SaveState::GetGamePrefix(g_paramSFO), g_Config.iCurrentStateSlot, SaveStateActionFinished);
 			}
 			break;
 		}
@@ -629,7 +638,7 @@ namespace MainWindow {
 				if (!KeyMap::PspButtonHasMappings(VIRTKEY_SAVE_STATE))
 				{
 					SetCursor(LoadCursor(0, IDC_WAIT));
-					SaveState::SaveSlot(PSP_CoreParameter().fileToStart, g_Config.iCurrentStateSlot, SaveStateActionFinished);
+					SaveState::SaveSlot(SaveState::GetGamePrefix(g_paramSFO), g_Config.iCurrentStateSlot, SaveStateActionFinished);
 					break;
 				}
 			}
@@ -758,9 +767,6 @@ namespace MainWindow {
 		case ID_OPTIONS_FRAMESKIP_6:    setFrameSkipping(FRAMESKIP_6); break;
 		case ID_OPTIONS_FRAMESKIP_7:    setFrameSkipping(FRAMESKIP_7); break;
 		case ID_OPTIONS_FRAMESKIP_8:    setFrameSkipping(FRAMESKIP_MAX); break;
-
-		case ID_OPTIONS_FRAMESKIPTYPE_COUNT:    setFrameSkippingType(FRAMESKIPTYPE_COUNT); break;
-		case ID_OPTIONS_FRAMESKIPTYPE_PRCNT:    setFrameSkippingType(FRAMESKIPTYPE_PRCNT); break;
 
 		case ID_FILE_EXIT:
 			if (MainWindow::ConfirmAction(hWnd, false)) {
@@ -898,8 +904,18 @@ namespace MainWindow {
 
 		case ID_OPTIONS_SMART2DTEXTUREFILTERING: g_Config.bSmart2DTexFiltering = !g_Config.bSmart2DTexFiltering; break;
 
-		case ID_OPTIONS_BUFLINEARFILTER:  g_Config.iDisplayFilter = SCALE_LINEAR; break;
-		case ID_OPTIONS_BUFNEARESTFILTER: g_Config.iDisplayFilter = SCALE_NEAREST; break;
+		case ID_OPTIONS_BUFLINEARFILTER:
+		{
+			DisplayLayoutConfig &displayLayoutConfig = g_Config.GetDisplayLayoutConfig(g_display.GetDeviceOrientation());
+			displayLayoutConfig.iDisplayFilter = SCALE_LINEAR;
+			break;
+		}
+		case ID_OPTIONS_BUFNEARESTFILTER:
+		{
+			DisplayLayoutConfig &displayLayoutConfig = g_Config.GetDisplayLayoutConfig(g_display.GetDeviceOrientation());
+			displayLayoutConfig.iDisplayFilter = SCALE_NEAREST;
+			break;
+		}
 
 		case ID_OPTIONS_TOPMOST:
 			g_Config.bTopMost = !g_Config.bTopMost;
@@ -973,6 +989,13 @@ namespace MainWindow {
 			break;
 
 		default:
+			if (!Achievements::WarnUserIfHardcoreModeActive(true) && !NetworkWarnUserIfOnlineAndCantSavestate()) {
+				if (wmId >= ID_FILE_SAVESTATE_SLOT_BASE && wmId < ID_FILE_SAVESTATE_SLOT_BASE + g_Config.iSaveStateSlotCount) {
+					g_Config.iCurrentStateSlot = wmId - ID_FILE_SAVESTATE_SLOT_BASE;
+				}
+				break;
+			}
+
 #ifdef RC_CLIENT_SUPPORTS_RAINTEGRATION
 			if (rc_client_raintegration_activate_menu_item(Achievements::GetClient(), LOWORD(wParam))) {
 				break;
@@ -1027,8 +1050,6 @@ namespace MainWindow {
 		CHECKITEM(ID_DEBUG_BREAKONLOAD, !g_Config.bAutoRun);
 		CHECKITEM(ID_OPTIONS_FRAMESKIP_AUTO, g_Config.bAutoFrameSkip);
 		CHECKITEM(ID_OPTIONS_FRAMESKIP, g_Config.iFrameSkip != FRAMESKIP_OFF);
-		CHECKITEM(ID_OPTIONS_FRAMESKIPTYPE_COUNT, g_Config.iFrameSkipType == FRAMESKIPTYPE_COUNT);
-		CHECKITEM(ID_OPTIONS_FRAMESKIPTYPE_PRCNT, g_Config.iFrameSkipType == FRAMESKIPTYPE_PRCNT);
 		CHECKITEM(ID_OPTIONS_VSYNC, g_Config.bVSync);
 		CHECKITEM(ID_OPTIONS_TOPMOST, g_Config.bTopMost);
 		CHECKITEM(ID_OPTIONS_PAUSE_FOCUS, g_Config.bPauseOnLostFocus);
@@ -1049,14 +1070,17 @@ namespace MainWindow {
 			ID_EMULATION_ROTATION_H_R,
 			ID_EMULATION_ROTATION_V_R
 		};
-		if (g_Config.iInternalScreenRotation < ROTATION_LOCKED_HORIZONTAL)
-			g_Config.iInternalScreenRotation = ROTATION_LOCKED_HORIZONTAL;
 
-		else if (g_Config.iInternalScreenRotation > ROTATION_LOCKED_VERTICAL180)
-			g_Config.iInternalScreenRotation = ROTATION_LOCKED_VERTICAL180;
+		DisplayLayoutConfig &displayLayoutConfig = g_Config.GetDisplayLayoutConfig(g_display.GetDeviceOrientation());
+
+		if (displayLayoutConfig.iInternalScreenRotation < ROTATION_LOCKED_HORIZONTAL)
+			displayLayoutConfig.iInternalScreenRotation = ROTATION_LOCKED_HORIZONTAL;
+
+		else if (displayLayoutConfig.iInternalScreenRotation > ROTATION_LOCKED_VERTICAL180)
+			displayLayoutConfig.iInternalScreenRotation = ROTATION_LOCKED_VERTICAL180;
 
 		for (int i = 0; i < ARRAY_SIZE(displayrotationitems); i++) {
-			CheckMenuItem(menu, displayrotationitems[i], MF_BYCOMMAND | ((i + 1) == g_Config.iInternalScreenRotation ? MF_CHECKED : MF_UNCHECKED));
+			CheckMenuItem(menu, displayrotationitems[i], MF_BYCOMMAND | ((i + 1) == displayLayoutConfig.iInternalScreenRotation ? MF_CHECKED : MF_UNCHECKED));
 		}
 
 		static const int zoomitems[11] = {
@@ -1098,8 +1122,8 @@ namespace MainWindow {
 		RECT rc;
 		GetClientRect(GetHWND(), &rc);
 
-		int checkW = g_Config.IsPortrait() ? 272 : 480;
-		int checkH = g_Config.IsPortrait() ? 480 : 272;
+		int checkW = displayLayoutConfig.InternalRotationIsPortrait() ? 272 : 480;
+		int checkH = displayLayoutConfig.InternalRotationIsPortrait() ? 480 : 272;
 
 		for (int i = 0; i < ARRAY_SIZE(windowSizeItems); i++) {
 			bool check = (i + 1) * checkW == rc.right - rc.left || (i + 1) * checkH == rc.bottom - rc.top;
@@ -1168,14 +1192,14 @@ namespace MainWindow {
 			ID_OPTIONS_BUFLINEARFILTER,
 			ID_OPTIONS_BUFNEARESTFILTER,
 		};
-		if (g_Config.iDisplayFilter < SCALE_LINEAR)
-			g_Config.iDisplayFilter = SCALE_LINEAR;
+		if (displayLayoutConfig.iDisplayFilter < SCALE_LINEAR)
+			displayLayoutConfig.iDisplayFilter = SCALE_LINEAR;
 
-		else if (g_Config.iDisplayFilter > SCALE_NEAREST)
-			g_Config.iDisplayFilter = SCALE_NEAREST;
+		else if (displayLayoutConfig.iDisplayFilter > SCALE_NEAREST)
+			displayLayoutConfig.iDisplayFilter = SCALE_NEAREST;
 
 		for (int i = 0; i < ARRAY_SIZE(bufferfilteritems); i++) {
-			CheckMenuItem(menu, bufferfilteritems[i], MF_BYCOMMAND | ((i + 1) == g_Config.iDisplayFilter ? MF_CHECKED : MF_UNCHECKED));
+			CheckMenuItem(menu, bufferfilteritems[i], MF_BYCOMMAND | ((i + 1) == displayLayoutConfig.iDisplayFilter ? MF_CHECKED : MF_UNCHECKED));
 		}
 
 		static const int frameskipping[] = {
@@ -1190,11 +1214,6 @@ namespace MainWindow {
 			ID_OPTIONS_FRAMESKIP_8,
 		};
 
-		static const int frameskippingType[] = {
-			ID_OPTIONS_FRAMESKIPTYPE_COUNT,
-			ID_OPTIONS_FRAMESKIPTYPE_PRCNT,
-		};
-
 		if (g_Config.iFrameSkip < FRAMESKIP_OFF)
 			g_Config.iFrameSkip = FRAMESKIP_OFF;
 
@@ -1205,26 +1224,14 @@ namespace MainWindow {
 			CheckMenuItem(menu, frameskipping[i], MF_BYCOMMAND | ((i == g_Config.iFrameSkip) ? MF_CHECKED : MF_UNCHECKED));
 		}
 
-		for (int i = 0; i < ARRAY_SIZE(frameskippingType); i++) {
-			CheckMenuItem(menu, frameskippingType[i], MF_BYCOMMAND | ((i == g_Config.iFrameSkipType) ? MF_CHECKED : MF_UNCHECKED));
-		}
-
-		static const int savestateSlot[] = {
-			ID_FILE_SAVESTATE_SLOT_1,
-			ID_FILE_SAVESTATE_SLOT_2,
-			ID_FILE_SAVESTATE_SLOT_3,
-			ID_FILE_SAVESTATE_SLOT_4,
-			ID_FILE_SAVESTATE_SLOT_5,
-		};
-
 		if (g_Config.iCurrentStateSlot < 0)
 			g_Config.iCurrentStateSlot = 0;
 
-		else if (g_Config.iCurrentStateSlot >= SaveState::NUM_SLOTS)
-			g_Config.iCurrentStateSlot = SaveState::NUM_SLOTS - 1;
+		else if (g_Config.iCurrentStateSlot >= g_Config.iSaveStateSlotCount)
+			g_Config.iCurrentStateSlot = g_Config.iSaveStateSlotCount - 1;
 
-		for (int i = 0; i < ARRAY_SIZE(savestateSlot); i++) {
-			CheckMenuItem(menu, savestateSlot[i], MF_BYCOMMAND | ((i == g_Config.iCurrentStateSlot) ? MF_CHECKED : MF_UNCHECKED));
+		for (int i = 0; i < g_Config.iSaveStateSlotCount; i++) {
+			CheckMenuItem(menu, ID_FILE_SAVESTATE_SLOT_BASE + i, MF_BYCOMMAND | ((i == g_Config.iCurrentStateSlot) ? MF_CHECKED : MF_UNCHECKED));
 		}
 
 #if !PPSSPP_API(ANY_GL)
@@ -1236,9 +1243,9 @@ namespace MainWindow {
 
 	// This one is pretty expensive so we handle it separately.
 	static void UpdateBackendSubMenu(HMENU menu) {
-		bool allowD3D11 = g_Config.IsBackendEnabled(GPUBackend::DIRECT3D11);
-		bool allowOpenGL = g_Config.IsBackendEnabled(GPUBackend::OPENGL);
-		bool allowVulkan = g_Config.IsBackendEnabled(GPUBackend::VULKAN);
+		const bool allowD3D11 = g_Config.IsBackendEnabled(GPUBackend::DIRECT3D11);
+		const bool allowOpenGL = g_Config.IsBackendEnabled(GPUBackend::OPENGL);
+		const bool allowVulkan = g_Config.IsBackendEnabled(GPUBackend::VULKAN);
 
 		switch (GetGPUBackend()) {
 		case GPUBackend::OPENGL:

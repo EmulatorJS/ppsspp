@@ -25,7 +25,8 @@
 #include "Common/File/DirListing.h"
 #include "Common/Log/LogManager.h"
 #include "Common/File/VFS/VFS.h"
-
+#include "Common/Data/Text/I18n.h"
+#include "Common/Render/Text/draw_text.h"
 #include "Core/Config.h"
 
 #include "Common/UI/View.h"
@@ -125,33 +126,37 @@ static void LoadThemeInfo(const std::vector<Path> &directories) {
 				}
 
 				ThemeInfo info;
-				section.Get("Name", &info.name, section.name().c_str());
+				info.name = section.name();
+				section.Get("Name", &info.name);
 
-				section.Get("ItemStyleFg", &info.uItemStyleFg, info.uItemStyleFg);
-				section.Get("ItemStyleBg", &info.uItemStyleBg, info.uItemStyleBg);
-				section.Get("ItemFocusedStyleFg", &info.uItemFocusedStyleFg, info.uItemFocusedStyleFg);
-				section.Get("ItemFocusedStyleBg", &info.uItemFocusedStyleBg, info.uItemFocusedStyleBg);
-				section.Get("ItemDownStyleFg", &info.uItemDownStyleFg, info.uItemDownStyleFg);
-				section.Get("ItemDownStyleBg", &info.uItemDownStyleBg, info.uItemDownStyleBg);
-				section.Get("ItemDisabledStyleFg", &info.uItemDisabledStyleFg, info.uItemDisabledStyleFg);
-				section.Get("ItemDisabledStyleBg", &info.uItemDisabledStyleBg, info.uItemDisabledStyleBg);
+				section.Get("ItemStyleFg", &info.uItemStyleFg);
+				section.Get("ItemStyleBg", &info.uItemStyleBg);
+				section.Get("ItemFocusedStyleFg", &info.uItemFocusedStyleFg);
+				section.Get("ItemFocusedStyleBg", &info.uItemFocusedStyleBg);
+				section.Get("ItemDownStyleFg", &info.uItemDownStyleFg);
+				section.Get("ItemDownStyleBg", &info.uItemDownStyleBg);
+				section.Get("ItemDisabledStyleFg", &info.uItemDisabledStyleFg);
+				section.Get("ItemDisabledStyleBg", &info.uItemDisabledStyleBg);
 
-				section.Get("HeaderStyleFg", &info.uHeaderStyleFg, info.uHeaderStyleFg);
-				section.Get("HeaderStyleBg", &info.uHeaderStyleBg, info.uHeaderStyleBg);
-				section.Get("InfoStyleFg", &info.uInfoStyleFg, info.uInfoStyleFg);
-				section.Get("InfoStyleBg", &info.uInfoStyleBg, info.uInfoStyleBg);
-				section.Get("PopupStyleFg", &info.uPopupStyleFg, info.uItemStyleFg);  // Backwards compat
-				section.Get("PopupStyleBg", &info.uPopupStyleBg, info.uPopupStyleBg);
-				section.Get("TooltipStyleFg", &info.uTooltipStyleFg, info.uTooltipStyleFg);  // Backwards compat
-				section.Get("TooltipStyleBg", &info.uTooltipStyleBg, info.uTooltipStyleBg);
-				section.Get("PopupTitleStyleFg", &info.uPopupTitleStyleFg, info.uItemStyleFg);  // Backwards compat
-				section.Get("PopupTitleStyleBg", &info.uPopupTitleStyleBg, info.uPopupTitleStyleBg);
-				section.Get("CollapsibleHeaderStyleFg", &info.uCollapsibleHeaderStyleFg, info.uItemStyleFg);  // Backwards compat
-				section.Get("CollapsibleHeaderStyleBg", &info.uCollapsibleHeaderStyleBg, info.uItemStyleBg);
-				section.Get("BackgroundColor", &info.uBackgroundColor, info.uBackgroundColor);
-				section.Get("ScrollbarColor", &info.uScrollbarColor, info.uScrollbarColor);
-				section.Get("PopupSliderColor", &info.uPopupSliderColor, info.uPopupSliderColor);
-				section.Get("PopupSliderFocusedColor", &info.uPopupSliderFocusedColor, info.uPopupSliderFocusedColor);
+				section.Get("HeaderStyleFg", &info.uHeaderStyleFg);
+				section.Get("HeaderStyleBg", &info.uHeaderStyleBg);
+				section.Get("InfoStyleFg", &info.uInfoStyleFg);
+				section.Get("InfoStyleBg", &info.uInfoStyleBg);
+				section.Get("PopupStyleFg", &info.uPopupStyleFg);  // Backwards compat
+				section.Get("PopupStyleBg", &info.uPopupStyleBg);
+				section.Get("TooltipStyleFg", &info.uTooltipStyleFg);  // Backwards compat
+				section.Get("TooltipStyleBg", &info.uTooltipStyleBg);
+				info.uPopupTitleStyleFg = info.uItemStyleFg;
+				section.Get("PopupTitleStyleFg", &info.uPopupTitleStyleFg);
+				section.Get("PopupTitleStyleBg", &info.uPopupTitleStyleBg);
+				info.uCollapsibleHeaderStyleFg = info.uInfoStyleFg;
+				info.uCollapsibleHeaderStyleBg = info.uInfoStyleBg;
+				section.Get("CollapsibleHeaderStyleFg", &info.uCollapsibleHeaderStyleFg);  // Backwards compat
+				section.Get("CollapsibleHeaderStyleBg", &info.uCollapsibleHeaderStyleBg);
+				section.Get("BackgroundColor", &info.uBackgroundColor);
+				section.Get("ScrollbarColor", &info.uScrollbarColor);
+				section.Get("PopupSliderColor", &info.uPopupSliderColor);
+				section.Get("PopupSliderFocusedColor", &info.uPopupSliderFocusedColor);
 
 				appendTheme(info);
 			}
@@ -194,15 +199,21 @@ void UpdateTheme() {
 		}
 	}
 
-#if defined(USING_WIN_UI) || PPSSPP_PLATFORM(UWP) || defined(USING_QT_UI)
-	ui_theme.uiFont = UI::FontStyle(FontID("UBUNTU24"), g_Config.sFont.c_str(), 22);
-	ui_theme.uiFontSmall = UI::FontStyle(FontID("UBUNTU24"), g_Config.sFont.c_str(), 17);
-	ui_theme.uiFontBig = UI::FontStyle(FontID("UBUNTU24"), g_Config.sFont.c_str(), 28);
-#else
-	ui_theme.uiFont = UI::FontStyle(FontID("UBUNTU24"), "", 20);
-	ui_theme.uiFontSmall = UI::FontStyle(FontID("UBUNTU24"), "", 15);
-	ui_theme.uiFontBig = UI::FontStyle(FontID("UBUNTU24"), "", 26);
-#endif
+	// Desktop font override support
+	auto des = GetI18NCategory(I18NCat::DESKTOPUI);
+	std::string_view fontOverride = des->T("Font", "");
+	if (fontOverride == "Font") {
+		fontOverride = "";
+	}
+	if (!fontOverride.empty()) {
+		SetFontNameOverride(FontFamily::SansSerif, fontOverride);
+	}
+
+	ui_theme.uiFontTiny = FontStyle(FontFamily::SansSerif, 14, FontStyleFlags::Default);
+	ui_theme.uiFontSmall = FontStyle(FontFamily::SansSerif, 17, FontStyleFlags::Default);
+	ui_theme.uiFont = FontStyle(FontFamily::SansSerif, 22, FontStyleFlags::Default);
+	ui_theme.uiFontBig = FontStyle(FontFamily::SansSerif, 28, FontStyleFlags::Bold);
+	ui_theme.uiFontCode = FontStyle(FontFamily::Fixed, 14, FontStyleFlags::Default);
 
 	ui_theme.checkOn = ImageID("I_CHECKEDBOX");
 	ui_theme.checkOff = ImageID("I_UNCHECKEDBOX");

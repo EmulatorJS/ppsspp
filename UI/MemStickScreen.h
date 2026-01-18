@@ -29,13 +29,14 @@
 
 #include "Core/Util/MemStick.h"
 
-#include "UI/MiscScreens.h"
+#include "UI/BaseScreens.h"
+#include "UI/MiscViews.h"
 
 class NoticeView;
 
 // MemStickScreen - let's you configure your memory stick directory.
 // Currently only useful for Android.
-class MemStickScreen : public UIDialogScreenWithBackground {
+class MemStickScreen : public UIBaseDialogScreen {
 public:
 	MemStickScreen(bool initialSetup);
 	~MemStickScreen() = default;
@@ -58,7 +59,7 @@ protected:
 		// Simple anti-flicker due to delayed finish.
 		if (!done_) {
 			// render as usual.
-			return UIDialogScreenWithBackground::render(mode);
+			return UIBaseDialogScreen::render(mode);
 		} else {
 			// no render. black frame insertion is better than flicker.
 		}
@@ -79,7 +80,6 @@ private:
 	void OnConfirmClick(UI::EventParams &params);
 	void OnChoiceClick(UI::EventParams &params);
 
-	SettingInfoMessage *settingInfo_ = nullptr;
 	NoticeView *errorNoticeView_ = nullptr;
 
 	bool initialSetup_;
@@ -97,7 +97,7 @@ struct SpaceResult {
 	int64_t bytesFree;
 };
 
-class ConfirmMemstickMoveScreen : public UIDialogScreenWithBackground {
+class ConfirmMemstickMoveScreen : public UIBaseDialogScreen {
 public:
 	ConfirmMemstickMoveScreen(const Path &newMemstickFolder, bool initialSetup);
 	~ConfirmMemstickMoveScreen();

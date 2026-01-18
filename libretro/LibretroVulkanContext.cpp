@@ -10,8 +10,10 @@
 #include "Common/Data/Text/Parsers.h"
 
 #include "libretro/LibretroVulkanContext.h"
-#include "libretro/libretro_vulkan.h"
+#include <libretro_vulkan.h>
 #include <GPU/Vulkan/VulkanRenderManager.h>
+
+#undef fflush
 
 static VulkanContext *vk;
 
@@ -129,7 +131,8 @@ void LibretroVulkanContext::ContextDestroy() {
 void LibretroVulkanContext::CreateDrawContext() {
    vk->ReinitSurface();
 
-   if (!vk->InitSwapchain()) {
+   // TODO: Integrate properly with libretro vulkan context. We currently use a wacky wrapper (libretro_vulkan.cpp)
+   if (!vk->InitSwapchain(VK_PRESENT_MODE_FIFO_KHR)) {
       return;
    }
 
@@ -138,6 +141,7 @@ void LibretroVulkanContext::CreateDrawContext() {
       useMultiThreading = false;
    }
    draw_ = Draw::T3DCreateVulkanContext(vk, useMultiThreading);
+
    ((VulkanRenderManager*)draw_->GetNativeObject(Draw::NativeObject::RENDER_MANAGER))->SetInflightFrames(g_Config.iInflightFrames);
    SetGPUBackend(GPUBackend::VULKAN);
 }

@@ -36,6 +36,7 @@
 #include "Common/StringUtils.h"
 #include "Common/Profiler/Profiler.h"
 #include "Common/Thread/ThreadUtil.h"
+#include "Common/System/Display.h"
 #include "Core/Config.h"
 #include "Common/Log.h"
 #include "Common/Log/LogManager.h"
@@ -343,13 +344,13 @@ float System_GetPropertyFloat(SystemProperty prop) {
 	case SYSPROP_DISPLAY_REFRESH_RATE:
 		return 60.f;
 	case SYSPROP_DISPLAY_SAFE_INSET_LEFT:
-		return g_safeInsetLeft;
+		return g_safeInsetLeft * g_display.dpi_scale_x;
 	case SYSPROP_DISPLAY_SAFE_INSET_RIGHT:
-		return g_safeInsetRight;
+		return g_safeInsetRight * g_display.dpi_scale_x;
 	case SYSPROP_DISPLAY_SAFE_INSET_TOP:
-		return g_safeInsetTop;
+		return g_safeInsetTop * g_display.dpi_scale_y;
 	case SYSPROP_DISPLAY_SAFE_INSET_BOTTOM:
-		return g_safeInsetBottom;
+		return g_safeInsetBottom * g_display.dpi_scale_y;
 	default:
 		return -1;
 	}
@@ -370,6 +371,8 @@ bool System_GetPropertyBool(SystemProperty prop) {
 		case SYSPROP_HAS_ACCELEROMETER:
 			return true;
 		case SYSPROP_HAS_KEYBOARD:
+			return true;
+		case SYSPROP_SUPPORTS_SHARE_TEXT:
 			return true;
 		case SYSPROP_KEYBOARD_IS_SOFT:
 			// If a hardware keyboard is connected, and we add support, we could return false here.
@@ -431,6 +434,14 @@ void System_Notify(SystemNotification notification) {
 			iOSCoreAudioUpdateSession();
 		});
 		break;
+	case SystemNotification::ROTATE_UPDATED:
+	    dispatch_async(dispatch_get_main_queue(), ^{
+			if (sharedViewController) {
+				// [sharedViewController setNeedsUpdateOfSupportedInterfaceOrientations];
+				INFO_LOG(Log::System, "Requesting device orientation update");
+				[UIViewController attemptRotationToDeviceOrientation];
+			}
+		});
 	default:
 		break;
 	}
@@ -572,9 +583,9 @@ bool System_MakeRequest(SystemRequestType type, int requestId, const std::string
 void System_Toast(std::string_view text) {}
 void System_AskForPermission(SystemPermission permission) {}
 
-void System_LaunchUrl(LaunchUrlType urlType, const char *url)
-{
-	NSURL *nsUrl = [NSURL URLWithString:[NSString stringWithCString:url encoding:NSStringEncodingConversionAllowLossy]];
+void System_LaunchUrl(LaunchUrlType urlType, std::string_view url) {
+	std::string strUrl(url);
+	NSURL *nsUrl = [NSURL URLWithString:[NSString stringWithCString:strUrl.c_str() encoding:NSStringEncodingConversionAllowLossy]];
 	dispatch_async(dispatch_get_main_queue(), ^{
 		[[UIApplication sharedApplication] openURL:nsUrl options:@{} completionHandler:nil];
 	});
@@ -630,9 +641,7 @@ AudioBackend *System_CreateAudioBackend() {
 	return nullptr;
 }
 
-int main(int argc, char *argv[])
-{
-	// SetCurrentThreadName("MainThread");
+int main(int argc, char *argv[]) {
 	version = [[[UIDevice currentDevice] systemVersion] UTF8String];
 	if (1 != sscanf(version.c_str(), "%d", &g_iosVersionMajor)) {
 		// Just set it to 14.0 if the parsing fails for whatever reason.

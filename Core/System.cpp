@@ -54,6 +54,7 @@
 #include "Core/HLE/Plugins.h"
 #include "Core/HLE/ReplaceTables.h"
 #include "Core/HLE/sceKernel.h"
+#include "Core/HLE/sceUtility.h"
 #include "Core/HW/Display.h"
 #include "Core/Config.h"
 #include "Core/Core.h"
@@ -359,11 +360,6 @@ static bool CPU_Init(FileLoader *fileLoader, IdentifiedFileType type, std::strin
 	g_CoreParameter.compat.Load(g_paramSFO.GetDiscID());
 	ShowCompatWarnings(g_CoreParameter.compat);
 
-	// Compat settings can override the software renderer, take care of that here.
-	if (g_Config.bSoftwareRendering || PSP_CoreParameter().compat.flags().ForceSoftwareRenderer) {
-		g_CoreParameter.gpuCore = GPUCORE_SOFTWARE;
-	}
-
 	// This must be before Memory::Init because plugins can override the memory size.
 	if (type != IdentifiedFileType::PPSSPP_GE_DUMP) {
 		HLEPlugins::Init();
@@ -420,7 +416,9 @@ static bool CPU_Init(FileLoader *fileLoader, IdentifiedFileType type, std::strin
 		g_CoreParameter.mountIsoLoader = ConstructFileLoader(g_CoreParameter.mountIso);
 	}
 
-	// TODO: Check Game INI here for settings, patches and cheats, and modify coreParameter accordingly
+	// Game-specific settings are load from for example Load_PSP_ISO (which calls g_Config.LoadGameConfig).
+	// We can't do things that depend on these before the below switch. So for example, the adjustment of the GPU core
+	// to software has now been moved below it.
 
 	// If they shut down early, we'll catch it when load completes.
 	// Note: this may return before init is complete, which is checked if CPU_IsReady().
@@ -479,6 +477,13 @@ static bool CPU_Init(FileLoader *fileLoader, IdentifiedFileType type, std::strin
 
 	if (g_CoreParameter.updateRecent) {
 		g_recentFiles.Add(g_CoreParameter.fileToStart.ToString());
+	}
+
+	// Update things that depend on game-specific config here.
+
+	// Compat settings can override the software renderer, take care of that here.
+	if (g_Config.bSoftwareRendering || g_CoreParameter.compat.flags().ForceSoftwareRenderer) {
+		g_CoreParameter.gpuCore = GPUCORE_SOFTWARE;
 	}
 
 	InstallExceptionHandler(&Memory::HandleFault);
@@ -730,7 +735,9 @@ void PSP_Shutdown(bool success) {
 
 	currentMIPS = nullptr;
 
-	g_Config.unloadGameConfig();
+	if (g_Config.IsGameSpecific()) {
+		g_Config.UnloadGameConfig();
+	}
 
 	Core_NotifyLifecycle(CoreLifecycle::STOPPED);
 
@@ -765,105 +772,6 @@ void PSP_RunLoopWhileState() {
 
 void PSP_RunLoopFor(int cycles) {
 	Core_RunLoopUntil(CoreTiming::GetTicks() + cycles);
-}
-
-Path GetSysDirectory(PSPDirectories directoryType) {
-	const Path &memStickDirectory = g_Config.memStickDirectory;
-	Path pspDirectory;
-	if (!strcasecmp(memStickDirectory.GetFilename().c_str(), "PSP")) {
-		// Let's strip this off, to easily allow choosing a root directory named "PSP" on Android.
-		pspDirectory = memStickDirectory;
-	} else {
-		pspDirectory = memStickDirectory / "PSP";
-	}
-
-	switch (directoryType) {
-	case DIRECTORY_PSP:
-		return pspDirectory;
-	case DIRECTORY_CHEATS:
-		return pspDirectory / "Cheats";
-	case DIRECTORY_GAME:
-		return pspDirectory / "GAME";
-	case DIRECTORY_SAVEDATA:
-		return pspDirectory / "SAVEDATA";
-	case DIRECTORY_SCREENSHOT:
-		return pspDirectory / "SCREENSHOT";
-	case DIRECTORY_SYSTEM:
-		return pspDirectory / "SYSTEM";
-	case DIRECTORY_PAUTH:
-		return memStickDirectory / "PAUTH";  // This one's at the root...
-	case DIRECTORY_EXDATA:
-		return memStickDirectory / "EXDATA";  // This one's traditionally at the root...
-	case DIRECTORY_DUMP:
-		return pspDirectory / "SYSTEM/DUMP";
-	case DIRECTORY_SAVESTATE:
-		return pspDirectory / "PPSSPP_STATE";
-	case DIRECTORY_CACHE:
-		return pspDirectory / "SYSTEM/CACHE";
-	case DIRECTORY_TEXTURES:
-		return pspDirectory / "TEXTURES";
-	case DIRECTORY_PLUGINS:
-		return pspDirectory / "PLUGINS";
-	case DIRECTORY_APP_CACHE:
-		if (!g_Config.appCacheDirectory.empty()) {
-			return g_Config.appCacheDirectory;
-		}
-		return pspDirectory / "SYSTEM/CACHE";
-	case DIRECTORY_VIDEO:
-		return pspDirectory / "VIDEO";
-	case DIRECTORY_AUDIO:
-		return pspDirectory / "AUDIO";
-	case DIRECTORY_CUSTOM_SHADERS:
-		return pspDirectory / "shaders";
-	case DIRECTORY_CUSTOM_THEMES:
-		return pspDirectory / "themes";
-
-	case DIRECTORY_MEMSTICK_ROOT:
-		return g_Config.memStickDirectory;
-	// Just return the memory stick root if we run into some sort of problem.
-	default:
-		ERROR_LOG(Log::FileSystem, "Unknown directory type.");
-		return g_Config.memStickDirectory;
-	}
-}
-
-bool CreateSysDirectories() {
-#if PPSSPP_PLATFORM(ANDROID)
-	const bool createNoMedia = true;
-#else
-	const bool createNoMedia = false;
-#endif
-
-	Path pspDir = GetSysDirectory(DIRECTORY_PSP);
-	INFO_LOG(Log::IO, "Creating '%s' and subdirs:", pspDir.c_str());
-	File::CreateFullPath(pspDir);
-	if (!File::Exists(pspDir)) {
-		INFO_LOG(Log::IO, "Not a workable memstick directory. Giving up");
-		return false;
-	}
-
-	// Create the default directories that a real PSP creates. Good for homebrew so they can
-	// expect a standard environment. Skipping THEME though, that's pointless.
-	static const PSPDirectories sysDirs[] = {
-		DIRECTORY_CHEATS,
-		DIRECTORY_SAVEDATA,
-		DIRECTORY_SAVESTATE,
-		DIRECTORY_GAME,
-		DIRECTORY_SYSTEM,
-		DIRECTORY_TEXTURES,
-		DIRECTORY_PLUGINS,
-		DIRECTORY_CACHE,
-	};
-
-	for (auto dir : sysDirs) {
-		Path path = GetSysDirectory(dir);
-		File::CreateFullPath(path);
-		if (createNoMedia) {
-			// Create a nomedia file in each specified subdirectory.
-			File::CreateEmptyFile(path / ".nomedia");
-		}
-	}
-	return true;
 }
 
 const char *DumpFileTypeToString(DumpFileType type) {
@@ -929,6 +837,8 @@ void DumpFileIfEnabled(const u8 *dataPtr, const u32 length, std::string_view nam
 					delete[] path;
 				}
 			}, path);
+		} else {
+			delete[] path;
 		}
 		return;
 	}

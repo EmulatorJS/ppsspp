@@ -70,6 +70,7 @@ using namespace std::placeholders;
 #include "Core/HLE/sceCtrl.h"
 #include "Core/HLE/sceSas.h"
 #include "Core/HLE/sceNet.h"
+#include "Core/HLE/sceDisplay.h"
 #include "Core/HLE/sceNetAdhoc.h"
 #include "Core/Debugger/SymbolMap.h"
 #include "Core/RetroAchievements.h"
@@ -84,10 +85,11 @@ using namespace std::placeholders;
 #include "UI/GamepadEmu.h"
 #include "UI/PauseScreen.h"
 #include "UI/MainScreen.h"
+#include "UI/Background.h"
 #include "UI/EmuScreen.h"
 #include "UI/DevScreens.h"
 #include "UI/GameInfoCache.h"
-#include "UI/MiscScreens.h"
+#include "UI/BaseScreens.h"
 #include "UI/ControlMappingScreen.h"
 #include "UI/DisplayLayoutScreen.h"
 #include "UI/GameSettingsScreen.h"
@@ -123,8 +125,8 @@ static void AssertCancelCallback(const char *message, void *userdata) {
 }
 
 // Handles control rotation due to internal screen rotation.
-static void SetPSPAnalog(int stick, float x, float y) {
-	switch (g_Config.iInternalScreenRotation) {
+static void SetPSPAnalog(int iInternalScreenRotation, int stick, float x, float y) {
+	switch (iInternalScreenRotation) {
 	case ROTATION_LOCKED_HORIZONTAL:
 		// Standard rotation. No change.
 		break;
@@ -304,7 +306,7 @@ void EmuScreen::ProcessGameBoot(const Path &filename) {
 	coreParam.enableSound = g_Config.bEnableSound;
 	coreParam.fileToStart = filename;
 	coreParam.mountIso.clear();
-	coreParam.mountRoot.clear();
+	coreParam.mountRoot = g_Config.mountRoot;
 	coreParam.startBreak = !g_Config.bAutoRun;
 	coreParam.headLess = false;
 
@@ -360,15 +362,13 @@ void EmuScreen::bootComplete() {
 
 	if (g_paramSFO.IsValid()) {
 		g_Discord.SetPresenceGame(SanitizeString(g_paramSFO.GetValueString("TITLE"), StringRestriction::NoLineBreaksOrSpecials));
-	} else {
-		g_Discord.SetPresenceGame(sc->T("Untitled PSP game"));
-	}
-
-	if (g_paramSFO.IsValid()) {
 		std::string gameTitle = SanitizeString(g_paramSFO.GetValueString("TITLE"), StringRestriction::NoLineBreaksOrSpecials, 0, 32);
 		std::string id = g_paramSFO.GetValueString("DISC_ID");
 		extraAssertInfoStr_ = id + " " + gameTitle;
 		SetExtraAssertInfo(extraAssertInfoStr_.c_str());
+		SaveState::Rescan(SaveState::GetGamePrefix(g_paramSFO));
+	} else {
+		g_Discord.SetPresenceGame(sc->T("Untitled PSP game"));
 	}
 
 	UpdateUIState(UISTATE_INGAME);
@@ -678,7 +678,7 @@ bool EmuScreen::UnsyncTouch(const TouchInput &touch) {
 		}
 	}
 
-	if (touch.flags & TOUCH_DOWN) {
+	if (touch.flags & TouchInputFlags::DOWN) {
 		if (!(g_Config.bShowImDebugger && imguiInited_) && !ignoreGamepad) {
 			// This just prevents the gamepad from timing out.
 			GamepadTouch();
@@ -819,12 +819,12 @@ void EmuScreen::onVKey(VirtKey virtualKeyCode, bool down) {
 
 	case VIRTKEY_SAVE_STATE:
 		if (down && !Achievements::WarnUserIfHardcoreModeActive(true) && !NetworkWarnUserIfOnlineAndCantSavestate() && !bootPending_) {
-			SaveState::SaveSlot(gamePath_, g_Config.iCurrentStateSlot, &AfterSaveStateAction);
+			SaveState::SaveSlot(SaveState::GetGamePrefix(g_paramSFO), g_Config.iCurrentStateSlot, &AfterSaveStateAction);
 		}
 		break;
 	case VIRTKEY_LOAD_STATE:
 		if (down && !Achievements::WarnUserIfHardcoreModeActive(false) && !NetworkWarnUserIfOnlineAndCantSavestate() && !bootPending_) {
-			SaveState::LoadSlot(gamePath_, g_Config.iCurrentStateSlot, &AfterSaveStateAction);
+			SaveState::LoadSlot(SaveState::GetGamePrefix(g_paramSFO), g_Config.iCurrentStateSlot, &AfterSaveStateAction);
 		}
 		break;
 	case VIRTKEY_PREVIOUS_SLOT:
@@ -916,17 +916,29 @@ void EmuScreen::ProcessVKey(VirtKey virtKey) {
 		break;
 
 	case VIRTKEY_SCREEN_ROTATION_VERTICAL:
-		g_Config.iInternalScreenRotation = ROTATION_LOCKED_VERTICAL;
+	{
+		DisplayLayoutConfig &config = g_Config.GetDisplayLayoutConfig(GetDeviceOrientation());
+		config.iInternalScreenRotation = ROTATION_LOCKED_VERTICAL;
 		break;
+	}
 	case VIRTKEY_SCREEN_ROTATION_VERTICAL180:
-		g_Config.iInternalScreenRotation = ROTATION_LOCKED_VERTICAL180;
+	{
+		DisplayLayoutConfig &config = g_Config.GetDisplayLayoutConfig(GetDeviceOrientation());
+		config.iInternalScreenRotation = ROTATION_LOCKED_VERTICAL180;
 		break;
+	}
 	case VIRTKEY_SCREEN_ROTATION_HORIZONTAL:
-		g_Config.iInternalScreenRotation = ROTATION_LOCKED_HORIZONTAL;
+	{
+		DisplayLayoutConfig &config = g_Config.GetDisplayLayoutConfig(GetDeviceOrientation());
+		config.iInternalScreenRotation = ROTATION_LOCKED_HORIZONTAL;
 		break;
+	}
 	case VIRTKEY_SCREEN_ROTATION_HORIZONTAL180:
-		g_Config.iInternalScreenRotation = ROTATION_LOCKED_HORIZONTAL180;
+	{
+		DisplayLayoutConfig &config = g_Config.GetDisplayLayoutConfig(GetDeviceOrientation());
+		config.iInternalScreenRotation = ROTATION_LOCKED_HORIZONTAL180;
 		break;
+	}
 
 	case VIRTKEY_TOGGLE_WLAN:
 		// Let's not allow the user to toggle wlan while connected, could get confusing.
@@ -988,9 +1000,10 @@ void EmuScreen::ProcessVKey(VirtKey virtKey) {
 			std::string confirmExitMessage = GetConfirmExitMessage();
 			if (!confirmExitMessage.empty()) {
 				auto di = GetI18NCategory(I18NCat::DIALOG);
+				auto mm = GetI18NCategory(I18NCat::MAINMENU);
 				confirmExitMessage += '\n';
 				confirmExitMessage += di->T("Are you sure you want to exit?");
-				screenManager()->push(new PromptScreen(gamePath_, confirmExitMessage, di->T("Yes"), di->T("No"), [=](bool result) {
+				screenManager()->push(new UI::MessagePopupScreen(mm->T("Exit"), confirmExitMessage, di->T("Yes"), di->T("No"), [=](bool result) {
 					if (result) {
 						System_ExitApp();
 					}
@@ -1056,8 +1069,8 @@ bool EmuScreen::UnsyncKey(const KeyInput &key) {
 	System_Notify(SystemNotification::ACTIVITY);
 
 	// Update imgui modifier flags
-	if (key.flags & (KEY_DOWN | KEY_UP)) {
-		bool down = (key.flags & KEY_DOWN) != 0;
+	if (key.flags & (KeyInputFlags::DOWN | KeyInputFlags::UP)) {
+		bool down = (key.flags & KeyInputFlags::DOWN) != 0;
 		switch (key.keyCode) {
 		case NKCODE_CTRL_LEFT: keyCtrlLeft_ = down; break;
 		case NKCODE_CTRL_RIGHT: keyCtrlRight_ = down; break;
@@ -1075,7 +1088,7 @@ bool EmuScreen::UnsyncKey(const KeyInput &key) {
 		// Note: Allow some Vkeys through, so we can toggle the imgui for example (since we actually block the control mapper otherwise in imgui mode).
 		// We need to manually implement it here :/
 		if (g_Config.bShowImDebugger && imguiInited_) {
-			if (key.flags & (KEY_UP | KEY_DOWN)) {
+			if (key.flags & (KeyInputFlags::UP | KeyInputFlags::DOWN)) {
 				InputMapping mapping(key.deviceId, key.keyCode);
 				std::vector<int> pspButtons;
 				bool mappingFound = KeyMap::InputMappingToPspButton(mapping, &pspButtons);
@@ -1106,7 +1119,7 @@ bool EmuScreen::UnsyncKey(const KeyInput &key) {
 			}
 		} else {
 			// Let up-events through to the controlMapper_ so input doesn't get stuck.
-			if (key.flags & KEY_UP) {
+			if (key.flags & KeyInputFlags::UP) {
 				controlMapper_.Key(key, &pauseTrigger_);
 			}
 		}
@@ -1133,7 +1146,7 @@ bool EmuScreen::key(const KeyInput &key) {
 		ImGui_ImplPlatform_KeyEvent(key);
 	}
 
-	if (!retval && (key.flags & KEY_DOWN) != 0 && UI::IsEscapeKey(key)) {
+	if (!retval && (key.flags & KeyInputFlags::DOWN) != 0 && UI::IsEscapeKey(key)) {
 		if (chatMenu_)
 			chatMenu_->Close();
 		if (chatButton_)
@@ -1151,7 +1164,7 @@ void EmuScreen::touch(const TouchInput &touch) {
 		if (!ImGui::GetIO().WantCaptureMouse) {
 			UIScreen::touch(touch);
 		}
-	} else if (g_Config.bMouseControl && !(touch.flags & TOUCH_UP) && (touch.flags & TOUCH_MOUSE)) {
+	} else if (g_Config.bMouseControl && !(touch.flags & TouchInputFlags::UP) && (touch.flags & TouchInputFlags::MOUSE)) {
 		// don't do anything as the mouse pointer is hidden in this case.
 		// But we let touch-up events through to avoid getting stuck if the user toggles mouse control.
 	} else {
@@ -1159,7 +1172,7 @@ void EmuScreen::touch(const TouchInput &touch) {
 		if (chatMenu_ && chatMenu_->GetVisibility() == UI::V_VISIBLE) {
 			// Avoid pressing touch button behind the chat
 			if (!chatMenu_->Contains(touch.x, touch.y)) {
-				if ((touch.flags & TOUCH_DOWN) != 0) {
+				if ((touch.flags & TouchInputFlags::DOWN) != 0) {
 					chatMenu_->Close();
 					if (chatButton_)
 						chatButton_->SetVisibility(UI::V_VISIBLE);
@@ -1184,11 +1197,20 @@ public:
 		if (ginfo->Ready(GameInfoFlags::PIC1) && ginfo->pic1.texture) {
 			Draw::Texture *texture = ginfo->pic1.texture;
 			if (texture) {
+				const DisplayLayoutConfig &config = g_Config.GetDisplayLayoutConfig(g_display.GetDeviceOrientation());
+				// Similar to presentation, we want to put the game PIC1 in the same region of the screen.
+				FRect frame = GetScreenFrame(config.bIgnoreScreenInsets, g_display.pixel_xres, g_display.pixel_yres);
+				FRect rc;
+				CalculateDisplayOutputRect(config, &rc, texture->Width(), texture->Height(), frame, config.iInternalScreenRotation);
+
+				// Need to adjust for DPI here since we're still in the UI coordinate space here, not the pixel coordinate space used for in-game presentation.
+				Bounds bounds(rc.x * g_display.dpi_scale_x, rc.y * g_display.dpi_scale_y, rc.w * g_display.dpi_scale_x, rc.h * g_display.dpi_scale_y);
+
 				dc.GetDrawContext()->BindTexture(0, texture);
 
 				double loadTime = ginfo->pic1.timeLoaded;
 				uint32_t color = alphaMul(color_, ease((time_now_d() - loadTime) * 3));
-				dc.Draw()->DrawTexRect(dc.GetBounds(), 0, 0, 1, 1, color);
+				dc.Draw()->DrawTexRect(bounds, 0, 0, 1, 1, color);
 				dc.Flush();
 				dc.RebindTexture();
 			}
@@ -1212,15 +1234,15 @@ protected:
 static UI::AnchorLayoutParams *AnchorInCorner(const Bounds &bounds, int corner, float xOffset, float yOffset) {
 	using namespace UI;
 	switch ((ScreenEdgePosition)g_Config.iChatButtonPosition) {
-	case ScreenEdgePosition::BOTTOM_LEFT:   return new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, xOffset, NONE, NONE, yOffset, true);
-	case ScreenEdgePosition::BOTTOM_CENTER: return new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, bounds.centerX(), NONE, NONE, yOffset, true);
-	case ScreenEdgePosition::BOTTOM_RIGHT:  return new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, NONE, NONE, xOffset, yOffset, true);
-	case ScreenEdgePosition::TOP_LEFT:      return new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, xOffset, yOffset, NONE, NONE, true);
-	case ScreenEdgePosition::TOP_CENTER:    return new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, bounds.centerX(), yOffset, NONE, NONE, true);
-	case ScreenEdgePosition::TOP_RIGHT:     return new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, NONE, yOffset, xOffset, NONE, true);
-	case ScreenEdgePosition::CENTER_LEFT:   return new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, xOffset, bounds.centerY(), NONE, NONE, true);
-	case ScreenEdgePosition::CENTER_RIGHT:  return new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, NONE, bounds.centerY(), xOffset, NONE, true);
-	default: return new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, xOffset, NONE, NONE, yOffset, true);
+	case ScreenEdgePosition::BOTTOM_LEFT:   return new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, xOffset, NONE, NONE, yOffset, Centering::Both);
+	case ScreenEdgePosition::BOTTOM_CENTER: return new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, bounds.centerX(), NONE, NONE, yOffset, Centering::Both);
+	case ScreenEdgePosition::BOTTOM_RIGHT:  return new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, NONE, NONE, xOffset, yOffset, Centering::Both);
+	case ScreenEdgePosition::TOP_LEFT:      return new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, xOffset, yOffset, NONE, NONE, Centering::Both);
+	case ScreenEdgePosition::TOP_CENTER:    return new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, bounds.centerX(), yOffset, NONE, NONE, Centering::Both);
+	case ScreenEdgePosition::TOP_RIGHT:     return new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, NONE, yOffset, xOffset, NONE, Centering::Both);
+	case ScreenEdgePosition::CENTER_LEFT:   return new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, xOffset, bounds.centerY(), NONE, NONE, Centering::Both);
+	case ScreenEdgePosition::CENTER_RIGHT:  return new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, NONE, bounds.centerY(), xOffset, NONE, Centering::Both);
+	default: return new AnchorLayoutParams(WRAP_CONTENT, WRAP_CONTENT, xOffset, NONE, NONE, yOffset, Centering::Both);
 	}
 }
 
@@ -1231,18 +1253,19 @@ void EmuScreen::CreateViews() {
 	auto dev = GetI18NCategory(I18NCat::DEVELOPER);
 	auto sc = GetI18NCategory(I18NCat::SCREEN);
 
+	const DeviceOrientation deviceOrientation = GetDeviceOrientation();
+
+	TouchControlConfig &touch = g_Config.GetTouchControlsConfig(deviceOrientation);
+
 	const Bounds &bounds = screenManager()->getUIContext()->GetLayoutBounds();
-	InitPadLayout(bounds.w, bounds.h);
+	InitPadLayout(&touch, deviceOrientation, bounds.w, bounds.h);
 
-	// Devices without a back button like iOS need an on-screen touch back button.
-	bool showPauseButton = !System_GetPropertyBool(SYSPROP_HAS_BACK_BUTTON) || g_Config.bShowTouchPause;
-
-	root_ = CreatePadLayout(bounds.w, bounds.h, &pauseTrigger_, showPauseButton, &controlMapper_);
+	root_ = CreatePadLayout(touch, bounds.w, bounds.h, &pauseTrigger_, &controlMapper_);
 	if (g_Config.bShowDeveloperMenu) {
 		root_->Add(new Button(dev->T("DevMenu")))->OnClick.Handle(this, &EmuScreen::OnDevTools);
 	}
 
-	LinearLayout *buttons = new LinearLayout(Orientation::ORIENT_HORIZONTAL, new AnchorLayoutParams(bounds.centerX(), NONE, NONE, 60, true));
+	LinearLayout *buttons = new LinearLayout(Orientation::ORIENT_HORIZONTAL, new AnchorLayoutParams(bounds.centerX(), NONE, NONE, 60, Centering::Both));
 	buttons->SetSpacing(20.0f);
 	root_->Add(buttons);
 
@@ -1270,9 +1293,11 @@ void EmuScreen::CreateViews() {
 	});
 	backButton_->SetVisibility(V_GONE);
 
-	cardboardDisableButton_ = root_->Add(new Button(sc->T("Cardboard VR OFF"), new AnchorLayoutParams(bounds.centerX(), NONE, NONE, 30, true)));
-	cardboardDisableButton_->OnClick.Add([](UI::EventParams &) {
-		g_Config.bEnableCardboardVR = false;
+	cardboardDisableButton_ = root_->Add(new Button(sc->T("Cardboard VR OFF"), new AnchorLayoutParams(bounds.centerX(), NONE, NONE, 30, Centering::Both)));
+	DeviceOrientation orientation = GetDeviceOrientation();
+	cardboardDisableButton_->OnClick.Add([deviceOrientation](UI::EventParams &) {
+		DisplayLayoutConfig &config = g_Config.GetDisplayLayoutConfig(deviceOrientation);
+		config.bEnableCardboardVR = false;
 	});
 	cardboardDisableButton_->SetVisibility(V_GONE);
 	cardboardDisableButton_->SetScale(0.65f);  // make it smaller - this button can be in the way otherwise.
@@ -1291,7 +1316,7 @@ void EmuScreen::CreateViews() {
 		chatMenu_->SetVisibility(UI::V_GONE);
 	}
 
-	saveStatePreview_ = new AsyncImageFileView(Path(), IS_FIXED, new AnchorLayoutParams(bounds.centerX(), 100, NONE, NONE, true));
+	saveStatePreview_ = new AsyncImageFileView(Path(), IS_FIXED, new AnchorLayoutParams(bounds.centerX(), 100, NONE, NONE, Centering::Both));
 	saveStatePreview_->SetFixedSize(160, 90);
 	saveStatePreview_->SetColor(0x90FFFFFF);
 	saveStatePreview_->SetVisibility(V_GONE);
@@ -1307,7 +1332,7 @@ void EmuScreen::CreateViews() {
 		ImageID("I_TRIANGLE"),
 	};
 
-	Spinner *loadingSpinner = root_->Add(new Spinner(symbols, ARRAY_SIZE(symbols), new AnchorLayoutParams(NONE, NONE, 45, 45, true)));
+	Spinner *loadingSpinner = root_->Add(new Spinner(symbols, ARRAY_SIZE(symbols), new AnchorLayoutParams(NONE, NONE, 45, 45, Centering::Both)));
 	loadingSpinner_ = loadingSpinner;
 
 	loadingBG->SetTag("LoadingBG");
@@ -1446,16 +1471,19 @@ void EmuScreen::update() {
 
 	double now = time_now_d();
 
-	controlMapper_.Update(now);
+	DisplayLayoutConfig &config = g_Config.GetDisplayLayoutConfig(GetDeviceOrientation());
+	controlMapper_.Update(config, now);
 
 	if (saveStatePreview_ && !bootPending_) {
 		int currentSlot = SaveState::GetCurrentSlot();
 		if (saveStateSlot_ != currentSlot) {
 			saveStateSlot_ = currentSlot;
 
+			const std::string gamePrefix = SaveState::GetGamePrefix(g_paramSFO);
+
 			Path fn;
-			if (SaveState::HasSaveInSlot(gamePath_, currentSlot)) {
-				fn = SaveState::GenerateSaveSlotFilename(gamePath_, currentSlot, SaveState::SCREENSHOT_EXTENSION);
+			if (SaveState::HasSaveInSlot(gamePrefix, currentSlot)) {
+				fn = SaveState::GenerateSaveSlotPath(gamePrefix, currentSlot, SaveState::SCREENSHOT_EXTENSION);
 			}
 
 			saveStatePreview_->SetFilename(fn);
@@ -1576,6 +1604,8 @@ ScreenRenderFlags EmuScreen::render(ScreenRenderMode mode) {
 
 	bool framebufferBound = false;
 
+	const DeviceOrientation orientation = GetDeviceOrientation();
+
 	if (mode & ScreenRenderMode::FIRST) {
 		// Actually, always gonna be first when it exists (?)
 
@@ -1604,7 +1634,10 @@ ScreenRenderFlags EmuScreen::render(ScreenRenderMode mode) {
 		framebufferBound = true;
 	}
 
-	g_OSD.NudgeSidebar();
+	g_OSD.NudgeIngameNotifications();
+
+	const DisplayLayoutConfig &displayLayoutConfig = g_Config.GetDisplayLayoutConfig(orientation);
+	__DisplaySetDisplayLayoutConfig(displayLayoutConfig);
 
 	if (mode & ScreenRenderMode::TOP) {
 		System_Notify(SystemNotification::KEEP_SCREEN_AWAKE);
@@ -1613,8 +1646,8 @@ ScreenRenderFlags EmuScreen::render(ScreenRenderMode mode) {
 		// Just to make sure.
 		if (PSP_IsInited() && !skipBufferEffects) {
 			_dbg_assert_(gpu);
-			gpu->BeginHostFrame();
-			gpu->CopyDisplayToOutput(true);
+			gpu->BeginHostFrame(displayLayoutConfig);
+			gpu->CopyDisplayToOutput(displayLayoutConfig, true);
 			gpu->EndHostFrame();
 		}
 		if (gpu && gpu->PresentedThisFrame()) {
@@ -1626,7 +1659,8 @@ ScreenRenderFlags EmuScreen::render(ScreenRenderMode mode) {
 
 		Draw::BackendState state = draw->GetCurrentBackendState();
 		if (state.valid) {
-			_dbg_assert_msg_(state.passes >= 1, "skipB: %d sw: %d mode: %d back: %d tag: %s behi: %d", (int)skipBufferEffects, (int)g_Config.bSoftwareRendering, (int)mode, (int)g_Config.iGPUBackend, screenManager()->topScreen()->tag(), (int)g_Config.bRunBehindPauseMenu);
+			// The below can trigger when switching from skip-buffer-effects. We don't really care anymore...
+			// _dbg_assert_msg_(state.passes >= 1, "skipB: %d sw: %d mode: %d back: %d tag: %s behi: %d", (int)skipBufferEffects, (int)g_Config.bSoftwareRendering, (int)mode, (int)g_Config.iGPUBackend, screenManager()->topScreen()->tag(), (int)g_Config.bRunBehindPauseMenu);
 			// Workaround any remaining bugs like this.
 			if (state.passes == 0) {
 				draw->BindFramebufferAsRenderTarget(nullptr, { RPAction::CLEAR, RPAction::CLEAR, RPAction::CLEAR, }, "EmuScreen_SafeFallback");
@@ -1680,7 +1714,7 @@ ScreenRenderFlags EmuScreen::render(ScreenRenderMode mode) {
 	uint32_t clearColor = 0;
 	if (!blockedExecution) {
 		if (gpu) {
-			gpu->BeginHostFrame();
+			gpu->BeginHostFrame(displayLayoutConfig);
 		}
 		if (SaveState::Process()) {
 			// We might have lost the framebuffer bind if we had one, due to a readback.
@@ -1715,7 +1749,7 @@ ScreenRenderFlags EmuScreen::render(ScreenRenderMode mode) {
 				// This won't work in non-buffered, but that's fine.
 				if (!framebufferBound && PSP_IsInited()) {
 					// draw->BindFramebufferAsRenderTarget(nullptr, { RPAction::CLEAR, RPAction::CLEAR, RPAction::CLEAR, clearColor }, "EmuScreen_Stepping");
-					gpu->CopyDisplayToOutput(true);
+					gpu->CopyDisplayToOutput(displayLayoutConfig, true);
 					framebufferBound = true;
 				}
 			}
@@ -1800,7 +1834,7 @@ ScreenRenderFlags EmuScreen::render(ScreenRenderMode mode) {
 
 	if (hasVisibleUI()) {
 		draw->SetViewport(viewport);
-		cardboardDisableButton_->SetVisibility(g_Config.bEnableCardboardVR ? UI::V_VISIBLE : UI::V_GONE);
+		cardboardDisableButton_->SetVisibility(displayLayoutConfig.bEnableCardboardVR ? UI::V_VISIBLE : UI::V_GONE);
 		renderUI();
 	}
 
@@ -1835,9 +1869,9 @@ void EmuScreen::runImDebugger() {
 
 			// Read the TTF font
 			size_t propSize = 0;
-			uint8_t *propFontData = g_VFS.ReadFile("Roboto-Condensed.ttf", &propSize);
+			const uint8_t *propFontData = g_VFS.ReadFile("Roboto_Condensed-Regular.ttf", &propSize);
 			size_t fixedSize = 0;
-			uint8_t *fixedFontData = g_VFS.ReadFile("Inconsolata-Medium.ttf", &fixedSize);
+			const uint8_t *fixedFontData = g_VFS.ReadFile("Inconsolata-Regular.ttf", &fixedSize);
 			// This call works even if fontData is nullptr, in which case the font just won't get loaded.
 			// This takes ownership of the font array.
 			ImGui_ImplThin3d_Init(draw, propFontData, propSize, fixedFontData, fixedSize);
@@ -1906,7 +1940,8 @@ bool EmuScreen::hasVisibleUI() {
 		return true;
 	if (!g_OSD.IsEmpty() || g_Config.bShowTouchControls || g_Config.iShowStatusFlags != 0)
 		return true;
-	if (g_Config.bEnableCardboardVR || g_Config.bEnableNetworkChat)
+	DisplayLayoutConfig &config = g_Config.GetDisplayLayoutConfig(GetDeviceOrientation());
+	if (config.bEnableCardboardVR || g_Config.bEnableNetworkChat)
 		return true;
 	if (g_Config.bShowGPOLEDs)
 		return true;
@@ -1941,7 +1976,7 @@ void EmuScreen::renderUI() {
 	thin3d->SetViewport(viewport);
 
 	if (root_) {
-		UI::LayoutViewHierarchy(*ctx, root_, false);
+		UI::LayoutViewHierarchy(*ctx, RootMargins(), root_, false, false);
 		root_->Draw(*ctx);
 	}
 
@@ -2001,23 +2036,25 @@ void EmuScreen::AutoLoadSaveState() {
 
 	int autoSlot = -1;
 
+	std::string gamePrefix = SaveState::GetGamePrefix(g_paramSFO);
+
 	//check if save state has save, if so, load
 	switch (g_Config.iAutoLoadSaveState) {
 	case (int)AutoLoadSaveState::OFF: // "AutoLoad Off"
 		return;
 	case (int)AutoLoadSaveState::OLDEST: // "Oldest Save"
-		autoSlot = SaveState::GetOldestSlot(gamePath_);
+		autoSlot = SaveState::GetOldestSlot(gamePrefix);
 		break;
 	case (int)AutoLoadSaveState::NEWEST: // "Newest Save"
-		autoSlot = SaveState::GetNewestSlot(gamePath_);
+		autoSlot = SaveState::GetNewestSlot(gamePrefix);
 		break;
 	default: // try the specific save state slot specified
-		autoSlot = (SaveState::HasSaveInSlot(gamePath_, g_Config.iAutoLoadSaveState - 3)) ? (g_Config.iAutoLoadSaveState - 3) : -1;
+		autoSlot = (SaveState::HasSaveInSlot(gamePrefix, g_Config.iAutoLoadSaveState - 3)) ? (g_Config.iAutoLoadSaveState - 3) : -1;
 		break;
 	}
 
 	if (g_Config.iAutoLoadSaveState && autoSlot != -1) {
-		SaveState::LoadSlot(gamePath_, autoSlot, [this, autoSlot](SaveState::Status status, std::string_view message) {
+		SaveState::LoadSlot(gamePrefix, autoSlot, [this, autoSlot](SaveState::Status status, std::string_view message) {
 			AfterSaveStateAction(status, message);
 			auto sy = GetI18NCategory(I18NCat::SYSTEM);
 			std::string msg = std::string(sy->T("Auto Load Savestate")) + ": " + StringFromFormat("%d", autoSlot);

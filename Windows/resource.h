@@ -218,11 +218,6 @@
 #define ID_EMULATION_CHEATS              40096
 #define ID_HELP_CHINESE_FORUM            40097
 #define ID_OPTIONS_MORE_SETTINGS         40098
-#define ID_FILE_SAVESTATE_SLOT_1         40099
-#define ID_FILE_SAVESTATE_SLOT_2         40100
-#define ID_FILE_SAVESTATE_SLOT_3         40101
-#define ID_FILE_SAVESTATE_SLOT_4         40102
-#define ID_FILE_SAVESTATE_SLOT_5         40103
 #define ID_OPTIONS_WINDOW1X              40104
 #define ID_OPTIONS_WINDOW2X              40105
 #define ID_OPTIONS_WINDOW3X              40106
@@ -297,8 +292,6 @@
 #define ID_EMULATION_PAUSE               40177
 #define ID_HELP_DISCORD                  40178
 #define IDC_GEDBG_STEPCURVE              40179
-#define ID_OPTIONS_FRAMESKIPTYPE_COUNT   40180
-#define ID_OPTIONS_FRAMESKIPTYPE_PRCNT   40181
 #define ID_FILE_MENU                     40182
 #define ID_EMULATION_MENU                40183
 #define ID_DEBUG_MENU                    40184
@@ -312,7 +305,6 @@
 #define ID_OPTIONS_BACKEND_MENU          40192
 #define ID_OPTIONS_RENDERMODE_MENU       40193
 #define ID_OPTIONS_FRAMESKIP_MENU        40194
-#define ID_OPTIONS_FRAMESKIPTYPE_MENU    40195
 #define ID_OPTIONS_TEXTUREFILTERING_MENU 40196
 #define ID_OPTIONS_SCREENFILTER_MENU     40197
 #define ID_OPTIONS_TEXTURESCALING_MENU   40198
@@ -354,6 +346,8 @@
 #define IDC_DISASM_FMT_STR               40235
 #define ID_DISASM_EDITSYMBOLS            40236
 
+// Dynamic menus
+#define ID_FILE_SAVESTATE_SLOT_BASE      45000
 
 // Dummy option to let the buffered rendering hotkey cycle through all the options.
 #define ID_OPTIONS_BUFFEREDRENDERINGDUMMY 40500

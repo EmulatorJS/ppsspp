@@ -46,7 +46,7 @@
 
 #include "UI/AudioCommon.h"
 
-#include "libretro/libretro.h"
+#include <libretro.h>
 #include "libretro/LibretroGraphicsContext.h"
 #include "libretro/libretro_core_options.h"
 
@@ -401,11 +401,11 @@ void retro_set_environment(retro_environment_t cb)
    update_display_cb.callback = set_variable_visibility;
    environ_cb(RETRO_ENVIRONMENT_SET_CORE_OPTIONS_UPDATE_DISPLAY_CALLBACK, &update_display_cb);
 
-   #ifdef HAVE_LIBRETRO_VFS
-      struct retro_vfs_interface_info vfs_iface_info { 1, nullptr };
-      if (cb(RETRO_ENVIRONMENT_GET_VFS_INTERFACE, &vfs_iface_info))
-         filestream_vfs_init(&vfs_iface_info);
-   #endif
+#ifdef HAVE_LIBRETRO_VFS
+   struct retro_vfs_interface_info vfs_iface_info { 2, nullptr };
+   if (cb(RETRO_ENVIRONMENT_GET_VFS_INTERFACE, &vfs_iface_info))
+      File::InitLibretroVFS(&vfs_iface_info);
+#endif
 }
 
 static int get_language_auto(void)
@@ -732,15 +732,6 @@ static void check_variables(CoreParameter &coreParam)
    var.key = "ppsspp_frameskip";
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
       g_Config.iFrameSkip = atoi(var.value);
-
-   var.key = "ppsspp_frameskiptype";
-   if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
-   {
-      if (!strcmp(var.value, "Number of frames"))
-         g_Config.iFrameSkipType = 0;
-      else if (!strcmp(var.value, "Percent of FPS"))
-         g_Config.iFrameSkipType = 1;
-   }
 
    var.key = "ppsspp_auto_frameskip";
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
@@ -1148,7 +1139,8 @@ static void check_variables(CoreParameter &coreParam)
    {
       if (gpu)
       {
-         gpu->NotifyRenderResized();
+         const DisplayLayoutConfig &config = g_Config.GetDisplayLayoutConfig(g_display.GetDeviceOrientation());
+         gpu->NotifyRenderResized(config);
       }
    }
 
@@ -1368,8 +1360,10 @@ namespace Libretro
          ctx->GetDrawContext()->BeginFrame(Draw::DebugFlags::NONE);
       }
 
-      if (gpu)
-         gpu->BeginHostFrame();
+      if (gpu) {
+         const DisplayLayoutConfig &config = g_Config.GetDisplayLayoutConfig(g_display.GetDeviceOrientation());
+         gpu->BeginHostFrame(config);
+      }
 
       PSP_RunLoopWhileState();
       switch (coreState) {
@@ -1479,7 +1473,7 @@ static void retro_check_backend(void)
       else if (!strcmp(var.value, "vulkan"))
          backend = RETRO_HW_CONTEXT_VULKAN;
       else if (!strcmp(var.value, "d3d11"))
-         backend = RETRO_HW_CONTEXT_DIRECT3D;
+         backend = RETRO_HW_CONTEXT_D3D11;
       else if (!strcmp(var.value, "none"))
          backend = RETRO_HW_CONTEXT_NONE;
    }
@@ -1702,6 +1696,9 @@ void retro_run(void)
          // shouldn't happen.
          _dbg_assert_(false);
          return;
+      case BootState::Complete:
+         // done, continue.
+         break;
       }
 
       // BootState is BootState::Complete.
@@ -1860,10 +1857,11 @@ void retro_cheat_reset(void) {
    Path file=cheatEngine->CheatFilename();
 
    // Output cheats to cheat file
-   std::ofstream outFile;
-   outFile.open(file.c_str());
-   outFile << "_S " << g_paramSFO.GetDiscID() << std::endl;
-   outFile.close();
+   FILE *outFile = File::OpenCFile(file, "wb");
+   if (outFile != nullptr) {
+      fprintf(outFile, "_S %s\n", g_paramSFO.GetDiscID().c_str());
+      fclose(outFile);
+   }
 
    g_Config.bReloadCheats = true;
 
@@ -1883,10 +1881,20 @@ void retro_cheat_set(unsigned index, bool enabled, const char *code) {
 
    // Read cheats file
    std::vector<std::string> cheats;
-   std::ifstream cheat_content(file.c_str());
-   std::stringstream buffer;
-   buffer << cheat_content.rdbuf();
-   std::string existing_cheats=ReplaceAll(buffer.str(), std::string("\n_C"), std::string("|"));
+   std::string cheat_content;
+   FILE *inFile = File::OpenCFile(file, "rb");
+   if (inFile != nullptr) {
+      std::array<uint8_t, 4096> buffer;
+      for (;;) {
+         size_t n = fread(buffer.data(), 1, buffer.size(), inFile);
+         cheat_content.append((const char *)buffer.data(), n);
+         if (n < buffer.size()) {
+            break;
+         }
+      }
+      fclose(inFile);
+   }
+   std::string existing_cheats=ReplaceAll(cheat_content, std::string("\n_C"), std::string("|"));
    SplitString(existing_cheats, '|', cheats);
 
    // Generate Cheat String
@@ -1918,13 +1926,14 @@ void retro_cheat_set(unsigned index, bool enabled, const char *code) {
    }
 
    // Output cheats to cheat file
-   std::ofstream outFile;
-   outFile.open(file.c_str());
-   outFile << "_S " << g_paramSFO.GetDiscID() << std::endl;
-   for (int i=1; i < cheats.size(); i++) {
-      outFile << "_C" << cheats[i] << std::endl;
+   FILE *outFile = File::OpenCFile(file, "wb");
+   if (outFile != nullptr) {
+      fprintf(outFile, "_S %s\n", g_paramSFO.GetDiscID().c_str());
+      for (const std::string &cheat : cheats) {
+         fprintf(outFile, "_C%s\n", cheat.c_str());
+      }
+      fclose(outFile);
    }
-   outFile.close();
 
    g_Config.bReloadCheats = true;
 
@@ -2042,7 +2051,10 @@ void System_AudioClear() {}
 std::vector<std::string> System_GetCameraDeviceList() { return std::vector<std::string>(); }
 bool System_AudioRecordingIsAvailable() { return false; }
 bool System_AudioRecordingState() { return false; }
-
+#elif PPSSPP_PLATFORM(MAC)
+std::vector<std::string> __mac_getDeviceList() { return std::vector<std::string>(); }
+int __mac_startCapture(int width, int height) { return 0; }
+int __mac_stopCapture() { return 0; }
 #endif
 
 // TODO: To avoid having to define these here, these should probably be turned into system "requests".

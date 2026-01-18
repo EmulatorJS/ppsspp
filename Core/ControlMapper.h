@@ -7,11 +7,12 @@
 #include <cstring>
 #include <mutex>
 
+struct DisplayLayoutConfig;
 // Utilities for mapping input events to PSP inputs and virtual keys.
 // Main use is of course from EmuScreen.cpp, but also useful from control settings etc.
 class ControlMapper {
 public:
-	void Update(double now);
+	void Update(const DisplayLayoutConfig &config, double now);
 
 	// Inputs to the table-based mapping
 	// These functions are free-threaded.
@@ -24,13 +25,13 @@ public:
 		std::function<void(VirtKey, bool)> onVKey,
 		std::function<void(VirtKey, float)> onVKeyAnalog,
 		std::function<void(uint32_t, uint32_t)> updatePSPButtons,
-		std::function<void(int, float, float)> setPSPAnalog,
+		std::function<void(int, int, float, float)> setPSPAnalog,
 		std::function<void(int, float, float)> setRawAnalog);
 
 	// Inject raw PSP key input directly, such as from touch screen controls.
 	// Combined with the mapped input. Unlike __Ctrl APIs, this supports
 	// virtual key codes, including analog mappings.
-	void PSPKey(int deviceId, int pspKeyCode, int flags);
+	void PSPKey(int deviceId, int pspKeyCode, KeyInputFlags flags);
 
 	// Toggle swapping DPAD and Analog. Useful on some input devices with few buttons.
 	void ToggleSwapAxes();
@@ -85,6 +86,8 @@ private:
 
 	bool swapAxes_ = false;
 
+	int iInternalScreenRotationCached_ = 0;
+
 	// Protects basically all the state.
 	// TODO: Maybe we should piggyback on the screenmanager mutex - it's always locked
 	// when events come in here.
@@ -96,7 +99,7 @@ private:
 	std::function<void(VirtKey, bool)> onVKey_;
 	std::function<void(VirtKey, float)> onVKeyAnalog_;
 	std::function<void(uint32_t, uint32_t)> updatePSPButtons_;
-	std::function<void(int, float, float)> setPSPAnalog_;
+	std::function<void(int, int, float, float)> setPSPAnalog_;
 	std::function<void(int, float, float)> setRawAnalog_;
 };
 

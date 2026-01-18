@@ -4,29 +4,56 @@
 #include <functional>
 
 #include "Common/UI/UIScreen.h"
+#include "Common/Render/TextureAtlas.h"
 #include "Common/System/System.h"
 #include "Core/ConfigValues.h"
-#include "UI/MiscScreens.h"
+#include "UI/BaseScreens.h"
 
-class TabbedUIDialogScreenWithGameBackground : public UIDialogScreenWithGameBackground {
+namespace UI {
+class TabHolder;
+}
+
+enum class TabDialogFlags {
+	Default = 0,
+	HorizontalOnlyIcons = 1,
+	VerticalShowIcons = 2,
+	AddAutoTitles = 4,
+	ContextMenuInPortrait = 8,
+};
+ENUM_CLASS_BITOPS(TabDialogFlags);
+
+enum class TabFlags {
+	Default = 0,
+	NonScrollable = 1,
+};
+ENUM_CLASS_BITOPS(TabFlags);
+
+class UITabbedBaseDialogScreen : public UIBaseDialogScreen {
 public:
-	TabbedUIDialogScreenWithGameBackground(const Path &gamePath) : UIDialogScreenWithGameBackground(gamePath) {}
+	UITabbedBaseDialogScreen(const Path &gamePath, TabDialogFlags flags = TabDialogFlags::Default) : UIBaseDialogScreen(gamePath), flags_(flags) {
+		ignoreBottomInset_ = true;
+	}
 
-	void AddTab(const char *tag, std::string_view title, std::function<void(UI::LinearLayout *)> createCallback, bool isSearch = false);
+	void AddTab(const char *tag, std::string_view title, ImageID imageId, std::function<void(UI::LinearLayout *)> createCallback, TabFlags flags = TabFlags::Default);
+	void AddTab(const char *tag, std::string_view title, std::function<void(UI::LinearLayout *)> createCallback, TabFlags flags = TabFlags::Default) {
+		AddTab(tag, title, ImageID::invalid(), createCallback, flags);
+	}
 	void CreateViews() override;
 
 protected:
 	// Load data and define your tabs here.
 	virtual void PreCreateViews() {}
 	virtual void CreateTabs() = 0;
-	virtual void CreateExtraButtons(UI::LinearLayout *verticalLayout, int margins) {}
+	virtual void CreateExtraButtons(UI::ViewGroup *verticalLayout, int margins) {}
 	virtual bool ShowSearchControls() const { return true; }
 	virtual void EnsureTabs();
+	virtual bool UsePopupMenuInPortrait() const { return false; }
+	virtual bool ForceHorizontalTabs() const { return false; }
 
-	void RecreateViews() override;
+	int GetCurrentTab() const;
+	void SetCurrentTab(int tab);
+
 	void sendMessage(UIMessage message, const char *value) override;
-
-	SettingInfoMessage *settingInfo_ = nullptr;
 
 private:
 	void ApplySearchFilter();
@@ -39,4 +66,6 @@ private:
 	// If we recreate the views while this is active we show it again
 	std::string oldSettingInfo_;
 	std::string searchFilter_;
+
+	TabDialogFlags flags_ = TabDialogFlags::Default;
 };

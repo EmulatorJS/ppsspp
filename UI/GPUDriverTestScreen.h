@@ -4,12 +4,13 @@
 #include "Common/UI/Context.h"
 #include "Common/UI/View.h"
 #include "Common/UI/ViewGroup.h"
+#include "Common/UI/TabHolder.h"
 
 #include "Common/Log.h"
-#include "UI/MiscScreens.h"
+#include "UI/BaseScreens.h"
 #include "Common/GPU/thin3d.h"
 
-class GPUDriverTestScreen : public UIDialogScreenWithBackground {
+class GPUDriverTestScreen : public UIBaseDialogScreen {
 public:
 	GPUDriverTestScreen();
 	~GPUDriverTestScreen();

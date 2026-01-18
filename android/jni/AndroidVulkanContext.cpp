@@ -70,13 +70,15 @@ bool AndroidVulkanContext::InitFromRenderThread(ANativeWindow *wnd, int desiredB
 		return false;
 	}
 
+	bool useMultiThreading = g_Config.bRenderMultiThreading;
+	if (g_Config.iInflightFrames == 1) {
+		useMultiThreading = false;
+	}
+	draw_ = Draw::T3DCreateVulkanContext(g_Vulkan, useMultiThreading);
+
+	VkPresentModeKHR presentMode = ConfigPresentModeToVulkan(draw_);
 	bool success = false;
-	if (g_Vulkan->InitSwapchain()) {
-		bool useMultiThreading = g_Config.bRenderMultiThreading;
-		if (g_Config.iInflightFrames == 1) {
-			useMultiThreading = false;
-		}
-		draw_ = Draw::T3DCreateVulkanContext(g_Vulkan, useMultiThreading);
+	if (g_Vulkan->InitSwapchain(presentMode)) {
 		SetGPUBackend(GPUBackend::VULKAN);
 		success = draw_->CreatePresets();  // Doesn't fail, we ship the compiler.
 		_assert_msg_(success, "Failed to compile preset shaders");
@@ -120,17 +122,15 @@ void AndroidVulkanContext::Shutdown() {
 
 void AndroidVulkanContext::Resize() {
 	INFO_LOG(Log::G3D, "AndroidVulkanContext::Resize begin (oldsize: %dx%d)", g_Vulkan->GetBackbufferWidth(), g_Vulkan->GetBackbufferHeight());
-
 	draw_->HandleEvent(Draw::Event::LOST_BACKBUFFER, g_Vulkan->GetBackbufferWidth(), g_Vulkan->GetBackbufferHeight());
 	g_Vulkan->DestroySwapchain();
+
+	// TODO: We should only destroy the surface here if the window changed. We can track this inside g_Vulkan.
 	g_Vulkan->DestroySurface();
-
-	VulkanContext::CreateInfo info{};
-	InitVulkanCreateInfoFromConfig(&info);
-	g_Vulkan->UpdateCreateInfo(info);
-
 	g_Vulkan->ReinitSurface();
-	g_Vulkan->InitSwapchain();
+
+	VkPresentModeKHR presentMode = ConfigPresentModeToVulkan(draw_);
+	g_Vulkan->InitSwapchain(presentMode);
 	draw_->HandleEvent(Draw::Event::GOT_BACKBUFFER, g_Vulkan->GetBackbufferWidth(), g_Vulkan->GetBackbufferHeight());
 	INFO_LOG(Log::G3D, "AndroidVulkanContext::Resize end (final size: %dx%d)", g_Vulkan->GetBackbufferWidth(), g_Vulkan->GetBackbufferHeight());
 }

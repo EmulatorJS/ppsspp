@@ -52,6 +52,7 @@
 #include "Core/Config.h"
 #include "Core/ConfigValues.h"
 #include "Core/System.h"
+#include "Core/FrameTiming.h"
 #include "Common/GPU/Vulkan/VulkanLoader.h"
 #include "Common/GPU/Vulkan/VulkanContext.h"
 
@@ -116,11 +117,6 @@ bool WindowsVulkanContext::Init(HINSTANCE hInst, HWND hWnd, std::string *error_m
 	}
 
 	vulkan_->InitSurface(WINDOWSYSTEM_WIN32, (void *)hInst, (void *)hWnd);
-	if (!vulkan_->InitSwapchain()) {
-		*error_message = vulkan_->InitError();
-		Shutdown();
-		return false;
-	}
 
 	bool useMultiThreading = g_Config.bRenderMultiThreading;
 	if (g_Config.iInflightFrames == 1) {
@@ -128,6 +124,14 @@ bool WindowsVulkanContext::Init(HINSTANCE hInst, HWND hWnd, std::string *error_m
 	}
 
 	draw_ = Draw::T3DCreateVulkanContext(vulkan_, useMultiThreading);
+
+	VkPresentModeKHR presentMode = ConfigPresentModeToVulkan(draw_);
+	if (!vulkan_->InitSwapchain(presentMode)) {
+		*error_message = vulkan_->InitError();
+		Shutdown();
+		return false;
+	}
+
 	SetGPUBackend(GPUBackend::VULKAN, vulkan_->GetPhysicalDeviceProperties(deviceNum).properties.deviceName);
 	bool success = draw_->CreatePresets();
 	_assert_msg_(success, "Failed to compile preset shaders");
@@ -164,10 +168,8 @@ void WindowsVulkanContext::Shutdown() {
 
 void WindowsVulkanContext::Resize() {
 	draw_->HandleEvent(Draw::Event::LOST_BACKBUFFER, vulkan_->GetBackbufferWidth(), vulkan_->GetBackbufferHeight());
-	vulkan_->DestroySwapchain();
-	VulkanContext::CreateInfo info{};
-	InitVulkanCreateInfoFromConfig(&info);
-	vulkan_->InitSwapchain();
+	VkPresentModeKHR presentMode = ConfigPresentModeToVulkan(draw_);
+	vulkan_->InitSwapchain(presentMode);
 	draw_->HandleEvent(Draw::Event::GOT_BACKBUFFER, vulkan_->GetBackbufferWidth(), vulkan_->GetBackbufferHeight());
 }
 

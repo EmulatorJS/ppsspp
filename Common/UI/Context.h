@@ -25,12 +25,12 @@ namespace Draw {
 
 class DrawBuffer;
 class TextDrawer;
+struct FontStyle;
 
 namespace UI {
 	struct Drawable;
 	struct EventParams;
 	struct Theme;
-	struct FontStyle;
 	class Event;
 	class View;
 }
@@ -54,7 +54,7 @@ struct AtlasData {
 	Draw::Texture *texture;
 };
 
-typedef std::function<AtlasData(Draw::DrawContext *, AtlasChoice, float dpiScale)> UIAtlasProviderFunc;
+typedef std::function<AtlasData(Draw::DrawContext *, AtlasChoice, float dpiScale, bool invalidate)> UIAtlasProviderFunc;
 
 class UIContext {
 public:
@@ -91,11 +91,11 @@ public:
 
 	// High level drawing functions. They generally assume the default texture to be bounds.
 
-	void SetFontStyle(const UI::FontStyle &style);
-	const UI::FontStyle &GetFontStyle() { return *fontStyle_; }
+	void SetFontStyle(const FontStyle &style);
+	const FontStyle &GetFontStyle() { return *fontStyle_; }
 	void SetFontScale(float scaleX, float scaleY);
-	void MeasureText(const UI::FontStyle &style, float scaleX, float scaleY, std::string_view str, float *x, float *y, int align = 0) const;
-	void MeasureTextRect(const UI::FontStyle &style, float scaleX, float scaleY, std::string_view str, const Bounds &bounds, float *x, float *y, int align = 0) const;
+	void MeasureText(const FontStyle &style, float scaleX, float scaleY, std::string_view str, float *x, float *y, int align = 0) const;
+	void MeasureTextRect(const FontStyle &style, float scaleX, float scaleY, std::string_view str, float maxWidth, float *x, float *y, int align = 0) const;
 	void DrawText(std::string_view str, float x, float y, uint32_t color, int align = 0);
 	void DrawTextShadow(std::string_view str, float x, float y, uint32_t color, int align = 0);
 	void DrawTextRect(std::string_view str, const Bounds &bounds, uint32_t color, int align = 0);
@@ -103,7 +103,7 @@ public:
 	// Will squeeze the text into the bounds if needed.
 	void DrawTextRectSqueeze(std::string_view str, const Bounds &bounds, uint32_t color, int align = 0);
 
-	float CalculateTextScale(std::string_view str, float availWidth, float availHeight) const;
+	float CalculateTextScale(std::string_view str, float availWidth) const;
 
 	void FillRect(const UI::Drawable &drawable, const Bounds &bounds);
 	void DrawRectDropShadow(const Bounds &bounds, float radius, float alpha, uint32_t color = 0);
@@ -113,8 +113,8 @@ public:
 	// in dps, like dp_xres and dp_yres
 	void SetBounds(const Bounds &b) { bounds_ = b; }
 	const Bounds &GetBounds() const { return bounds_; }
-	Bounds GetLayoutBounds() const;
-	Draw::DrawContext *GetDrawContext() { return draw_; }
+	Bounds GetLayoutBounds(bool ignoreBottomInset = false) const;
+	Draw::DrawContext *GetDrawContext() const { return draw_; }
 	const UI::Theme &GetTheme() const {
 		return *theme;
 	}
@@ -126,12 +126,8 @@ public:
 
 	void SetTheme(const UI::Theme *theme) { this->theme = theme; }
 	void SetAtlasProvider(UIAtlasProviderFunc func) { atlasProvider_ = func; }
-	void InvalidateAtlas() {
-		atlasInvalid_ = true;  // will cause it to be reloaded on the next frame.
-	}
+	void InvalidateAtlas();
 private:
-	void GenerateUIAtlas();
-
 	Draw::DrawContext *draw_ = nullptr;
 	Bounds bounds_;
 
@@ -141,7 +137,7 @@ private:
 
 	float fontScaleX_ = 1.0f;
 	float fontScaleY_ = 1.0f;
-	UI::FontStyle *fontStyle_ = nullptr;
+	FontStyle *fontStyle_ = nullptr;
 	TextDrawer *textDrawer_ = nullptr;
 
 	Draw::SamplerState *sampler_ = nullptr;
@@ -156,5 +152,5 @@ private:
 	std::vector<UITransform> transformStack_;
 
 	UIAtlasProviderFunc atlasProvider_{};
-	bool atlasInvalid_ = true;
+	bool atlasInvalid_ = false;
 };

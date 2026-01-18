@@ -1,5 +1,6 @@
 #include "ppsspp_config.h"
 
+#include <algorithm>
 #include "Common/System/Display.h"
 #include "Common/GPU/thin3d.h"
 #include "Common/Data/Hash/Hash.h"
@@ -13,6 +14,7 @@
 #include "Common/Render/Text/draw_text_qt.h"
 #include "Common/Render/Text/draw_text_android.h"
 #include "Common/Render/Text/draw_text_sdl.h"
+#include "Common/StringUtils.h"
 
 TextDrawer::TextDrawer(Draw::DrawContext *draw) : draw_(draw) {
 	// These probably shouldn't be state.
@@ -47,7 +49,7 @@ void TextDrawer::DrawString(DrawBuffer &target, std::string_view str, float x, f
 		return;
 	}
 
-	CacheKey key{ std::string(str), fontHash_ };
+	const CacheKeyType key{ std::string(str), fontStyle_ };
 	target.Flush(true);
 
 	TextStringEntry *entry;
@@ -124,7 +126,12 @@ void TextDrawer::MeasureString(std::string_view str, float *w, float *h) {
 		return;
 	}
 
-	CacheKey key{ std::string(str), fontHash_ };
+	// Clamp the size to something sane.
+	if (str.size() > MAX_TEXT_LENGTH) {
+		str = str.substr(0, MAX_TEXT_LENGTH);
+	}
+
+	const CacheKeyType key{std::string(str), fontStyle_};
 
 	TextMeasureEntry *entry;
 	auto iter = sizeCache_.find(key);
@@ -146,15 +153,20 @@ void TextDrawer::MeasureString(std::string_view str, float *w, float *h) {
 	*h = entry->height * fontScaleY_ * dpiScale_;
 }
 
-void TextDrawer::MeasureStringRect(std::string_view str, const Bounds &bounds, float *w, float *h, int align) {
+void TextDrawer::MeasureStringRect(std::string_view str, float maxWidth, float *w, float *h, int align) {
 	const int wrap = align & (FLAG_WRAP_TEXT | FLAG_ELLIPSIZE_TEXT);
+
+	// Clamp the size to something sane.
+	if (str.size() > MAX_TEXT_LENGTH) {
+		str = str.substr(0, MAX_TEXT_LENGTH);
+	}
 
 	float plainW, plainH;
 	MeasureString(str, &plainW, &plainH);
 
-	if (wrap && plainW > bounds.w) {
+	if (wrap && plainW > maxWidth) {
 		std::string toMeasure = std::string(str);
-		WrapString(toMeasure, toMeasure, bounds.w, wrap);
+		WrapString(toMeasure, toMeasure, maxWidth, wrap);
 		MeasureString(toMeasure, w, h);
 	} else {
 		*w = plainW;
@@ -179,16 +191,25 @@ void TextDrawer::DrawStringRect(DrawBuffer &target, std::string_view str, const 
 		y = bounds.y2();
 	}
 
+	// Clamp the size to something sane.
+	if (str.size() > MAX_TEXT_LENGTH) {
+		str = str.substr(0, MAX_TEXT_LENGTH);
+	}
+
 	std::string toDraw(str);
 	int wrap = align & (FLAG_WRAP_TEXT | FLAG_ELLIPSIZE_TEXT);
 	if (wrap) {
 		WrapString(toDraw, str, bounds.w, wrap);
 	}
-
 	DrawString(target, toDraw, x, y, color, align);
 }
 
 bool TextDrawer::DrawStringBitmapRect(std::vector<uint8_t> &bitmapData, TextStringEntry &entry, Draw::DataFormat texFormat, std::string_view str, const Bounds &bounds, int align, bool fullColor) {
+	// Clamp the size to something sane.
+	if (str.size() > MAX_TEXT_LENGTH) {
+		str = str.substr(0, MAX_TEXT_LENGTH);
+	}
+
 	std::string toDraw(str);
 	int wrap = align & (FLAG_WRAP_TEXT | FLAG_ELLIPSIZE_TEXT);
 	if (wrap) {
@@ -204,7 +225,7 @@ void TextDrawer::ClearCache() {
 	}
 	cache_.clear();
 	sizeCache_.clear();
-	fontHash_ = 0;
+	fontStyle_ = {};
 }
 
 void TextDrawer::OncePerFrame() {
@@ -270,4 +291,81 @@ TextDrawer *TextDrawer::Create(Draw::DrawContext *draw) {
 		drawer = nullptr;
 	}
 	return drawer;
+}
+
+struct FontDesc {
+	FontFamily family;
+	FontStyleFlags flags;
+	std::string_view fontName;
+	std::string_view filename;
+};
+
+// Append ".ttf" to get the actual filenames.
+static const FontDesc g_fontDescs[] = {
+	{FontFamily::SansSerif, FontStyleFlags::Default, "Roboto Condensed", "Roboto_Condensed-Regular"},
+	{FontFamily::SansSerif, FontStyleFlags::Bold, "Roboto Condensed", "Roboto_Condensed-Bold"},
+	{FontFamily::SansSerif, FontStyleFlags::Italic, "Roboto Condensed", "Roboto_Condensed-Italic"},
+	{FontFamily::SansSerif, FontStyleFlags::Light, "Roboto Condensed", "Roboto_Condensed-Light"},
+	{FontFamily::Fixed, FontStyleFlags::Default, "Inconsolata", "Inconsolata-Regular"},
+};
+
+std::map<FontFamily, std::string> g_fontOverrides;
+
+void SetFontNameOverride(FontFamily family, std::string_view overrideFont) {
+	g_fontOverrides[family] = std::string(overrideFont);
+}
+
+std::vector<std::string> GetAllFontFilenames() {
+	std::vector<std::string> vec;
+	for (const auto &desc : g_fontDescs) {
+		vec.emplace_back(desc.filename);
+	}
+	// uniquify idiom
+	std::sort(vec.begin(), vec.end());
+	vec.erase(std::unique(vec.begin(), vec.end()), vec.end());
+	return vec;
+}
+
+std::string GetFilenameForFontStyle(const FontStyle &font) {
+	for (const auto &desc : g_fontDescs) {
+		if (desc.flags == font.flags && desc.family == font.family) {
+			return std::string(desc.filename);
+		}
+	}
+
+	// If nothing matched, just return the first font of the requested family.
+	for (const auto &desc : g_fontDescs) {
+		if (desc.family == font.family) {
+			return std::string(desc.filename);
+		}
+	}
+
+	_dbg_assert_(false);
+	return "";
+}
+
+std::string GetFontNameForFontStyle(const FontStyle &font, FontStyleFlags *outFlags) {
+	auto override = g_fontOverrides.find(font.family);
+	if (override != g_fontOverrides.end()) {
+		*outFlags = font.flags;
+		return override->second;
+	}
+
+	for (const auto &desc : g_fontDescs) {
+		if (desc.flags == font.flags && desc.family == font.family) {
+			*outFlags = font.flags;
+			return std::string(desc.fontName);
+		}
+	}
+	// If nothing matched, just return the first font of the requested family.
+	for (const auto &desc : g_fontDescs) {
+		if (desc.family == font.family) {
+			// Return the flags of the font we found.
+			// TODO: Some platforms can actually synthesize traits (bold, italic) if missing.
+			*outFlags = desc.flags;
+			return std::string(desc.fontName);
+		}
+	}
+
+	return "";
 }

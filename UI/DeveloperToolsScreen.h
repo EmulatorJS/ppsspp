@@ -4,9 +4,9 @@
 
 #include "UI/TabbedDialogScreen.h"
 
-class DeveloperToolsScreen : public TabbedUIDialogScreenWithGameBackground {
+class DeveloperToolsScreen : public UITabbedBaseDialogScreen {
 public:
-	DeveloperToolsScreen(const Path &gamePath) : TabbedUIDialogScreenWithGameBackground(gamePath) {}
+	DeveloperToolsScreen(const Path &gamePath) : UITabbedBaseDialogScreen(gamePath, TabDialogFlags::AddAutoTitles) {}
 
 	void CreateTabs() override;
 	void update() override;
@@ -25,10 +25,10 @@ private:
 	void CreateGraphicsTab(UI::LinearLayout *list);
 	void CreateNetworkTab(UI::LinearLayout *list);
 	void CreateUITab(UI::LinearLayout *list);
+	void CreateCrashHistoryTab(UI::LinearLayout *list);
 
 	void OnLoggingChanged(UI::EventParams &e);
 	void OnOpenTexturesIniFile(UI::EventParams &e);
-	void OnLogConfig(UI::EventParams &e);
 	void OnJitAffectingSetting(UI::EventParams &e);
 	void OnJitDebugTools(UI::EventParams &e);
 	void OnRemoteDebugger(UI::EventParams &e);
@@ -58,4 +58,5 @@ private:
 	UI::InfoItem* MIPSTracerPath = nullptr;
 
 	int testSliderValue_ = 0;
+	bool pretendIngame_ = false;
 };

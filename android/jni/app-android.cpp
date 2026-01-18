@@ -172,8 +172,9 @@ static float g_safeInsetBottom = 0.0;
 
 static jmethodID postCommand;
 static jmethodID getDebugString;
+static jmethodID getNativeCrashHistory;
 
-static jobject nativeActivity;
+static jobject ppssppActivity;
 
 static std::atomic<bool> exitRenderLoop;
 static std::atomic<bool> renderLoopRunning;
@@ -241,7 +242,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *pjvm, void *reserved) {
 	gJvm = pjvm;  // cache the JavaVM pointer
 	auto env = getEnv();
 	//replace with one of your classes in the line below
-	auto randomClass = env->FindClass("org/ppsspp/ppsspp/NativeActivity");
+	auto randomClass = env->FindClass("org/ppsspp/ppsspp/PpssppActivity");
 	jclass classClass = env->GetObjectClass(randomClass);
 	auto classLoaderClass = env->FindClass("java/lang/ClassLoader");
 	auto getClassLoaderMethod = env->GetMethodID(classClass, "getClassLoader",
@@ -300,7 +301,7 @@ static void EmuThreadFunc() {
 		NativeFrame(graphicsContext);
 
 		std::lock_guard<std::mutex> guard(frameCommandLock);
-		if (!nativeActivity) {
+		if (!ppssppActivity) {
 			ERROR_LOG(Log::System, "No activity, clearing commands");
 			while (!frameCommands.empty())
 				frameCommands.pop();
@@ -359,7 +360,7 @@ void System_Vibrate(int length_ms) {
 	PushCommand("vibrate", temp);
 }
 
-void System_LaunchUrl(LaunchUrlType urlType, const char *url) {
+void System_LaunchUrl(LaunchUrlType urlType, std::string_view url) {
 	switch (urlType) {
 	case LaunchUrlType::BROWSER_URL: PushCommand("launchBrowser", url); break;
 	case LaunchUrlType::MARKET_URL: PushCommand("launchMarket", url); break;
@@ -474,12 +475,19 @@ bool System_GetPropertyBool(SystemProperty prop) {
 		return (androidVersion >= 21) && (deviceType != DEVICE_TYPE_VR);  // when ACTION_OPEN_DOCUMENT_TREE was added
 	case SYSPROP_SUPPORTS_OPEN_FILE_IN_EDITOR:
 		return false;  // Update if we add support in FileUtil.cpp: OpenFileInEditor
+	case SYSPROP_SUPPORTS_SHARE_TEXT:
+		return true;
 	case SYSPROP_APP_GOLD:
 #ifdef GOLD
 		return true;
 #else
 		return false;
 #endif
+	case SYSPROP_USE_IAP:
+		// Not yet implemented, we use a separate gold app on Android
+		return false;
+	case SYSPROP_USE_APP_STORE:
+		return true;
 	case SYSPROP_CAN_JIT:
 		return true;
 	case SYSPROP_ANDROID_SCOPED_STORAGE:
@@ -517,13 +525,13 @@ bool System_GetPropertyBool(SystemProperty prop) {
 }
 
 std::string Android_GetInputDeviceDebugString() {
-	if (!nativeActivity) {
+	if (!ppssppActivity) {
 		return "(N/A)";
 	}
 	auto env = getEnv();
 
 	jstring jparam = env->NewStringUTF("InputDevice");
-	jstring jstr = (jstring)env->CallObjectMethod(nativeActivity, getDebugString, jparam);
+	jstring jstr = (jstring)env->CallObjectMethod(ppssppActivity, getDebugString, jparam);
 	if (!jstr) {
 		env->DeleteLocalRef(jparam);
 		return "(N/A)";
@@ -537,6 +545,34 @@ std::string Android_GetInputDeviceDebugString() {
 	return retVal;
 }
 
+std::vector<std::string> Android_GetNativeCrashHistory(int maxEntries) {
+	std::vector<std::string> crashHistory;
+	if (!ppssppActivity || !getNativeCrashHistory) {
+		return crashHistory;
+	}
+	auto env = getEnv();
+	jobject jlist = env->CallObjectMethod(ppssppActivity, getNativeCrashHistory, maxEntries);
+	if (!jlist) {
+		return crashHistory;
+	}
+	jclass arrayListClass = env->GetObjectClass(jlist);
+	jmethodID sizeMethod = env->GetMethodID(arrayListClass, "size", "()I");
+	jmethodID getMethod = env->GetMethodID(arrayListClass, "get", "(I)Ljava/lang/Object;");
+	jint listSize = env->CallIntMethod(jlist, sizeMethod);
+	for (jint i = 0; i < listSize; i++) {
+		jstring jstr = (jstring)env->CallObjectMethod(jlist, getMethod, i);
+		if (jstr) {
+			const char *charArray = env->GetStringUTFChars(jstr, nullptr);
+			crashHistory.emplace_back(charArray);
+			env->ReleaseStringUTFChars(jstr, charArray);
+			env->DeleteLocalRef(jstr);
+		}
+	}
+	env->DeleteLocalRef(arrayListClass);
+	env->DeleteLocalRef(jlist);
+	return crashHistory;
+}
+
 std::string GetJavaString(JNIEnv *env, jstring jstr) {
 	if (!jstr)
 		return "";
@@ -546,21 +582,24 @@ std::string GetJavaString(JNIEnv *env, jstring jstr) {
 	return cpp_string;
 }
 
-extern "C" void Java_org_ppsspp_ppsspp_NativeActivity_registerCallbacks(JNIEnv *env, jobject obj) {
-	nativeActivity = env->NewGlobalRef(obj);
+extern "C" void Java_org_ppsspp_ppsspp_PpssppActivity_registerCallbacks(JNIEnv *env, jobject obj) {
+	ppssppActivity = env->NewGlobalRef(obj);
 	postCommand = env->GetMethodID(env->GetObjectClass(obj), "postCommand", "(Ljava/lang/String;Ljava/lang/String;)V");
 	getDebugString = env->GetMethodID(env->GetObjectClass(obj), "getDebugString", "(Ljava/lang/String;)Ljava/lang/String;");
+	getNativeCrashHistory = env->GetMethodID(env->GetObjectClass(obj), "getNativeCrashHistory", "(I)Ljava/util/ArrayList;");
+
 	_dbg_assert_(postCommand);
 	_dbg_assert_(getDebugString);
+	// It's OK if getNativeCrashHistory is missing.
 
 	Android_RegisterStorageCallbacks(env, obj);
-	Android_StorageSetActivity(nativeActivity);
+	Android_StorageSetActivity(ppssppActivity);
 }
 
-extern "C" void Java_org_ppsspp_ppsspp_NativeActivity_unregisterCallbacks(JNIEnv *env, jobject obj) {
+extern "C" void Java_org_ppsspp_ppsspp_PpssppActivity_unregisterCallbacks(JNIEnv *env, jobject obj) {
 	Android_StorageSetActivity(nullptr);
-	env->DeleteGlobalRef(nativeActivity);
-	nativeActivity = nullptr;
+	env->DeleteGlobalRef(ppssppActivity);
+	ppssppActivity = nullptr;
 }
 
 // This is now only used as a trigger for GetAppInfo as a function to all before Init.
@@ -592,7 +631,7 @@ static std::string QueryConfig(std::string_view query) {
 		snprintf(temp, sizeof(temp), "%d", g_Config.iScreenRotation);
 		return temp;
 	} else if (query == "immersiveMode") {
-		return g_Config.bImmersiveMode ? "1" : "0";
+		return g_Config.GetDisplayLayoutConfig(g_display.GetDeviceOrientation()).bImmersiveMode ? "1" : "0";
 	} else if (query == "sustainedPerformanceMode") {
 		return g_Config.bSustainedPerformanceMode ? "1" : "0";
 	} else if (query == "androidJavaGL") {
@@ -807,7 +846,7 @@ retry:
 
 	if (IsVREnabled()) {
 		Version gitVer(PPSSPP_GIT_VERSION);
-		InitVROnAndroid(gJvm, nativeActivity, systemName.c_str(), gitVer.ToInteger(), "PPSSPP");
+		InitVROnAndroid(gJvm, ppssppActivity, systemName.c_str(), gitVer.ToInteger(), "PPSSPP");
 		SetVRCallbacks(NativeAxis, NativeKey, NativeTouch);
 	}
 }
@@ -1193,7 +1232,7 @@ extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeApp_touch
 	touch.id = pointerId;
 	touch.x = x * display_scale_x * g_display.dpi_scale_x;
 	touch.y = y * display_scale_y * g_display.dpi_scale_y;
-	touch.flags = code;
+	touch.flags = (TouchInputFlags)code;
 	NativeTouch(touch);
 }
 
@@ -1209,9 +1248,9 @@ extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_keyDown(JNIEnv *, jclass, j
 	KeyInput keyInput;
 	keyInput.deviceId = (InputDeviceID)deviceId;
 	keyInput.keyCode = (InputKeyCode)key;
-	keyInput.flags = KEY_DOWN;
+	keyInput.flags = KeyInputFlags::DOWN;
 	if (isRepeat) {
-		keyInput.flags |= KEY_IS_REPEAT;
+		keyInput.flags |= KeyInputFlags::IS_REPEAT;
 	}
 	return NativeKey(keyInput);
 }
@@ -1228,7 +1267,19 @@ extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_keyUp(JNIEnv *, jclass, jin
 	KeyInput keyInput;
 	keyInput.deviceId = (InputDeviceID)deviceId;
 	keyInput.keyCode = (InputKeyCode)key;
-	keyInput.flags = KEY_UP;
+	keyInput.flags = KeyInputFlags::UP;
+	return NativeKey(keyInput);
+}
+
+extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_keyChar(JNIEnv *, jclass, jint deviceId, jint unicodeChar) {
+	if (!renderer_inited) {
+		return false; // could probably return true here too..
+	}
+
+	KeyInput keyInput;
+	keyInput.deviceId = (InputDeviceID)deviceId;
+	keyInput.unicodeChar = unicodeChar;
+	keyInput.flags = KeyInputFlags::CHAR;
 	return NativeKey(keyInput);
 }
 
@@ -1280,7 +1331,7 @@ extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_mouse(
 
 	if (button == 0) {
 		// It's a pure mouse move.
-		input.flags = TOUCH_MOUSE | TOUCH_MOVE;
+		input.flags = TouchInputFlags::MOUSE | TouchInputFlags::MOVE;
 		input.x = x;
 		input.y = y;
 		input.id = 0;
@@ -1290,10 +1341,10 @@ extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_mouse(
 		input.y = y;
 		switch (action) {
 		case 1:
-			input.flags = TOUCH_MOUSE | TOUCH_DOWN;
+			input.flags = TouchInputFlags::MOUSE | TouchInputFlags::DOWN;
 			break;
 		case 2:
-			input.flags = TOUCH_MOUSE | TOUCH_UP;
+			input.flags = TouchInputFlags::MOUSE | TouchInputFlags::UP;
 			break;
 		}
 		input.id = 0;
@@ -1311,7 +1362,7 @@ extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_mouse(
 		case 3: input.keyCode = NKCODE_EXT_MOUSEBUTTON_3; break;
 		default: WARN_LOG(Log::System, "Unexpected mouse button %d", button);
 		}
-		input.flags = action == 1 ? KEY_DOWN : KEY_UP;
+		input.flags = action == 1 ? KeyInputFlags::DOWN : KeyInputFlags::UP;
 		if (input.keyCode != 0) {
 			NativeKey(input);
 		}
@@ -1338,7 +1389,7 @@ extern "C" jboolean Java_org_ppsspp_ppsspp_NativeApp_mouseWheelEvent(
 	}
 	// There's no separate keyup event for mousewheel events,
 	// so we release it with a slight delay.
-	key.flags = KEY_DOWN | KEY_HASWHEELDELTA | (wheelDelta << 16);
+	key.flags = (KeyInputFlags)((u32)KeyInputFlags::DOWN | (u32)KeyInputFlags::HAS_WHEEL_DELTA | (wheelDelta << 16));
 	NativeKey(key);
 	return true;
 }
@@ -1575,7 +1626,7 @@ static void ProcessFrameCommands(JNIEnv *env) {
 
 		jstring cmd = env->NewStringUTF(frameCmd.command.c_str());
 		jstring param = env->NewStringUTF(frameCmd.params.c_str());
-		env->CallVoidMethod(nativeActivity, postCommand, cmd, param);
+		env->CallVoidMethod(ppssppActivity, postCommand, cmd, param);
 		env->DeleteLocalRef(cmd);
 		env->DeleteLocalRef(param);
 	}
@@ -1587,7 +1638,7 @@ static void VulkanEmuThread(ANativeWindow *wnd);
 
 // This runs in Vulkan mode only.
 // This handles the entire lifecycle of the Vulkan context, init and exit.
-extern "C" jboolean JNICALL Java_org_ppsspp_ppsspp_NativeActivity_runVulkanRenderLoop(JNIEnv * env, jobject obj, jobject _surf) {
+extern "C" jboolean JNICALL Java_org_ppsspp_ppsspp_PpssppActivity_runVulkanRenderLoop(JNIEnv * env, jobject obj, jobject _surf) {
 	_assert_(!useCPUThread);
 
 	if (!graphicsContext) {
@@ -1613,7 +1664,7 @@ extern "C" jboolean JNICALL Java_org_ppsspp_ppsspp_NativeActivity_runVulkanRende
 	return true;
 }
 
-extern "C" void JNICALL Java_org_ppsspp_ppsspp_NativeActivity_requestExitVulkanRenderLoop(JNIEnv * env, jobject obj) {
+extern "C" void JNICALL Java_org_ppsspp_ppsspp_PpssppActivity_requestExitVulkanRenderLoop(JNIEnv * env, jobject obj) {
 	if (!renderLoopRunning) {
 		ERROR_LOG(Log::System, "Render loop already exited");
 		return;
@@ -1706,7 +1757,7 @@ Java_org_ppsspp_ppsspp_ShortcutActivity_queryGameInfo(JNIEnv * env, jclass, jobj
 	jobject activityRef = nullptr;
 
 	bool teardownThreadManager = false;
-	// Maybe we should just check nativeActivity instead.
+	// Maybe we should just check ppssppActivity instead.
 	if (!g_threadManager.IsInitialized()) {
 		teardownThreadManager = true;
 		g_threadManager.Init(1, 1);

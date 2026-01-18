@@ -52,8 +52,10 @@ static ImColor scaleColor(ImColor color, float factor) {
 }
 
 bool ImDisasmView::getDisasmAddressText(u32 address, char *dest, size_t bufSize, bool abbreviateLabels, bool showData) {
-	if (PSP_GetBootState() != BootState::Complete)
+	if (PSP_GetBootState() != BootState::Complete) {
+		dest[0] = '\0';
 		return false;
+	}
 
 	return GetDisasmAddressText(address, dest, bufSize, abbreviateLabels, showData, displaySymbols_);
 }
@@ -98,7 +100,7 @@ void ImDisasmView::assembleOpcode(u32 address, const std::string &defaultText) {
 		// try to assemble the input if it failed
 	}
 
-	result = MIPSAsm::MipsAssembleOpcode(op.c_str(), debugger, address);
+	result = MIPSAsm::MipsAssembleOpcode(op, debugger, address);
 	Reporting::NotifyDebugger();
 	if (result == true)
 	{

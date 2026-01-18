@@ -37,6 +37,7 @@
 #include "Common/Profiler/Profiler.h"
 #include "Common/GPU/thin3d.h"
 
+#include "GPU/GPUCommon.h"
 #include "GPU/Software/DrawPixel.h"
 #include "GPU/Software/Rasterizer.h"
 #include "GPU/Software/Sampler.h"
@@ -451,7 +452,7 @@ SoftGPU::SoftGPU(GraphicsContext *gfxCtx, Draw::DrawContext *draw)
 
 	NotifyConfigChanged();
 	NotifyDisplayResized();
-	NotifyRenderResized();
+	// NotifyRenderResized();  // hopefully not needed here.
 }
 
 void SoftGPU::DeviceLost() {
@@ -531,7 +532,7 @@ void SoftGPU::ConvertTextureDescFrom16(Draw::TextureDesc &desc, int srcwidth, in
 }
 
 // Copies RGBA8 data from RAM to the currently bound render target.
-void SoftGPU::CopyToCurrentFboFromDisplayRam(int srcwidth, int srcheight) {
+void SoftGPU::CopyToCurrentFboFromDisplayRam(const DisplayLayoutConfig &config, int srcwidth, int srcheight) {
 	if (!draw_ || !presentation_)
 		return;
 	float u0 = 0.0f;
@@ -560,7 +561,7 @@ void SoftGPU::CopyToCurrentFboFromDisplayRam(int srcwidth, int srcheight) {
 	desc.tag = "SoftGPU";
 	bool hasImage = true;
 
-	OutputFlags outputFlags = g_Config.iDisplayFilter == SCALE_NEAREST ? OutputFlags::NEAREST : OutputFlags::LINEAR;
+	OutputFlags outputFlags = config.iDisplayFilter == SCALE_NEAREST ? OutputFlags::NEAREST : OutputFlags::LINEAR;
 	bool hasPostShader = presentation_ && presentation_->HasPostShader();
 
 	if (PSP_CoreParameter().compat.flags().DarkStalkersPresentHack && displayFormat_ == GE_FORMAT_5551 && g_DarkStalkerStretch != DSStretch::Off) {
@@ -642,20 +643,20 @@ void SoftGPU::CopyToCurrentFboFromDisplayRam(int srcwidth, int srcheight) {
 	}
 
 	presentation_->SourceTexture(fbTex, desc.width, desc.height);
-	presentation_->CopyToOutput(outputFlags, g_Config.iInternalScreenRotation, u0, v0, u1, v1);
+	presentation_->CopyToOutput(config, outputFlags, config.iInternalScreenRotation, u0, v0, u1, v1);
 }
 
-void SoftGPU::CopyDisplayToOutput(bool reallyDirty) {
+void SoftGPU::CopyDisplayToOutput(const DisplayLayoutConfig &config, bool reallyDirty) {
 	drawEngine_->transformUnit.Flush(this, "output");
 	// The display always shows 480x272.
-	CopyToCurrentFboFromDisplayRam(FB_WIDTH, FB_HEIGHT);
+	CopyToCurrentFboFromDisplayRam(config, FB_WIDTH, FB_HEIGHT);
 	MarkDirty(displayFramebuf_, displayStride_, 272, displayFormat_, SoftGPUVRAMDirty::CLEAR);
 }
 
-void SoftGPU::BeginHostFrame() {
-	GPUCommon::BeginHostFrame();
+void SoftGPU::BeginHostFrame(const DisplayLayoutConfig &config) {
+	GPUCommon::BeginHostFrame(config);
 	if (presentation_) {
-		presentation_->BeginFrame();
+		presentation_->BeginFrame(config);
 	}
 }
 
@@ -720,9 +721,9 @@ bool SoftGPU::ClearDirty(uint32_t addr, uint32_t bytes, SoftGPUVRAMDirty value) 
 	return result;
 }
 
-void SoftGPU::NotifyRenderResized() {
+void SoftGPU::NotifyRenderResized(const DisplayLayoutConfig &config) {
 	// Force the render params to 480x272 so other things work.
-	if (g_Config.IsPortrait()) {
+	if (config.InternalRotationIsPortrait()) {
 		PSP_CoreParameter().renderWidth = 272;
 		PSP_CoreParameter().renderHeight = 480;
 	} else {
@@ -739,17 +740,16 @@ void SoftGPU::CheckDisplayResized() {
 	if (displayResized_ && presentation_) {
 		presentation_->UpdateDisplaySize(PSP_CoreParameter().pixelWidth, PSP_CoreParameter().pixelHeight);
 		presentation_->UpdateRenderSize(PSP_CoreParameter().renderWidth, PSP_CoreParameter().renderHeight);
-		presentation_->UpdatePostShader();
 		displayResized_ = false;
 	}
 }
 
-void SoftGPU::CheckConfigChanged() {
+void SoftGPU::CheckConfigChanged(const DisplayLayoutConfig &config) {
 	if (configChanged_) {
 		drawEngineCommon_->NotifyConfigChanged();
 		BuildReportingInfo();
 		if (presentation_) {
-			presentation_->UpdatePostShader();
+			presentation_->UpdatePostShader(config);
 		}
 		configChanged_ = false;
 	}
@@ -1003,7 +1003,7 @@ void SoftGPU::Execute_LoadClut(u32 op, u32 diff) {
 
 	bool changed = false;
 	if (Memory::IsValidAddress(clutAddr)) {
-		u32 validSize = Memory::ValidSize(clutAddr, clutTotalBytes);
+		u32 validSize = Memory::ClampValidSizeAt(clutAddr, clutTotalBytes);
 		changed = memcmp(clut, Memory::GetPointerUnchecked(clutAddr), validSize) != 0;
 		if (changed)
 			Memory::MemcpyUnchecked(clut, clutAddr, validSize);

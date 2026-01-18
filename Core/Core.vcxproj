@@ -926,6 +926,7 @@
     <ClCompile Include="RetroAchievements.cpp" />
     <ClCompile Include="SaveState.cpp" />
     <ClCompile Include="MIPS\MIPSStackWalk.cpp" />
+    <ClCompile Include="SaveStateRewind.cpp" />
     <ClCompile Include="Screenshot.cpp" />
     <ClCompile Include="System.cpp" />
     <ClCompile Include="TiltEventProcessor.cpp" />
@@ -936,6 +937,7 @@
     <ClCompile Include="Util\GameDB.cpp" />
     <ClCompile Include="Util\GameManager.cpp" />
     <ClCompile Include="Util\MemStick.cpp" />
+    <ClCompile Include="Util\PathUtil.cpp" />
     <ClCompile Include="Util\PortManager.cpp" />
     <ClCompile Include="Util\PPGeDraw.cpp" />
     <ClCompile Include="..\ext\xxhash.c">
@@ -1294,6 +1296,7 @@
     <ClInclude Include="RetroAchievements.h" />
     <ClInclude Include="SaveState.h" />
     <ClInclude Include="MIPS\MIPSStackWalk.h" />
+    <ClInclude Include="SaveStateRewind.h" />
     <ClInclude Include="Screenshot.h" />
     <ClInclude Include="System.h" />
     <ClInclude Include="TiltEventProcessor.h" />
@@ -1304,6 +1307,7 @@
     <ClInclude Include="Util\GameDB.h" />
     <ClInclude Include="Util\GameManager.h" />
     <ClInclude Include="Util\MemStick.h" />
+    <ClInclude Include="Util\PathUtil.h" />
     <ClInclude Include="Util\PortManager.h" />
     <ClInclude Include="Util\PPGeDraw.h" />
     <ClInclude Include="..\ext\xxhash.h" />

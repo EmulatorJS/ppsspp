@@ -8,22 +8,35 @@
 #include "Common/Render/TextureAtlas.h"
 
 struct ImageU8 {
-	std::vector<std::vector<u8>> dat;
 	void resize(int x, int y) {
-		dat.resize(y);
-		for (int i = 0; i < y; i++)
-			dat[i].resize(x);
+		data.resize(x * y);
+		w = x;
+		h = y;
 	}
 	int width() const {
-		return (int)dat[0].size();
+		return w;
 	}
 	int height() const {
-		return (int)dat.size();
+		return h;
 	}
-	void set(int sx, int sy, int ex, int ey, unsigned char fil) {
-		for (int y = sy; y < ey; y++)
-			std::fill(dat[y].begin() + sx, dat[y].begin() + ex, fil);
+	u8 get(int x, int y) const {
+		return data[y * w + x];
 	}
+	void set(int sx, int sy, int ex, int ey, unsigned char value) {
+		for (int y = sy; y < ey; y++) {
+			std::fill(data.begin() + (y * w + sx), data.begin() + (y * w + ex), value);
+		}
+	}
+	u8 *line(int y) {
+		return data.data() + y * w;
+	}
+	const u8 *line(int y) const {
+		return data.data() + y * w;
+	}
+private:
+	std::vector<u8> data;
+	int w;
+	int h;
 };
 
 struct Image {
@@ -32,6 +45,12 @@ struct Image {
 	Image &operator=(const Image &) = delete;
 	Image(Image &&) = default;
 	Image &operator=(Image &&) = default;
+
+	void clear() {
+		dat.clear();
+		w = 0;
+		h = 0;
+	}
 
 	float scale = 1.0f;
 
@@ -85,7 +104,7 @@ struct Data {
 	int w, h;
 	// dimensions of its spot in the world
 	int sx, sy, ex, ey;
-	// offset from the origin
+	// offset from the origin. Used by text rendering.
 	float ox, oy;
 	float voffset;  // to apply at the end
 	// distance to move the origin forward
@@ -100,12 +119,18 @@ struct Data {
 struct Bucket {
 	std::vector<Image> images;
 	std::vector<Data> data;
+	int w = 0;
+	int h = 0;
+
 	void AddItem(Image &&img, const Data &dat) {
 		images.emplace_back(std::move(img));
 		data.emplace_back(dat);
 	}
 	void AddImage(Image &&img, int id);
-	std::vector<Data> Resolve(int image_width, Image &dest);
+
+	void Pack(int image_width);
+	void Pack2(int image_width);
+	std::vector<Data> Resolve(Image *dest);
 };
 
 AtlasImage ToAtlasImage(int id, std::string_view name, float tw, float th, const std::vector<Data> &results);

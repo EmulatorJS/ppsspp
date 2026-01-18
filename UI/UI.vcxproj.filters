@@ -89,6 +89,9 @@
     <ClCompile Include="TabbedDialogScreen.cpp">
       <Filter>Screens</Filter>
     </ClCompile>
+    <ClCompile Include="SimpleDialogScreen.cpp">
+      <Filter>Screens</Filter>
+    </ClCompile>
     <ClCompile Include="RetroAchievementScreens.cpp">
       <Filter>Screens</Filter>
     </ClCompile>
@@ -128,6 +131,18 @@
     </ClCompile>
     <ClCompile Include="ImDebugger\ImJitViewer.cpp">
       <Filter>ImDebugger</Filter>
+    </ClCompile>
+    <ClCompile Include="UploadScreen.cpp">
+      <Filter>Screens</Filter>
+    </ClCompile>
+    <ClCompile Include="MiscViews.cpp">
+      <Filter>Views</Filter>
+    </ClCompile>
+    <ClCompile Include="BaseScreens.cpp">
+      <Filter>Screens</Filter>
+    </ClCompile>
+    <ClCompile Include="Background.cpp">
+      <Filter>Screens</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -257,6 +272,18 @@
     </ClInclude>
     <ClInclude Include="ImDebugger\ImJitViewer.h">
       <Filter>ImDebugger</Filter>
+    </ClInclude>
+    <ClInclude Include="UploadScreen.h">
+      <Filter>Screens</Filter>
+    </ClInclude>
+    <ClInclude Include="MiscViews.h">
+      <Filter>Views</Filter>
+    </ClInclude>
+    <ClInclude Include="BaseScreens.h">
+      <Filter>Screens</Filter>
+    </ClInclude>
+    <ClInclude Include="Background.h">
+      <Filter>Screens</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>

@@ -24,6 +24,7 @@
 #include "Common/Serialize/SerializeFuncs.h"
 #include "Common/Serialize/SerializeMap.h"
 #include "Common/Serialize/SerializeSet.h"
+#include "Common/File/VFS/VFS.h"
 #include "Core/Config.h"
 #include "Core/CoreTiming.h"
 #include "Core/HLE/HLE.h"
@@ -234,6 +235,75 @@ static void UtilityVolatileUnlock(u64 userdata, int cyclesLate) {
 	PSPDialog *dialog = CurrentDialog(currentDialogType);
 	if (dialog)
 		dialog->FinishVolatile();
+}
+
+// Applies the Auto setting if set. Returns an enum value from PSP_SYSTEMPARAM_LANGUAGE_*.
+const std::map<std::string, std::pair<std::string, int>, std::less<>> &GetLangValuesMapping() {
+	static std::map<std::string, std::pair<std::string, int>, std::less<>> langValuesMapping_;
+
+	static const std::map<std::string_view, int> langCodeMapping = {
+		{"JAPANESE", PSP_SYSTEMPARAM_LANGUAGE_JAPANESE},
+		{"ENGLISH", PSP_SYSTEMPARAM_LANGUAGE_ENGLISH},
+		{"FRENCH", PSP_SYSTEMPARAM_LANGUAGE_FRENCH},
+		{"SPANISH", PSP_SYSTEMPARAM_LANGUAGE_SPANISH},
+		{"GERMAN", PSP_SYSTEMPARAM_LANGUAGE_GERMAN},
+		{"ITALIAN", PSP_SYSTEMPARAM_LANGUAGE_ITALIAN},
+		{"DUTCH", PSP_SYSTEMPARAM_LANGUAGE_DUTCH},
+		{"PORTUGUESE", PSP_SYSTEMPARAM_LANGUAGE_PORTUGUESE},
+		{"RUSSIAN", PSP_SYSTEMPARAM_LANGUAGE_RUSSIAN},
+		{"KOREAN", PSP_SYSTEMPARAM_LANGUAGE_KOREAN},
+		{"CHINESE_TRADITIONAL", PSP_SYSTEMPARAM_LANGUAGE_CHINESE_TRADITIONAL},
+		{"CHINESE_SIMPLIFIED", PSP_SYSTEMPARAM_LANGUAGE_CHINESE_SIMPLIFIED},
+	};
+
+	if (!langValuesMapping_.empty()) {
+		return langValuesMapping_;
+	}
+
+	// Lazy-load the mapping.
+	IniFile mapping;
+	mapping.LoadFromVFS(g_VFS, "langregion.ini");
+	std::vector<std::string> keys;
+	Section *section = mapping.GetSection("LangRegionNames");
+	if (section) {
+		section->GetKeys(&keys);
+	}
+
+	const Section *langRegionNames = mapping.GetOrCreateSection("LangRegionNames");
+	const Section *systemLanguage = mapping.GetOrCreateSection("SystemLanguage");
+
+	for (size_t i = 0; i < keys.size(); i++) {
+		std::string langName;
+		if (!langRegionNames->Get(keys[i], &langName)) {
+			continue;
+		}
+		std::string langCode = "ENGLISH";
+		int iLangCode = PSP_SYSTEMPARAM_LANGUAGE_ENGLISH;
+		if (systemLanguage->Get(keys[i], &langCode)) {
+			const auto iter = langCodeMapping.find(langCode);
+			if (iter != langCodeMapping.end()) {
+				iLangCode = iter->second;
+			}
+		}
+		langValuesMapping_[keys[i]] = std::make_pair(langName, iLangCode);
+	}
+
+	return langValuesMapping_;
+}
+
+int GetPSPLanguage() {
+	if (g_Config.iLanguage == -1) {
+		const auto &langValuesMapping = GetLangValuesMapping();
+		auto iter = langValuesMapping.find(g_Config.sLanguageIni);
+		if (iter != langValuesMapping.end()) {
+			return iter->second.second;
+		} else {
+			// Fallback to English
+			return PSP_SYSTEMPARAM_LANGUAGE_ENGLISH;
+		}
+	} else {
+		return g_Config.iLanguage;
+	}
 }
 
 void __UtilityInit() {
@@ -1112,10 +1182,26 @@ static int sceUtilityGamedataInstallAbort() {
 	return hleLogDebug(Log::sceUtility, gamedataInstallDialog->Abort());
 }
 
+static const char *SystemParamToString(int param) {
+	switch (param) {
+	case PSP_SYSTEMPARAM_ID_STRING_NICKNAME: return "STRING_NICKNAME";
+	case PSP_SYSTEMPARAM_ID_INT_ADHOC_CHANNEL: return "INT_ADHOC_CHANNEL";
+	case PSP_SYSTEMPARAM_ID_INT_WLAN_POWERSAVE: return "INT_WLAN_POWERSAVE";
+	case PSP_SYSTEMPARAM_ID_INT_DATE_FORMAT: return "INT_DATE_FORMAT";
+	case PSP_SYSTEMPARAM_ID_INT_TIME_FORMAT: return "INT_TIME_FORMAT";
+	case PSP_SYSTEMPARAM_ID_INT_TIMEZONE: return "INT_TIMEZONE";
+	case PSP_SYSTEMPARAM_ID_INT_DAYLIGHTSAVINGS: return "INT_DAYLIGHTSAVINGS";
+	case PSP_SYSTEMPARAM_ID_INT_LANGUAGE: return "INT_LANGUAGE";
+	case PSP_SYSTEMPARAM_ID_INT_BUTTON_PREFERENCE: return "INT_BUTTON_PREFERENCE";
+	case PSP_SYSTEMPARAM_ID_INT_LOCK_PARENTAL_LEVEL: return "INT_LOCK_PARENTAL_LEVEL";
+	default: return "N/A";
+	}
+}
+
 //TODO: should save to config file
 static u32 sceUtilitySetSystemParamString(u32 id, u32 strPtr)
 {
-	WARN_LOG_REPORT(Log::sceUtility, "sceUtilitySetSystemParamString(%i, %08x)", id, strPtr);
+	WARN_LOG_REPORT(Log::sceUtility, "sceUtilitySetSystemParamString(%s, %08x)", SystemParamToString(id), strPtr);
 	return 0;
 }
 
@@ -1124,7 +1210,6 @@ static u32 sceUtilityGetSystemParamString(u32 id, u32 destAddr, int destSize) {
 		// TODO: What error code?
 		return hleLogError(Log::sceUtility, -1);
 	}
-	DEBUG_LOG(Log::sceUtility, "sceUtilityGetSystemParamString(%i, %08x, %i)", id, destAddr, destSize);
 	char *buf = (char *)Memory::GetPointerWriteUnchecked(destAddr);
 	switch (id) {
 	case PSP_SYSTEMPARAM_ID_STRING_NICKNAME:
@@ -1139,7 +1224,7 @@ static u32 sceUtilityGetSystemParamString(u32 id, u32 destAddr, int destSize) {
 		return hleLogError(Log::sceUtility, SCE_ERROR_UTILITY_INVALID_SYSTEM_PARAM_ID);
 	}
 
-	return hleLogDebug(Log::sceUtility, 0);
+	return hleLogDebug(Log::sceUtility, 0, "(%s)", SystemParamToString(id));
 }
 
 static u32 sceUtilitySetSystemParamInt(u32 id, u32 value) {
@@ -1156,7 +1241,7 @@ static u32 sceUtilitySetSystemParamInt(u32 id, u32 value) {
 		// PSP can only set above int parameters
 		return hleLogError(Log::sceUtility, SCE_ERROR_UTILITY_INVALID_SYSTEM_PARAM_ID);
 	}
-	return hleLogDebug(Log::sceUtility, 0);
+	return hleLogDebug(Log::sceUtility, 0, "(%s)", SystemParamToString(id));
 }
 
 static u32 sceUtilityGetSystemParamInt(u32 id, u32 destaddr) {
@@ -1193,7 +1278,7 @@ static u32 sceUtilityGetSystemParamInt(u32 id, u32 destaddr) {
 		param = g_Config.bDayLightSavings?PSP_SYSTEMPARAM_DAYLIGHTSAVINGS_SAVING:PSP_SYSTEMPARAM_DAYLIGHTSAVINGS_STD;
 		break;
 	case PSP_SYSTEMPARAM_ID_INT_LANGUAGE:
-		param = g_Config.GetPSPLanguage();
+		param = GetPSPLanguage();
 		if (PSP_CoreParameter().compat.flags().EnglishOrJapaneseOnly) {
 			if (param != PSP_SYSTEMPARAM_LANGUAGE_ENGLISH && param != PSP_SYSTEMPARAM_LANGUAGE_JAPANESE) {
 				param = PSP_SYSTEMPARAM_LANGUAGE_ENGLISH;
@@ -1211,7 +1296,7 @@ static u32 sceUtilityGetSystemParamInt(u32 id, u32 destaddr) {
 	}
 
 	Memory::Write_U32(param, destaddr);
-	return hleLogInfo(Log::sceUtility, 0, "param: %08x", param);
+	return hleLogInfo(Log::sceUtility, 0, "(%s): %08x", SystemParamToString(id), param);
 }
 
 static u32 sceUtilityLoadNetModule(u32 module) {

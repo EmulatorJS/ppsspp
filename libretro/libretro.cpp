@@ -1,4 +1,5 @@
 #include "ppsspp_config.h"
+#include <algorithm>
 #include <cstring>
 #include <cassert>
 #include <thread>
@@ -477,12 +478,39 @@ static std::string map_psp_language_to_i18n_locale(int val)
 }
 
 static void check_dynamic_variables(CoreParameter &coreParam) {
+#ifdef __EMSCRIPTEN__
+   struct retro_throttle_state throttle = { RETRO_THROTTLE_NONE, 0.0f };
+   if (environ_cb(RETRO_ENVIRONMENT_GET_THROTTLE_STATE, &throttle)) {
+      switch (throttle.mode) {
+         case RETRO_THROTTLE_FAST_FORWARD:
+            if (throttle.rate > 0.0f) {
+               coreParam.fpsLimit       = FPSLimit::ANALOG;
+               coreParam.analogFpsLimit = (int)(throttle.rate + 0.5f);
+               coreParam.fastForward    = false;
+            } else {
+               coreParam.fpsLimit    = FPSLimit::NORMAL;
+               coreParam.fastForward = true;
+            }
+            break;
+         case RETRO_THROTTLE_SLOW_MOTION:
+            coreParam.fpsLimit       = FPSLimit::ANALOG;
+            coreParam.analogFpsLimit = std::max(1, (int)(throttle.rate + 0.5f));
+            coreParam.fastForward    = false;
+            break;
+         default:
+            coreParam.fpsLimit    = FPSLimit::NORMAL;
+            coreParam.fastForward = false;
+            break;
+      }
+   }
+#else
    if (g_Config.bForceLagSync)
    {
       bool isFastForwarding;
       if (environ_cb(RETRO_ENVIRONMENT_GET_FASTFORWARDING, &isFastForwarding))
          coreParam.fastForward = isFastForwarding;
    }
+#endif
 }
 
 static void check_variables(CoreParameter &coreParam)

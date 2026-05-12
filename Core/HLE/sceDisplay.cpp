@@ -455,12 +455,17 @@ static void DoFrameTiming(bool throttle, bool *skipFrame, float scaledTimestep, 
 			// Wait until we've caught up.
 			// If we're ending the frame here, we'll defer the sleep until after the command buffers
 			// have been handed off to the render thread, for some more overlap.
+#ifdef __EMSCRIPTEN__
+			WaitUntil(curFrameTime, nextFrameTime, "display-wait");
+			curFrameTime = time_now_d();
+#else
 			if (endOfFrame) {
 				g_frameTiming.DeferWaitUntil(nextFrameTime, &curFrameTime);
 			} else {
 				WaitUntil(curFrameTime, nextFrameTime, "display-wait");
 				curFrameTime = time_now_d();  // I guess we could also just set it to nextFrameTime...
 			}
+#endif
 		}
 	}
 

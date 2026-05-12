@@ -47,8 +47,8 @@ extern "C" {
  * otherwise. */
 GLboolean gl3stubInit();
 
-#if !PPSSPP_PLATFORM(IOS)
-    
+#if !PPSSPP_PLATFORM(IOS) && !defined(__EMSCRIPTEN__)
+
 /*-------------------------------------------------------------------------
  * Data type definitions
  *-----------------------------------------------------------------------*/

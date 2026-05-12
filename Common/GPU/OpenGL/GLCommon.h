@@ -5,6 +5,10 @@
 #if PPSSPP_PLATFORM(IOS)
 #include <OpenGLES/ES3/gl.h>
 #include <OpenGLES/ES3/glext.h>
+#elif defined(__EMSCRIPTEN__)
+#include <GLES3/gl3.h>
+#include <GLES2/gl2ext.h>
+#define GL_BGRA_EXT 0x80E1
 #elif defined(USING_GLES2)
 #include <GLES2/gl2.h>
 #include <GLES2/gl2ext.h>

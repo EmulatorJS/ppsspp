@@ -121,8 +121,10 @@ void GLProfiler::BeginFrame() {
 			}
 
 			GLuint64 startTime = 0, endTime = 0;
+#ifndef __EMSCRIPTEN__
 			glGetQueryObjectui64v(queries_[scope.startQueryId], GL_QUERY_RESULT, &startTime);
 			glGetQueryObjectui64v(queries_[scope.endQueryId], GL_QUERY_RESULT, &endTime);
+#endif
 
 			// Times are in nanoseconds, convert to milliseconds
 			double milliseconds = (double)(endTime - startTime) / 1000000.0;
@@ -154,7 +156,9 @@ void GLProfiler::Begin(const char *fmt, ...) {
 	scopeStack_.push_back(scopes_.size());
 	scopes_.push_back(scope);
 
+#ifndef __EMSCRIPTEN__
 	glQueryCounter(queries_[numQueries_], GL_TIMESTAMP);
+#endif
 	numQueries_++;
 }
 
@@ -174,6 +178,8 @@ void GLProfiler::End() {
 	GLProfilerScope &scope = scopes_[scopeId];
 	scope.endQueryId = numQueries_;
 
+#ifndef __EMSCRIPTEN__
 	glQueryCounter(queries_[numQueries_], GL_TIMESTAMP);
+#endif
 	numQueries_++;
 }

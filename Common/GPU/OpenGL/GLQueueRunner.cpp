@@ -214,7 +214,7 @@ void GLQueueRunner::RunInitSteps(const FastVec<GLRInitStep> &steps, bool skipGLC
 			} else if (gl_extensions.VersionGEThan(3, 0, 0)) {
 				glBindFragDataLocation(program->program, 0, "fragColor0");
 			}
-#elif !PPSSPP_PLATFORM(IOS)
+#elif !PPSSPP_PLATFORM(IOS) && !defined(__EMSCRIPTEN__)
 			if (gl_extensions.GLES3 && step.create_program.support_dual_source) {
 				// For GLES2, we use gl_SecondaryFragColorEXT as fragColor1.
 				_dbg_assert_msg_(gl_extensions.EXT_blend_func_extended, "EXT_blend_func_extended required for dual src");
@@ -1477,7 +1477,7 @@ void GLQueueRunner::PerformCopy(const GLRStep &step) {
 	_assert_msg_(caps_.framebufferCopySupported, "Image copy extension expected");
 
 #if defined(USING_GLES2)
-#if !PPSSPP_PLATFORM(IOS)
+#if !PPSSPP_PLATFORM(IOS) && !defined(__EMSCRIPTEN__)
 	glCopyImageSubDataOES(
 		srcTex, target, srcLevel, srcRect.x, srcRect.y, srcZ,
 		dstTex, target, dstLevel, dstPos.x, dstPos.y, dstZ,

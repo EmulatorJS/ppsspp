@@ -425,7 +425,7 @@ endif
 include Makefile.common
 
 ifeq ($(GLES), 1)
-	GLFLAGS += -DGLES # -DUSING_GLES2
+	GLFLAGS += -DGLES -DUSING_GLES2
 else
 	GLFLAGS += -DHAVE_OPENGL
 endif

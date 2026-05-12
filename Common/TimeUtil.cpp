@@ -13,6 +13,7 @@
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten/emscripten.h>
+#include <emscripten/threading.h>
 #endif // __EMSCRIPTEN__
 
 #ifdef _WIN32
@@ -267,7 +268,10 @@ void sleep_ms(int ms, const char *reason) {
 #elif defined(HAVE_LIBNX)
 	svcSleepThread(ms * 1000000);
 #elif defined(__EMSCRIPTEN__)
-	emscripten_sleep(ms);
+	if (emscripten_is_main_browser_thread())
+		emscripten_sleep(ms);
+	else
+		emscripten_thread_sleep(ms);
 #else
 	usleep(ms * 1000);
 #endif
@@ -285,7 +289,10 @@ void sleep_us(int us, const char *reason) {
 #elif defined(HAVE_LIBNX)
 	svcSleepThread(us * 1000);
 #elif defined(__EMSCRIPTEN__)
-	emscripten_sleep(us / 1000);
+	if (emscripten_is_main_browser_thread())
+		emscripten_sleep(us / 1000);
+	else
+		emscripten_thread_sleep(us / 1000);
 #else
 	usleep(us);
 #endif
@@ -342,7 +349,10 @@ void sleep_precise(double seconds, const char *reason) {
 #elif defined(HAVE_LIBNX)
 	svcSleepThread((int64_t)(seconds * 1000000000.0));
 #elif defined(__EMSCRIPTEN__)
-	emscripten_sleep(seconds * 1000.0);
+	if (emscripten_is_main_browser_thread())
+		emscripten_sleep((unsigned int)(seconds * 1000.0));
+	else
+		emscripten_thread_sleep(seconds * 1000.0);
 #else
 	usleep(seconds * 1000000.0);
 #endif

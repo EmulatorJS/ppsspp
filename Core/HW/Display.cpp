@@ -27,13 +27,14 @@
 #include "Core/System.h"
 #include "Core/CoreTiming.h"
 #include "Core/HLE/sceKernel.h"
+#include "Core/HLE/sceCtrl.h"
+#include "Core/HLE/sceIo.h"
 #include "Core/HW/Display.h"
 #include "GPU/GPU.h"
 #include "GPU/GPUCommon.h"
 
 // Called when vblank happens (like an internal interrupt.)  Not part of state, should be static.
 static std::mutex listenersLock;
-static std::vector<VblankCallback> vblankListeners;
 typedef std::pair<FlipCallback, void *> FlipListener;
 static std::vector<FlipListener> flipListeners;
 
@@ -250,15 +251,9 @@ void DisplayFireVblankStart() {
 
 void DisplayFireVblankEnd() {
 	isVblank = 0;
-	std::vector<VblankCallback> toCall;
-	{
-		std::lock_guard<std::mutex> guard(listenersLock);
-		toCall = vblankListeners;
-	}
 
-	for (VblankCallback cb : toCall) {
-		cb();
-	}
+	__IoVblank();
+	__CtrlVblank();
 }
 
 void DisplayFireFlip() {
@@ -279,11 +274,6 @@ void DisplayFireActualFlip() {
 	actualFlips++;
 }
 
-void __DisplayListenVblank(VblankCallback callback) {
-	std::lock_guard<std::mutex> guard(listenersLock);
-	vblankListeners.push_back(callback);
-}
-
 void __DisplayListenFlip(FlipCallback callback, void *userdata) {
 	std::lock_guard<std::mutex> guard(listenersLock);
 	flipListeners.emplace_back(callback, userdata);
@@ -296,7 +286,9 @@ void __DisplayForgetFlip(FlipCallback callback, void *userdata) {
 	}), flipListeners.end());
 }
 
-void DisplayHWReset() {
+// This is called on game bootup.
+void DisplayHWInit() {
+	flipListeners.clear();
 	frameStartTicks = 0;
 	numVBlanks = 0;
 	isVblank = 0;
@@ -311,17 +303,16 @@ void DisplayHWReset() {
 
 	fpsHistoryValid = 0;
 	fpsHistoryPos = 0;
+	lastFpsTime = 0.0;
+	lastFpsFrame = 0;
 
 	frameTimeHistoryValid = 0;
 	frameTimeHistoryPos = 0;
 	lastFrameTimeHistory = 0.0;
 }
 
-void DisplayHWInit() {}
-
 void DisplayHWShutdown() {
 	std::lock_guard<std::mutex> guard(listenersLock);
-	vblankListeners.clear();
 	flipListeners.clear();
 }
 

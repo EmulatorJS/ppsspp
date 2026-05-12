@@ -19,7 +19,7 @@ struct Point2D {
 	}
 
 	/*
-	FocusDirection directionTo(const Point &other) const {
+	FocusMove directionTo(const Point &other) const {
 		int angle = atan2f(other.y - y, other.x - x) / (2 * M_PI) - 0.125;
 
 	}*/
@@ -97,27 +97,29 @@ struct Bounds {
 	Point2D Center() const {
 		return Point2D(centerX(), centerY());
 	}
+	[[nodiscard]]
 	Bounds Expand(float amount) const {
 		return Bounds(x - amount, y - amount, w + amount * 2, h + amount * 2);
 	}
+	[[nodiscard]]
 	Bounds Expand(float xAmount, float yAmount) const {
 		return Bounds(x - xAmount, y - yAmount, w + xAmount * 2, h + yAmount * 2);
 	}
+	[[nodiscard]]
 	Bounds Expand(float left, float top, float right, float bottom) const {
 		return Bounds(x - left, y - top, w + left + right, h + top + bottom);
 	}
+	[[nodiscard]]
 	Bounds Offset(float xAmount, float yAmount) const {
 		return Bounds(x + xAmount, y + yAmount, w, h);
 	}
-	Bounds Inset(float left, float top, float right, float bottom) {
+	[[nodiscard]]
+	Bounds Inset(float left, float top, float right, float bottom) const {
 		return Bounds(x + left, y + top, w - left - right, h - bottom - top);
 	}
-
+	[[nodiscard]]
 	Bounds Inset(float xAmount, float yAmount) const {
 		return Bounds(x + xAmount, y + yAmount, w - xAmount * 2, h - yAmount * 2);
-	}
-	Bounds Inset(float left, float top, float right, float bottom) const {
-		return Bounds(x + left, y + top, w - left - right, h - top - bottom);
 	}
 
 	float AspectRatio() const {

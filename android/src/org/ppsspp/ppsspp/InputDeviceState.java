@@ -6,10 +6,14 @@ import android.view.InputDevice.MotionRange;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
 
+import java.util.Set;
+import java.util.HashSet;
+
+
 public class InputDeviceState {
 	private static final String TAG = "InputDeviceState";
 
-	private int deviceId = NativeApp.DEVICE_ID_DEFAULT;
+	private final int deviceId;
 
 	private final InputDevice mDevice;
 	private final int[] mAxes;
@@ -21,8 +25,15 @@ public class InputDeviceState {
 
 	private final int sources;
 
+	private final Set<Integer> pressedKeys = new HashSet<>();
+
+
 	InputDevice getDevice() {
 		return mDevice;
+	}
+
+	final int getDeviceId() {
+		return deviceId;
 	}
 
 	static void logAdvanced(InputDevice device) {
@@ -98,9 +109,10 @@ public class InputDeviceState {
 				(source & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD;
 	}
 
-	public InputDeviceState(InputDevice device) {
+	public InputDeviceState(InputDevice device, boolean fromConnectedNotification) {
 		sources = device.getSources();
 		// First, anything that's a gamepad is a gamepad, even if it has a keyboard or pointer.
+		// We also don't bother supporting multiple gamepads, we send them all to PAD0.
 		if ((sources & InputDevice.SOURCE_GAMEPAD) == InputDevice.SOURCE_GAMEPAD) {
 			this.deviceId = NativeApp.DEVICE_ID_PAD_0;
 		} else if ((sources & InputDevice.SOURCE_KEYBOARD) == InputDevice.SOURCE_KEYBOARD && device.getKeyboardType() == InputDevice.KEYBOARD_TYPE_ALPHABETIC) {
@@ -129,8 +141,25 @@ public class InputDeviceState {
 
 		Log.i(TAG, "Registering input device with " + numAxes + " axes: " + device.getName());
 		logAdvanced(device);
-		NativeApp.sendMessageFromJava("inputDeviceConnectedID", String.valueOf(this.deviceId));
-		NativeApp.sendMessageFromJava("inputDeviceConnected", device.getName());
+		if (deviceId == NativeApp.DEVICE_ID_PAD_0 && fromConnectedNotification) {
+			NativeApp.sendMessageFromJava("inputDeviceConnectedID", String.valueOf(this.deviceId));
+			NativeApp.sendMessageFromJava("inputDeviceConnected", device.getName());
+		}
+	}
+
+	public void Disconnect() {
+		if (deviceId == NativeApp.DEVICE_ID_PAD_0) {
+			NativeApp.sendMessageFromJava("inputDeviceDisconnectedID", String.valueOf(this.deviceId));
+		}
+		// Also reset all the buttons and axes.
+		for (int value : pressedKeys) {
+			NativeApp.keyUp(deviceId, value);
+		}
+		pressedKeys.clear();
+		for (int i = 0; i < mAxes.length; i++) {
+			mValues[i] = 0.0f;
+		}
+		NativeApp.joystickAxis(deviceId, mAxes, mValues, mAxes.length);
 	}
 
 	// This is called from dispatchKeyEvent.
@@ -139,11 +168,15 @@ public class InputDeviceState {
 		boolean repeat = event.getRepeatCount() > 0;
 
 		if (isInvalidKeyCode(keyCode) && isEventSentByNintendoSwitchLeftJoyCon(event)) {
-			keyCode = remapNintendoSwitchLeftJoyConKeyCodeFromScanCode(event.getScanCode());
-			// need to pass false for the repeat flag, otherwise pressing two adjacent dpad buttons simultaneously to move diagonally does not work.
-			return NativeApp.keyDown(deviceId, keyCode, false); 
+			int remappedKeyCode = remapNintendoSwitchLeftJoyConKeyCodeFromScanCode(event.getScanCode());
+			if (remappedKeyCode != 0) {
+				pressedKeys.add(remappedKeyCode);
+				// need to pass false for the repeat flag, otherwise pressing two adjacent dpad buttons simultaneously to move diagonally does not work.
+				return NativeApp.keyDown(deviceId, remappedKeyCode, false);
+			}
 		}
 
+		pressedKeys.add(keyCode);
 		return NativeApp.keyDown(deviceId, keyCode, repeat);
 	}
 
@@ -152,18 +185,20 @@ public class InputDeviceState {
 		int keyCode = event.getKeyCode();
 
 		if (isInvalidKeyCode(keyCode) && isEventSentByNintendoSwitchLeftJoyCon(event)) {
-			keyCode = remapNintendoSwitchLeftJoyConKeyCodeFromScanCode(event.getScanCode());
+			int remappedKeyCode = remapNintendoSwitchLeftJoyConKeyCodeFromScanCode(event.getScanCode());
+			if (remappedKeyCode != 0) {
+				return NativeApp.keyUp(deviceId, remappedKeyCode);
+			}
 		}
 
 		return NativeApp.keyUp(deviceId, keyCode);
 	}
 
-	public boolean onJoystickMotion(MotionEvent event) {
+	public void onJoystickMotion(MotionEvent event) {
 		if (!inputSourceIsJoystick(event.getSource())) {
 			Log.i(TAG, "Not a joystick event: source = " + event.getSource());
-			return false;
+			return;
 		}
-		Log.i(TAG, "onjoystick");
 		int count = 0;
 		for (int i = 0; i < mAxes.length; i++) {
 			int axisId = mAxes[i];
@@ -176,7 +211,6 @@ public class InputDeviceState {
 			}
 		}
 		NativeApp.joystickAxis(deviceId, mAxisIds, mValues, count);
-		return true;
 	}
 
 	private boolean isInvalidKeyCode(int keyCode) {

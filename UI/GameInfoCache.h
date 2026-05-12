@@ -48,6 +48,8 @@ enum class GameInfoFlags {
 	SND = 0x20,
 	SIZE = 0x40,
 	UNCOMPRESSED_SIZE = 0x80,
+	SAVEDATA_SIZE = 0x100,
+	ICON1_PMF = 0x200,
 };
 ENUM_CLASS_BITOPS(GameInfoFlags);
 
@@ -76,7 +78,7 @@ public:
 	~GameInfo();
 
 	bool Delete();  // Better be sure what you're doing when calling this. Will move to trash if available on the system, though.
-	bool DeleteAllSaveData();
+	bool DeleteAllSaveData() const;
 	bool CreateLoader();
 
 	bool HasFileLoader() const {
@@ -88,21 +90,21 @@ public:
 
 	u64 GetSizeUncompressedInBytes();  // NOTE: More expensive than GetGameSizeOnDiskInBytes().
 	u64 GetSizeOnDiskInBytes();
-	u64 GetGameSavedataSizeInBytes();  // For games
-	u64 GetInstallDataSizeInBytes();
+	u64 GetGameSavedataSizeInBytes() const;  // For games
+	u64 GetInstallDataSizeInBytes() const;
 
 	// For various kinds of savedata, mainly.
 	// NOTE: This one actually performs I/O directly, not cached.
 	std::string GetMTime() const;
 
-	void ParseParamSFO();
+	void ParseParamSFO(IdentifiedFileType type);
 	const ParamSFOData &GetParamSFO() const {
 		_dbg_assert_(hasFlags & GameInfoFlags::PARAM_SFO);
 		return paramSFO;
 	}
 	void FinishPendingTextureLoads(Draw::DrawContext *draw);
 
-	std::vector<Path> GetSaveDataDirectories();
+	std::vector<Path> GetSaveDataDirectories() const;
 
 	std::string GetTitle();
 	std::string GetDBTitle();  // Falls back to GetTitle if not in the DB.
@@ -156,6 +158,7 @@ public:
 	GameInfoTex icon;
 	GameInfoTex pic0;
 	GameInfoTex pic1;
+	std::string icon1pmf;
 
 	std::string sndFileData;
 	std::atomic<bool> sndDataLoaded{};
@@ -166,6 +169,8 @@ public:
 	u64 gameSizeOnDisk = 0;  // compressed size, in case of CSO
 	u64 saveDataSize = 0;
 	u64 installDataSize = 0;
+
+	std::string errorString;
 
 protected:
 	ParamSFOData paramSFO;
@@ -198,7 +203,7 @@ public:
 	// because they're big. bgTextures and sound may be discarded over time as well.
 	// NOTE: This never returns null, so you don't need to check for that. Do check Ready() flags though.
 	// It's OK to pass in nullptr for draw if you don't need the actual texture right now.
-	std::shared_ptr<GameInfo> GetInfo(Draw::DrawContext *draw, const Path &gamePath, GameInfoFlags wantFlags, GameInfoFlags *outHasFlags = nullptr);
+	std::shared_ptr<GameInfo> GetInfo(Draw::DrawContext *draw, const Path &gamePath, GameInfoFlags wantFlags, GameInfoFlags *outHasFlags = nullptr, GameInfoFlags refetchFlags = GameInfoFlags::EMPTY);
 	void FlushBGs();  // Gets rid of all BG textures. Also gets rid of bg sounds.
 
 	void CancelAll();

@@ -23,17 +23,17 @@
 #include "Common/File/Path.h"
 #include "Common/UI/UIScreen.h"
 #include "Common/UI/ViewGroup.h"
+#include "Core/ControlMapper.h"
 #include "UI/BaseScreens.h"
 #include "UI/Screen.h"
 #include "UI/GameInfoCache.h"
 
-class GamePauseScreen : public UIBaseDialogScreen {
+class GamePauseScreen : public UIBaseDialogScreen, protected ControlListener {
 public:
 	GamePauseScreen(const Path &filename, bool bootPending);
 	~GamePauseScreen();
 
 	void dialogFinished(const Screen *dialog, DialogResult dr) override;
-	bool key(const KeyInput &key) override;
 
 	const char *tag() const override { return "GamePause"; }
 
@@ -41,17 +41,21 @@ protected:
 	void CreateViews() override;
 	void update() override;
 	UI::Margins RootMargins() const override;
+	ViewLayoutMode LayoutMode() const override {
+		return ViewLayoutMode::ApplyInsets;
+	}
+	// For processing of certain mapped keys.
+	bool UnsyncKey(const KeyInput &key) override;
+	void UnsyncAxis(const AxisInput *axes, size_t count) override;
+
+	void OnVKey(VirtKey virtualKeyCode, bool down) override;
 
 private:
-	void CreateSavestateControls(UI::LinearLayout *viewGroup);
+	void CreateSavestateControls(UI::LinearLayout *viewGroup, UI::LinearLayout **extraRow);
 
 	void OnGameSettings(UI::EventParams &e);
 	void OnExit(UI::EventParams &e);
 	void OnReportFeedback(UI::EventParams &e);
-
-	void OnRewind(UI::EventParams &e);
-	void OnLoadUndo(UI::EventParams &e);
-	void OnLastSaveUndo(UI::EventParams &e);
 
 	void OnCreateConfig(UI::EventParams &e);
 	void OnDeleteConfig(UI::EventParams &e);
@@ -77,6 +81,7 @@ private:
 	bool bootPending_ = false;
 
 	std::string saveStatePrefix_;
+	double createdTime_ = 0.0;
 };
 
 std::string GetConfirmExitMessage();

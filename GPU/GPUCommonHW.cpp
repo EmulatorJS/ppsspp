@@ -530,7 +530,7 @@ void GPUCommonHW::PreExecuteOp(u32 op, u32 diff) {
 	CheckFlushOp(op >> 24, diff);
 }
 
-void GPUCommonHW::CopyDisplayToOutput(const DisplayLayoutConfig &config, bool reallyDirty) {
+void GPUCommonHW::PrepareCopyDisplayToOutput(const DisplayLayoutConfig &config) {
 	drawEngineCommon_->FlushQueuedDepth();
 	// Flush anything left over.
 	drawEngineCommon_->Flush();
@@ -538,9 +538,12 @@ void GPUCommonHW::CopyDisplayToOutput(const DisplayLayoutConfig &config, bool re
 	shaderManager_->DirtyLastShader();
 
 	// after this, render pass is active.
-	framebufferManager_->CopyDisplayToOutput(config, reallyDirty);
+	framebufferManager_->PrepareCopyDisplayToOutput(config, curFramebufferDirty_);
+}
 
-	gstate_c.Dirty(DIRTY_TEXTURE_IMAGE);
+void GPUCommonHW::CopyDisplayToOutput(const DisplayLayoutConfig &config) {
+	framebufferManager_->CopyDisplayToOutput(config);
+	curFramebufferDirty_ = false;
 }
 
 bool GPUCommonHW::PresentedThisFrame() const {
@@ -795,6 +798,8 @@ void GPUCommonHW::InvalidateCache(u32 addr, int size, GPUInvalidationType type) 
 }
 
 bool GPUCommonHW::FramebufferDirty() {
+	if (!framebufferManager_)
+		return true;
 	VirtualFramebuffer *vfb = framebufferManager_->GetDisplayVFB();
 	if (vfb) {
 		bool dirty = vfb->dirtyAfterDisplay;
@@ -805,6 +810,8 @@ bool GPUCommonHW::FramebufferDirty() {
 }
 
 bool GPUCommonHW::FramebufferReallyDirty() {
+	if (!framebufferManager_)
+		return true;
 	VirtualFramebuffer *vfb = framebufferManager_->GetDisplayVFB();
 	if (vfb) {
 		bool dirty = vfb->reallyDirtyAfterDisplay;
@@ -1287,7 +1294,10 @@ bail:
 
 	int cycles = vertexCost_ * totalVertCount;
 	gpuStats.vertexGPUCycles += cycles;
-	cyclesExecuted += cycles;
+
+	if (!PSP_CoreParameter().compat.flags().FastEmulatedGPU) {
+		cyclesExecuted += cycles;
+	}
 }
 
 void GPUCommonHW::Execute_Bezier(u32 op, u32 diff) {

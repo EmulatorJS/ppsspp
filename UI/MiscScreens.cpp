@@ -98,24 +98,18 @@ void HandleCommonMessages(UIMessage message, const char *value, ScreenManager *m
 }
 
 ScreenRenderFlags BackgroundScreen::render(ScreenRenderMode mode) {
-	if (mode & ScreenRenderMode::FIRST) {
-		SetupViewport();
-	} else {
-		_dbg_assert_(false);
-	}
-
 	UIContext *uiContext = screenManager()->getUIContext();
 
 	uiContext->PushTransform({ translation_, scale_, alpha_ });
 
 	uiContext->Begin();
-	float x, y, z;
-	screenManager()->getFocusPosition(x, y, z);
+	Lin::Vec3 focus;
+	screenManager()->getFocusPosition(focus.x, focus.y, focus.z);
 
 	if (!gamePath_.empty()) {
-		::DrawGameBackground(*uiContext, gamePath_, x, y, z);
+		::DrawGameBackground(*uiContext, gamePath_, focus, 1.0f);
 	} else {
-		::DrawBackground(*uiContext, 1.0f, x, y, z);
+		::DrawBackground(*uiContext, 1.0f, focus);
 	}
 
 	uiContext->Flush();
@@ -250,6 +244,9 @@ void TextureShaderScreen::CreateViews() {
 	std::vector<std::string> items;
 	int selected = -1;
 	for (int i = 0; i < (int)shaders_.size(); i++) {
+		if (shaders_[i].hidden) {
+			continue;
+		}
 		if (shaders_[i].section == g_Config.sTextureShaderName)
 			selected = i;
 		items.emplace_back(ps->T(shaders_[i].section, shaders_[i].name));
@@ -425,7 +422,7 @@ void LogoScreen::touch(const TouchInput &touch) {
 void LogoScreen::DrawForeground(UIContext &dc) {
 	using namespace Draw;
 
-	const Bounds &bounds = dc.GetLayoutBounds();
+	const Bounds &bounds = GetLayoutBounds(dc);
 
 	dc.Begin();
 
@@ -511,8 +508,6 @@ std::string_view CreditsScreen::GetTitle() const {
 
 void CreditsScreen::CreateDialogViews(UI::ViewGroup *parent) {
 	using namespace UI;
-
-	ignoreBottomInset_ = false;
 
 	auto di = GetI18NCategory(I18NCat::DIALOG);
 	auto cr = GetI18NCategory(I18NCat::PSPCREDITS);
@@ -752,8 +747,8 @@ void CreditsScroller::Draw(UIContext &dc) {
 
 	dc.Begin();
 
-	const Bounds &bounds = bounds_;
-	bounds.Inset(10.f, 10.f);
+	Bounds &bounds = bounds_;
+	bounds = bounds.Inset(10.f, 10.f);
 	const int numItems = ARRAY_SIZE(credits);
 	int itemHeight = 36;
 	int contentsHeight = numItems * itemHeight + bounds.h + 200;

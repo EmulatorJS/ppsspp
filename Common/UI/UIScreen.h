@@ -10,6 +10,8 @@
 
 using namespace Lin;
 
+enum class ViewLayoutMode;
+
 class I18NCategory;
 namespace Draw {
 	class DrawContext;
@@ -29,6 +31,19 @@ struct QueuedEvent {
 		AxisInput axis;
 	};
 };
+
+enum class Modifier {
+	NONE = 0,
+	LCTRL = 1,
+	RCTRL = 2,
+	LSHIFT = 4,
+	RSHIFT = 8,
+	LALT = 16,
+	RALT = 32,
+	LMETA = 64,
+	RMETA = 128,
+};
+ENUM_CLASS_BITOPS(Modifier);
 
 class UIScreen : public Screen {
 public:
@@ -59,25 +74,32 @@ public:
 
 	virtual UI::Margins RootMargins() const { return UI::Margins(0); }
 
+	virtual void focusChanged(ScreenFocusChange focusChange) override {
+		Screen::focusChanged(focusChange);
+		modifiersPressed_ = Modifier::NONE;
+	}
+
 protected:
 	virtual void CreateViews() = 0;
 
+	Bounds GetLayoutBounds(UIContext &dc) const;
+
 	void RecreateViews() override { recreateViews_ = true; }
 	DeviceOrientation GetDeviceOrientation() const;
+	bool IsOnTop() const;
+	virtual ViewLayoutMode LayoutMode() const { return ViewLayoutMode::ApplyInsets; }
+	virtual bool UseImmersiveMode() const { return false; }
 
 	UI::ViewGroup *root_ = nullptr;
 	Vec3 translation_ = Vec3(0.0f);
 	Vec3 scale_ = Vec3(1.0f);
 	float alpha_ = 1.0f;
-	bool ignoreInsets_ = false;
-	bool ignoreBottomInset_ = false;
 	bool ignoreInput_ = false;
 
 protected:
 	virtual void DrawBackground(UIContext &ui) {}
 	virtual void DrawForeground(UIContext &ui) {}
 
-	void SetupViewport();
 	void DoRecreateViews();
 
 	bool recreateViews_ = true;
@@ -86,11 +108,14 @@ protected:
 private:
 	std::mutex eventQueueLock_;
 	std::deque<QueuedEvent> eventQueue_;
+
+	Modifier modifiersPressed_{};
 };
 
 class UIDialogScreen : public UIScreen {
 public:
 	UIDialogScreen() : UIScreen(), finished_(false) {}
+	~UIDialogScreen() override;
 	bool key(const KeyInput &key) override;
 	void sendMessage(UIMessage message, const char *value) override;
 

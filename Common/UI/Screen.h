@@ -62,7 +62,6 @@ enum class ScreenRenderFlags {
 };
 ENUM_CLASS_BITOPS(ScreenRenderFlags);
 
-
 enum class ScreenRenderRole {
 	NONE = 0,
 	CAN_BE_BACKGROUND = 1,
@@ -70,13 +69,20 @@ enum class ScreenRenderRole {
 };
 ENUM_CLASS_BITOPS(ScreenRenderRole);
 
+enum class ViewLayoutMode {
+	ApplyInsets = 0,   // For gameplay, option #1
+	IgnoreInsets,  // For gameplay, option #2
+	IgnoreBottomInset,
+};
+
 class Screen {
 public:
-	Screen() : screenManager_(nullptr) { }
+	Screen() = default;
 	virtual ~Screen();
 
 	virtual void onFinish(DialogResult reason) {}
 	virtual void update() {}
+	virtual ScreenRenderFlags PreRender(ScreenRenderMode mode) { return ScreenRenderFlags::NONE; }
 	virtual ScreenRenderFlags render(ScreenRenderMode mode) = 0;
 	virtual void resized() {}
 	virtual void dialogFinished(const Screen *dialog, DialogResult result) {}
@@ -106,6 +112,7 @@ public:
 	virtual bool isTopLevel() const { return false; }
 
 	virtual TouchInput transformTouch(const TouchInput &touch) { return touch; }
+	virtual bool WantsTextInput() const { return false; }
 
 protected:
 	int GetRequesterToken();
@@ -114,7 +121,7 @@ protected:
 	}
 
 private:
-	ScreenManager *screenManager_;
+	ScreenManager *screenManager_ = nullptr;
 	int token_ = -1;
 
 	DISALLOW_COPY_AND_ASSIGN(Screen);

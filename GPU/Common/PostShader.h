@@ -24,6 +24,8 @@
 #include <string>
 #include <vector>
 
+#include "Common/GPU/thin3d.h"
+
 struct ShaderInfo {
 	Path iniFile;  // which ini file was this definition in? So we can write settings back later
 	std::string section;  // ini file section. This is saved.
@@ -83,9 +85,14 @@ struct TextureShaderInfo {
 	std::string name;
 
 	Path computeShaderFile;
+	std::vector<Path> computeShaderFiles;
 
 	// Upscaling shaders have a fixed scale factor.
 	int scaleFactor;
+
+	// Some shaders need to pass some data to the shader, and this is the buffer for that. It's up to the shader to interpret it.
+	Path constantBuffer;
+	bool hidden = false;
 
 	bool operator == (const std::string &other) const {
 		return name == other;

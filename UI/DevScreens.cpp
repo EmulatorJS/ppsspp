@@ -98,7 +98,7 @@ static const char *g_debugOverlayList[] = {
 	"Audio Debug",
 	"GPU Profile",
 	"GPU Allocator Viewer",
-	"Framebuffer List",
+	"Framebuffer list",
 };
 
 void AddOverlayList(UI::ViewGroup *items, ScreenManager *screenManager) {
@@ -120,7 +120,7 @@ void SaveFrameDump() {
 		if (System_GetPropertyBool(SYSPROP_CAN_SHOW_FILE)) {
 			System_ShowFileInFolder(dumpPath);
 		} else {
-			g_OSD.Show(OSDType::MESSAGE_SUCCESS, dumpPath.ToVisualString(), 7.0f);
+			g_OSD.Show(OSDType::MESSAGE_SUCCESS, GetFriendlyPath(dumpPath), 7.0f);
 		}
 	});
 }
@@ -132,6 +132,8 @@ void DevMenuScreen::CreatePopupContents(UI::ViewGroup *parent) {
 
 	ScrollView *scroll = new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, 1.0f));
 	LinearLayout *items = new LinearLayout(ORIENT_VERTICAL);
+
+	items->SetSpacing(0.0f);
 
 	items->Add(new Choice(dev->T("Log View")))->OnClick.Add([this](UI::EventParams & e) {
 		UpdateUIState(UISTATE_PAUSEMENU);
@@ -706,11 +708,15 @@ void TouchTestScreen::UpdateLogView() {
 bool TouchTestScreen::key(const KeyInput &key) {
 	UIScreen::key(key);
 	char buf[512];
-	snprintf(buf, sizeof(buf), "%s (%d) Device ID: %d [%s%s%s%s]", KeyMap::GetKeyName(key.keyCode).c_str(), key.keyCode, key.deviceId,
-		(key.flags & KeyInputFlags::IS_REPEAT) ? "REP" : "",
-		(key.flags & KeyInputFlags::UP) ? "UP" : "",
-		(key.flags & KeyInputFlags::DOWN) ? "DOWN" : "",
-		(key.flags & KeyInputFlags::CHAR) ? "CHAR" : "");
+	snprintf(buf, sizeof(buf), "%s (%d) Device ID: %d [%s%s%s%s%s%s%s%s]", KeyMap::GetKeyName(key.keyCode).c_str(), key.keyCode, key.deviceId,
+		(key.flags & KeyInputFlags::IS_REPEAT) ? "REP " : "",
+		(key.flags & KeyInputFlags::UP) ? "UP " : "",
+		(key.flags & KeyInputFlags::DOWN) ? "DOWN " : "",
+		(key.flags & KeyInputFlags::CHAR) ? "CHAR " : "",
+		(key.flags & KeyInputFlags::MOD_CTRL) ? "CTRL " : "",
+		(key.flags & KeyInputFlags::MOD_SHIFT) ? "SHIFT " : "",
+		(key.flags & KeyInputFlags::MOD_ALT) ? "ALT " : "",
+		(key.flags & KeyInputFlags::MOD_META) ? "META " : "");
 	keyEventLog_.push_back(buf);
 	UpdateLogView();
 	return true;
@@ -734,7 +740,7 @@ void TouchTestScreen::axis(const AxisInput &axis) {
 }
 
 void TouchTestScreen::DrawForeground(UIContext &dc) {
-	Bounds bounds = dc.GetLayoutBounds();
+	Bounds bounds = GetLayoutBounds(dc);
 
 	double now = dc.FrameStartTime();
 	double delta = now - lastFrameTime_;

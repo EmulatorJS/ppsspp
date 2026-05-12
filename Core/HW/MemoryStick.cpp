@@ -145,9 +145,12 @@ u64 MemoryStick_FreeSpace(std::string gameID) {
 			realFreeSpace = memstickInitialFree - memstickCurrentUse;
 		}
 	}
-	INFO_LOG(Log::IO, "Done calculating free disk space (%0.3f s)", time_now_d() - start);
 
-	return std::min(simulatedFreeSpace, realFreeSpace);
+	u64 space = std::min(simulatedFreeSpace, realFreeSpace);
+
+	INFO_LOG(Log::IO, "Done calculating free disk space (%0.3f s): %llu", time_now_d() - start, (unsigned long long)space);
+
+	return space;
 }
 
 void MemoryStick_NotifyWrite() {
@@ -163,6 +166,8 @@ void MemoryStick_SetState(MemStickState state) {
 	if (memStickState == state) {
 		return;
 	}
+
+	INFO_LOG(Log::System, "Memory stick state changed: %d -> %d", memStickState, state);
 
 	memStickState = state;
 

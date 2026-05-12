@@ -90,12 +90,12 @@ DirectoryFileSystem::~DirectoryFileSystem() {
 
 // TODO(scoped): Merge the two below functions somehow.
 
-Path DirectoryFileHandle::GetLocalPath(const Path &basePath, std::string localPath) const {
+Path DirectoryFileHandle::GetLocalPath(const Path &basePath, std::string_view localPath) const {
 	if (localPath.empty())
 		return basePath;
 
 	if (localPath[0] == '/')
-		localPath.erase(0, 1);
+		localPath = localPath.substr(1);
 
 	if (fileSystemFlags_ & FileSystemFlags::STRIP_PSP) {
 		if (localPath == "PSP") {
@@ -108,12 +108,12 @@ Path DirectoryFileHandle::GetLocalPath(const Path &basePath, std::string localPa
 	return basePath / localPath;
 }
 
-Path DirectoryFileSystem::GetLocalPath(std::string internalPath) const {
+Path DirectoryFileSystem::GetLocalPath(std::string_view internalPath) const {
 	if (internalPath.empty())
 		return basePath;
 
 	if (internalPath[0] == '/')
-		internalPath.erase(0, 1);
+		internalPath = internalPath.substr(1);
 
 	if (flags & FileSystemFlags::STRIP_PSP) {
 		if (internalPath == "PSP") {
@@ -776,6 +776,10 @@ PSPFileInfo DirectoryFileSystem::GetFileInfo(std::string filename) {
 	localtime_r((time_t*)&ctime, &x.ctime);
 	localtime_r((time_t*)&mtime, &x.mtime);
 
+	x.atimeUs = info.atimeUs;
+	x.ctimeUs = info.ctimeUs;
+	x.mtimeUs = info.mtimeUs;
+
 	return ReplayApplyDiskFileInfo(x, CoreTiming::GetGlobalTimeUs());
 }
 
@@ -869,7 +873,7 @@ bool DirectoryFileSystem::ComputeRecursiveDirSizeIfFast(const std::string &path,
 	}
 }
 
-std::vector<PSPFileInfo> DirectoryFileSystem::GetDirListing(const std::string &path, bool *exists) {
+std::vector<PSPFileInfo> DirectoryFileSystem::GetDirListing(std::string_view path, bool *exists) {
 	std::vector<PSPFileInfo> myVector;
 
 	std::vector<File::FileInfo> files;
@@ -880,7 +884,7 @@ std::vector<PSPFileInfo> DirectoryFileSystem::GetDirListing(const std::string &p
 	if (this->flags & FileSystemFlags::CASE_SENSITIVE) {
 		if (!success) {
 			// TODO: Case sensitivity should be checked on a file system basis, right?
-			std::string fixedPath = path;
+			std::string fixedPath(path);
 			if (FixPathCase(basePath, fixedPath, FPC_FILE_MUST_EXIST)) {
 				// May have failed due to case sensitivity, try again
 				localPath = GetLocalPath(fixedPath);
@@ -1053,8 +1057,8 @@ VFSFileSystem::~VFSFileSystem() {
 	entries.clear();
 }
 
-std::string VFSFileSystem::GetLocalPath(const std::string &localPath) const {
-	return basePath + localPath;
+std::string VFSFileSystem::GetLocalPath(std::string_view localPath) const {
+	return join(basePath, localPath);
 }
 
 bool VFSFileSystem::MkDir(const std::string &dirname) {
@@ -1200,7 +1204,7 @@ size_t VFSFileSystem::SeekFile(u32 handle, s32 position, FileMove type) {
 	}
 }
 
-std::vector<PSPFileInfo> VFSFileSystem::GetDirListing(const std::string &path, bool *exists) {
+std::vector<PSPFileInfo> VFSFileSystem::GetDirListing(std::string_view path, bool *exists) {
 	std::vector<PSPFileInfo> myVector;
 	// TODO
 	if (exists)

@@ -12,7 +12,7 @@
 #include "Common/UI/Root.h"
 #include "Common/Render/DrawBuffer.h"
 
-static const bool ClickDebug = false;
+static constexpr bool ClickDebug = false;
 
 UIScreen::UIScreen() : Screen() {
 	lastOrientation_ = GetDeviceOrientation();
@@ -46,7 +46,7 @@ void UIScreen::DoRecreateViews() {
 	CreateViews();
 	UI::View *defaultView = root_ ? root_->GetDefaultFocusView() : nullptr;
 	if (defaultView && defaultView->GetVisibility() == UI::V_VISIBLE) {
-		defaultView->SetFocus();
+		defaultView->SetFocus(UI::FocusFlags::CAUSE_OTHER);
 	}
 	recreateViews_ = false;
 
@@ -55,7 +55,7 @@ void UIScreen::DoRecreateViews() {
 
 		// Update layout and refocus so things scroll into view.
 		// This is for resizing down, when focused on something now offscreen.
-		UI::LayoutViewHierarchy(*screenManager()->getUIContext(), RootMargins(), root_, ignoreInsets_, ignoreBottomInset_);
+		UI::LayoutViewHierarchy(*screenManager()->getUIContext(), RootMargins(), root_, LayoutMode(), UseImmersiveMode());
 		UI::View *focused = UI::GetFocusedView();
 		if (focused) {
 			root_->SubviewFocused(focused);
@@ -130,9 +130,52 @@ bool UIScreen::UnsyncKey(const KeyInput &key) {
 		}
 	}
 
+	// Track modifier keys.
+	if (key.flags & KeyInputFlags::DOWN) {
+		switch (key.keyCode) {
+		case NKCODE_CTRL_LEFT: modifiersPressed_ |= Modifier::LCTRL; break;
+		case NKCODE_CTRL_RIGHT: modifiersPressed_ |= Modifier::RCTRL; break;
+		case NKCODE_SHIFT_LEFT: modifiersPressed_ |= Modifier::LSHIFT; break;
+		case NKCODE_SHIFT_RIGHT: modifiersPressed_ |= Modifier::RSHIFT; break;
+		case NKCODE_ALT_LEFT: modifiersPressed_ |= Modifier::LALT; break;
+		case NKCODE_ALT_RIGHT: modifiersPressed_ |= Modifier::RALT; break;
+		case NKCODE_META_LEFT: modifiersPressed_ |= Modifier::LMETA; break;
+		case NKCODE_META_RIGHT: modifiersPressed_ |= Modifier::RMETA; break;
+		default:
+			break;
+		}
+	}
+	if (key.flags & KeyInputFlags::UP) {
+		switch (key.keyCode) {
+		case NKCODE_CTRL_LEFT: modifiersPressed_ &= ~Modifier::LCTRL; break;
+		case NKCODE_CTRL_RIGHT: modifiersPressed_ &= ~Modifier::RCTRL; break;
+		case NKCODE_SHIFT_LEFT: modifiersPressed_ &= ~Modifier::LSHIFT; break;
+		case NKCODE_SHIFT_RIGHT: modifiersPressed_ &= ~Modifier::RSHIFT; break;
+		case NKCODE_ALT_LEFT: modifiersPressed_ &= ~Modifier::LALT; break;
+		case NKCODE_ALT_RIGHT: modifiersPressed_ &= ~Modifier::RALT; break;
+		case NKCODE_META_LEFT: modifiersPressed_ &= ~Modifier::LMETA; break;
+		case NKCODE_META_RIGHT: modifiersPressed_ &= ~Modifier::RMETA; break;
+		default:
+			break;
+		}
+	}
+
 	QueuedEvent ev{};
 	ev.type = QueuedEventType::KEY;
 	ev.key = key;
+
+	if (modifiersPressed_ & (Modifier::LCTRL | Modifier::RCTRL)) {
+		ev.key.flags |= KeyInputFlags::MOD_CTRL;
+	}
+	if (modifiersPressed_ & (Modifier::LSHIFT | Modifier::RSHIFT)) {
+		ev.key.flags |= KeyInputFlags::MOD_SHIFT;
+	}
+	if (modifiersPressed_ & (Modifier::LALT | Modifier::RALT)) {
+		ev.key.flags |= KeyInputFlags::MOD_ALT;
+	}
+	if (modifiersPressed_ & (Modifier::LMETA | Modifier::RMETA)) {
+		ev.key.flags |= KeyInputFlags::MOD_META;
+	}
 	std::lock_guard<std::mutex> guard(eventQueueLock_);
 	eventQueue_.push_back(ev);
 	return retval;
@@ -146,13 +189,6 @@ void UIScreen::update() {
 	}
 
 	DoRecreateViews();
-
-	if (root_) {
-		DialogResult result = UpdateViewHierarchy(root_);
-		if (result != DR_NONE) {
-			TriggerFinish(result);
-		}
-	}
 
 	while (true) {
 		QueuedEvent ev{};
@@ -188,6 +224,13 @@ void UIScreen::update() {
 			break;
 		}
 	}
+
+	if (root_) {
+		DialogResult result = UpdateViewHierarchy(root_);
+		if (result != DR_NONE) {
+			TriggerFinish(result);
+		}
+	}
 }
 
 void UIScreen::deviceLost() {
@@ -200,35 +243,16 @@ void UIScreen::deviceRestored(Draw::DrawContext *draw) {
 		root_->DeviceRestored(draw);
 }
 
-void UIScreen::SetupViewport() {
-	using namespace Draw;
-	Draw::DrawContext *draw = screenManager()->getDrawContext();
-	_dbg_assert_(draw != nullptr);
-	// Bind and clear the back buffer
-	draw->BindFramebufferAsRenderTarget(nullptr, { RPAction::CLEAR, RPAction::CLEAR, RPAction::CLEAR, 0xFF000000 }, "UI");
-	screenManager()->getUIContext()->BeginFrame();
-
-	Draw::Viewport viewport;
-	viewport.TopLeftX = 0;
-	viewport.TopLeftY = 0;
-	viewport.Width = g_display.pixel_xres;
-	viewport.Height = g_display.pixel_yres;
-	viewport.MaxDepth = 1.0;
-	viewport.MinDepth = 0.0;
-	draw->SetViewport(viewport);
-	draw->SetTargetSize(g_display.pixel_xres, g_display.pixel_yres);
+Bounds UIScreen::GetLayoutBounds(UIContext &dc) const {
+	return dc.GetLayoutBounds(LayoutMode(), UseImmersiveMode());
 }
 
 ScreenRenderFlags UIScreen::render(ScreenRenderMode mode) {
-	if (mode & ScreenRenderMode::FIRST) {
-		SetupViewport();
-	}
-
 	DoRecreateViews();
 
 	UIContext &uiContext = *screenManager()->getUIContext();
 	if (root_) {
-		UI::LayoutViewHierarchy(uiContext, RootMargins(), root_, ignoreInsets_, ignoreBottomInset_);
+		UI::LayoutViewHierarchy(uiContext, RootMargins(), root_, LayoutMode(), UseImmersiveMode());
 	}
 
 	uiContext.PushTransform({translation_, scale_, alpha_});
@@ -285,6 +309,14 @@ void UIDialogScreen::sendMessage(UIMessage message, const char *value) {
 	if (screen) {
 		screen->sendMessage(message, value);
 	}
+}
+
+UIDialogScreen::~UIDialogScreen() {
+	System_NotifyUIEvent(UIEventNotification::DIALOG_CLOSED);
+}
+
+bool UIScreen::IsOnTop() const {
+	return screenManager()->topScreen() == this;
 }
 
 void UIScreen::OnBack(UI::EventParams &e) {

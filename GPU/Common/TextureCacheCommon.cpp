@@ -544,7 +544,7 @@ TexCacheEntry *TextureCacheCommon::SetTexture() {
 			}
 		}
 
-		if (match && (entry->status & TexCacheEntry::STATUS_TO_SCALE) && standardScaleFactor_ != 1 && texelsScaledThisFrame_ < TEXCACHE_MAX_TEXELS_SCALED) {
+		if (match && (entry->status & TexCacheEntry::STATUS_TO_SCALE) && (standardScaleFactor_ > 1 || shaderScaleFactor_ > 1) && texelsScaledThisFrame_ < TEXCACHE_MAX_TEXELS_SCALED) {
 			if ((entry->status & TexCacheEntry::STATUS_CHANGE_FREQUENT) == 0) {
 				// INFO_LOG(Log::G3D, "Reloading texture to do the scaling we skipped..");
 				match = false;
@@ -626,7 +626,7 @@ TexCacheEntry *TextureCacheCommon::SetTexture() {
 	def.bufw = bufw;
 
 	AttachCandidate bestCandidate;
-	if (GetBestFramebufferCandidate(def, 0, &bestCandidate)) {
+	if (GetBestFramebufferCandidate(def, 0, &bestCandidate, "texture")) {
 		// If we had a texture entry here, let's get rid of it.
 		if (entryIter != cache_.end()) {
 			DeleteTexture(entryIter);
@@ -709,7 +709,7 @@ TexCacheEntry *TextureCacheCommon::SetTexture() {
 	return entry;
 }
 
-bool TextureCacheCommon::GetBestFramebufferCandidate(const TextureDefinition &entry, u32 texAddrOffset, AttachCandidate *bestCandidate) const {
+bool TextureCacheCommon::GetBestFramebufferCandidate(const TextureDefinition &entry, u32 texAddrOffset, AttachCandidate *bestCandidate, const char *context) const {
 	gpuStats.numFramebufferEvaluations++;
 
 	TinySet<AttachCandidate, 6> candidates;
@@ -743,6 +743,7 @@ bool TextureCacheCommon::GetBestFramebufferCandidate(const TextureDefinition &en
 	bool kzCompat = PSP_CoreParameter().compat.flags().SplitFramebufferMargin;
 
 	// We simply use the sequence counter as relevancy nowadays.
+
 	for (size_t i = 0; i < candidates.size(); i++) {
 		AttachCandidate &candidate = candidates[i];
 		int relevancy = candidate.channel == RASTER_COLOR ? candidate.fb->colorBindSeq : candidate.fb->depthBindSeq;
@@ -753,6 +754,11 @@ bool TextureCacheCommon::GetBestFramebufferCandidate(const TextureDefinition &en
 			(candidate.match.yOffset != 0 || candidate.match.xOffset != 0) &&
 			candidate.fb->fb_address == (gstate.getFrameBufRawAddress() | 0x04000000)) {
 			relevancy -= 2;
+		}
+
+		if (candidate.fb->fb_address == entry.addr && PSP_CoreParameter().compat.flags().BoostExactFramebufferMatch) {
+			// Perfect match, prefer this one heavily. Works around an overlapping framebuffer problem in Tales of Phantasia X: #21162
+			relevancy += 3;
 		}
 
 		if (candidate.match.xOffset != 0 && PSP_CoreParameter().compat.flags().DisallowFramebufferAtOffset) {
@@ -785,7 +791,8 @@ bool TextureCacheCommon::GetBestFramebufferCandidate(const TextureDefinition &en
 		}
 		cands += "\n";
 
-		WARN_LOG(Log::G3D, "GetFramebufferCandidates(tex): Multiple (%d) candidate framebuffers. texaddr: %08x offset: %d (%dx%d stride %d, %s):\n%s",
+		WARN_LOG(Log::G3D, "GetBestFramebufferCandidate(%s): Multiple (%d) candidate framebuffers. texaddr: %08x offset: %d (%dx%d stride %d, %s):\n%s",
+			context,
 			(int)candidates.size(),
 			entry.addr, texAddrOffset, dimWidth(entry.dim), dimHeight(entry.dim), entry.bufw, GeTextureFormatToString(entry.format),
 			cands.c_str()
@@ -795,7 +802,7 @@ bool TextureCacheCommon::GetBestFramebufferCandidate(const TextureDefinition &en
 
 	if (bestIndex != -1) {
 		if (logging) {
-			WARN_LOG(Log::G3D, "Chose candidate %d:\n%s\n", (int)bestIndex, candidates[bestIndex].ToString().c_str());
+			WARN_LOG(Log::G3D, "Chose candidate %d:\n%s", (int)bestIndex, candidates[bestIndex].ToString().c_str());
 		}
 		*bestCandidate = candidates[bestIndex];
 		return true;
@@ -1083,6 +1090,10 @@ bool TextureCacheCommon::MatchFramebuffer(
 			matchInfo->xOffset = entry.bufw == 0 ? 0 : -(-texelOffset % (int)entry.bufw);
 		}
 
+		if (matchInfo->yOffset >= 512 && !PSP_CoreParameter().compat.flags().AllowLargeFBTextureOffsets) {
+			// Reject unreasonably large y offsets. 512 is the largest texture size.
+			return false;
+		}
 		if (matchInfo->yOffset > 0 && matchInfo->yOffset + minSubareaHeight >= framebuffer->height) {
 			// Can't be inside the framebuffer.
 			return false;
@@ -1114,12 +1125,27 @@ bool TextureCacheCommon::MatchFramebuffer(
 		// Check for CLUT. The framebuffer is always RGB, but it can be interpreted as a CLUT texture.
 		// 3rd Birthday (and a bunch of other games) render to a 16 bit clut texture.
 		if (matchingClutFormat) {
-			if (!noOffset) {
-				WARN_LOG_ONCE(subareaClut, Log::G3D, "Matching framebuffer (%s) using %s with offset at %08x +%dx%d", RasterChannelToString(channel), GeTextureFormatToString(entry.format), fb_address, matchInfo->xOffset, matchInfo->yOffset);
+			if (channel == RasterChannel::RASTER_DEPTH && framebuffer->last_frame_depth_updated < 0) {
+				// Reject depth textures that have not been rendered to. See #15828
+				// We're right before the final check here, so we can bail.
+				return false;
+			} else {
+				if (!noOffset) {
+					WARN_LOG_ONCE(subareaClut, Log::G3D, "Matching framebuffer (%s) using %s with offset at %08x +%dx%d", RasterChannelToString(channel), GeTextureFormatToString(entry.format), fb_address, matchInfo->xOffset, matchInfo->yOffset);
+				}
+				return true;
 			}
-			return true;
-		} else if (IsClutFormat((GETextureFormat)(entry.format)) || IsDXTFormat((GETextureFormat)(entry.format))) {
-			WARN_LOG_ONCE(fourEightBit, Log::G3D, "%s texture format not matching framebuffer of format %s at %08x/%d", GeTextureFormatToString(entry.format), GeBufferFormatToString(fb_format), fb_address, fb_stride);
+		} else if (IsClutFormat((GETextureFormat)(entry.format))) {
+			WARN_LOG_ONCE(nomatch_clut, Log::G3D, "%s texture format not matching framebuffer of format %s at %08x/%d", GeTextureFormatToString(entry.format), GeBufferFormatToString(fb_format), fb_address, fb_stride);
+			// Seen in Silent Hill: Shattered Memories (#6265).
+			if (entry.format == GE_TFMT_CLUT32 && fb_format != GE_FORMAT_8888) {
+				matchInfo->reinterpret = true;
+				matchInfo->reinterpretTo = GE_FORMAT_8888;
+				return true;
+			}
+			return false;
+		} else if (IsDXTFormat((GETextureFormat)(entry.format))) {
+			WARN_LOG_ONCE(nomatch_dxt, Log::G3D, "%s texture format (DXT!) not matching framebuffer of format %s at %08x/%d", GeTextureFormatToString(entry.format), GeBufferFormatToString(fb_format), fb_address, fb_stride);
 			return false;
 		}
 
@@ -1249,7 +1275,7 @@ bool TextureCacheCommon::SetOffsetTexture(u32 yOffset) {
 	def.dim = gstate.getTextureDimension(0);
 
 	AttachCandidate bestCandidate;
-	if (GetBestFramebufferCandidate(def, texaddrOffset, &bestCandidate)) {
+	if (GetBestFramebufferCandidate(def, texaddrOffset, &bestCandidate, "offsetTexture")) {
 		SetTextureFramebuffer(bestCandidate);
 		return true;
 	} else {
@@ -2799,16 +2825,20 @@ bool TextureCacheCommon::PrepareBuildTexture(BuildTexturePlan &plan, TexCacheEnt
 		plan.scaleFactor = plan.scaleFactor > 4 ? 4 : (plan.scaleFactor > 2 ? 2 : 1);
 	}
 
+	if (plan.hardwareScaling) {
+		plan.scaleFactor = shaderScaleFactor_;
+	}
+
 	bool isFakeMipmapChange = false;
 	if (plan.badMipSizes) {
 		isFakeMipmapChange = IsFakeMipmapChange();
 
 		// Check for pure 3D texture.
-		int tw = gstate.getTextureWidth(0);
-		int th = gstate.getTextureHeight(0);
+		const int tw = gstate.getTextureWidth(0);
+		const int th = gstate.getTextureHeight(0);
 		bool pure3D = true;
 		for (int i = 0; i < plan.levelsToLoad; i++) {
-			if (gstate.getTextureWidth(i) != gstate.getTextureWidth(0) || gstate.getTextureHeight(i) != gstate.getTextureHeight(0)) {
+			if (gstate.getTextureWidth(i) != tw || gstate.getTextureHeight(i) != th) {
 				pure3D = false;
 				break;
 			}
@@ -2822,7 +2852,8 @@ bool TextureCacheCommon::PrepareBuildTexture(BuildTexturePlan &plan, TexCacheEnt
 			pure3D = false;
 		} else if (isFakeMipmapChange) {
 			// We don't want to create a volume texture, if this is a "fake mipmap change".
-			// In practice due to the compat flag, the only time we end up here is in JP Tactics Ogre.
+			// In practice due to the compat flag, the only time we end up here is in JP Tactics Ogre,
+			// or with OpenGL ES 2.0.
 			pure3D = false;
 		}
 
@@ -2835,10 +2866,6 @@ bool TextureCacheCommon::PrepareBuildTexture(BuildTexturePlan &plan, TexCacheEnt
 		plan.levelsToCreate = 1;
 	}
 
-	if (plan.hardwareScaling) {
-		plan.scaleFactor = shaderScaleFactor_;
-	}
-
 	// We generate missing mipmaps from maxLevel+1 up to this level. maxLevel can get overwritten below
 	// such as when using replacement textures - but let's keep the same amount of levels for generation.
 	// Not all backends will generate mipmaps, and in GL we can't really control the number of levels.
@@ -2847,7 +2874,7 @@ bool TextureCacheCommon::PrepareBuildTexture(BuildTexturePlan &plan, TexCacheEnt
 	plan.w = gstate.getTextureWidth(0);
 	plan.h = gstate.getTextureHeight(0);
 
-	bool isPPGETexture = entry->addr >= PSP_GetKernelMemoryBase() && entry->addr < PSP_GetKernelMemoryEnd();
+	const bool isPPGETexture = entry->addr >= PSP_GetKernelMemoryBase() && entry->addr < PSP_GetKernelMemoryEnd();
 
 	// Don't scale the PPGe texture.
 	if (isPPGETexture) {
@@ -3075,4 +3102,59 @@ CheckAlphaResult TextureCacheCommon::CheckCLUTAlpha(const uint8_t *pixelData, GE
 	default:
 		return CheckAlpha32((const u32 *)pixelData, w, 0xFF000000);
 	}
+}
+
+std::string TexStatusToString(TexCacheEntry::TexStatus status) {
+	std::string result;
+	switch (status & TexCacheEntry::STATUS_MASK) {
+	case TexCacheEntry::STATUS_HASHING:
+		result += "HASHING ";
+		break;
+	case TexCacheEntry::STATUS_RELIABLE:
+		result += "RELIABLE ";
+		break;
+	case TexCacheEntry::STATUS_UNRELIABLE:
+		result += "UNRELIABLE ";
+		break;
+	}
+	if (status & TexCacheEntry::STATUS_ALPHA_MASK) {
+		result += "ALPHA";
+	}
+	if (status & TexCacheEntry::STATUS_CLUT_VARIANTS) {
+		result += "CLUTVARIANTS ";
+	}
+	if (status & TexCacheEntry::STATUS_CLUT_RECHECK) {
+		result += "CLUT_RECHECK ";
+	}
+	if (status & TexCacheEntry::STATUS_CHANGE_FREQUENT) {
+		result += "FREQ ";
+	}
+	if (status & TexCacheEntry::STATUS_UNRELIABLE) {
+		result += "UNREL ";
+	}
+	if (status & TexCacheEntry::STATUS_TO_SCALE) {
+		result += "TOSCALE ";
+	}
+	if (status & TexCacheEntry::STATUS_IS_SCALED_OR_REPLACED) {
+		result += "SCALED/REPL ";
+	}
+	if (status & TexCacheEntry::STATUS_NO_MIPS) {
+		result += "NO_MIPS ";
+	}
+	if (status & TexCacheEntry::STATUS_CLUT_GPU) {
+		result += "CLUT_GPU ";
+	}
+	if (status & TexCacheEntry::STATUS_FORCE_REBUILD) {
+		result += "FORCE_REBUILD ";
+	}
+	if (status & TexCacheEntry::STATUS_3D) {
+		result += "3D ";
+	}
+	if (status & TexCacheEntry::STATUS_VIDEO) {
+		result += "VIDEO ";
+	}
+	if (status & TexCacheEntry::STATUS_BGRA) {
+		result += "BGRA ";
+	}
+	return result.empty() ? "None" : result;
 }

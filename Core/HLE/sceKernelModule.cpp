@@ -89,18 +89,38 @@ enum : u32 {
 	NID_MODULE_SDK_VERSION = 0x11B97506,
 };
 
-// This is a workaround for misbehaving homebrew (like TBL's Suicide Barbie (Final)).
-static const char * const lieAboutSuccessModules[] = {
-	"flash0:/kd/audiocodec.prx",
-	"flash0:/kd/audiocodec_260.prx",
-	"flash0:/kd/libatrac3plus.prx",
-	"disc0:/PSP_GAME/SYSDIR/UPDATE/EBOOT.BIN",
-	"flash0:/kd/ifhandle.prx",
-	"flash0:/kd/pspnet.prx",
-	"flash0:/kd/pspnet_inet.prx",
-	"flash0:/kd/pspnet_apctl.prx",
-	"flash0:/kd/pspnet_resolver.prx",
+struct LieModuleEntry {
+	const char *path;
+	const char *name;
 };
+
+// This is a workaround for misbehaving homebrew (like TBL's Suicide Barbie (Final)) and games (like Drive 76).
+// In the case of Driver 76, it uses sceKernelGetModuleIdList and sceKernelQueryModuleInfo to check if adhoc modules are loaded
+static const struct LieModuleEntry lieAboutSuccessModules[] = {
+	{ "flash0:/kd/audiocodec.prx", "sceAudiocodec_Driver" },
+	{ "flash0:/kd/audiocodec_260.prx", "sceAudiocodec_Driver" },
+	{ "flash0:/kd/libatrac3plus.prx", "sceATRAC3plus_Library" },
+	{ "disc0:/PSP_GAME/SYSDIR/UPDATE/EBOOT.BIN", "" },
+	{ "flash0:/kd/ifhandle.prx", "sceNet_Service" },
+	{ "flash0:/kd/pspnet.prx", "sceNet_Library" },
+	{ "flash0:/kd/pspnet_inet.prx", "sceNetInet_Library" },
+	{ "flash0:/kd/pspnet_apctl.prx", "sceNetApctl_Library" },
+	{ "flash0:/kd/pspnet_resolver.prx", "sceNetResolver_Library" },
+	{ "flash0:/kd/pspnet_adhoc.prx", "sceNetAdhoc_Library" },
+	{ "flash0:/kd/pspnet_adhocctl.prx", "sceNetAdhocctl_Library" },
+	{ "flash0:/kd/pspnet_adhoc_matching.prx", "sceNetAdhocMatching_Library" },
+	{ "flash0:/kd/pspnet_adhoc_download.prx", "sceNetAdhocDownload_Library" },
+	{ "flash0:/kd/pspnet_adhoc_discover.prx", "sceNetAdhocDiscover_Library" },
+};
+
+static const bool liedAboutThisModule(PSPModule *mod) {
+	for (int i = 0 ; i < ARRAY_SIZE(lieAboutSuccessModules) ; i++) {
+		if (strcmp(lieAboutSuccessModules[i].name, mod->GetName()) == 0){
+			return true;
+		}
+	}
+	return false;
+}
 
 const char *NativeModuleStatusToString(NativeModuleStatus status) {
 	switch (status) {
@@ -1076,8 +1096,8 @@ static PSPModule *__KernelLoadELFFromPtr(const u8 *ptr, size_t elfSize, u32 load
 			// In this case it's definitely not compressed. Added assert below.
 		}
 
-		// Don't accept ELFs over 32MB.
-		if (decryptedSize > 32 * 1024 * 1024) {
+		// Don't accept ELFs over 24MB - nor ones with negative size, of course.
+		if (decryptedSize < 0 || decryptedSize > 24 * 1024 * 1024) {
 			*error_string = StringFromFormat("ELF/PRX corrupt, unreasonable decrypted size: %d", (u32)decryptedSize);
 			// TODO: Might be the wrong error code.
 			error = SCE_KERNEL_ERROR_FILEERR;
@@ -1088,13 +1108,15 @@ static PSPModule *__KernelLoadELFFromPtr(const u8 *ptr, size_t elfSize, u32 load
 		if (isGzip) {
 			_dbg_assert_(Read32(ptr + 0x150) != ELF_MAGIC);
 
-			auto temp = new u8[decryptedSize];
+			// Can't decompress in place so we need a temporary buffer.
+			u8 *temp = (u8 *)malloc(decryptedSize);
+			_assert_msg_(temp != nullptr, "Failed to allocate gzip decompression buffer (decryptedSize: %d)", decryptedSize);
 			memcpy(temp, ptr, decryptedSize);
 			int outBytes = gzipDecompress((u8 *)ptr, maxElfSize, temp);
 			if (outBytes < 0) {
 				ERROR_LOG(Log::sceModule, "Module gzip decompression failed!");
 			}
-			delete[] temp;
+			free(temp);
 			INFO_LOG(Log::sceModule, "gzip is enabled in '%s', decompressing (%d -> %d bytes, bufmax=%d).", head->modname, decryptedSize, outBytes, maxElfSize);
 		}
 
@@ -1906,11 +1928,12 @@ u32 sceKernelLoadModule(const char *name, u32 flags, u32 optionAddr) {
 	}
 
 	for (size_t i = 0; i < ARRAY_SIZE(lieAboutSuccessModules); i++) {
-		if (!strcmp(name, lieAboutSuccessModules[i])) {
+		if (!strcmp(name, lieAboutSuccessModules[i].path)) {
 			PSPModule *module = new PSPModule();
 			kernelObjects.Create(module);
 			loadedModules.insert(module->GetUID());
 			memset(&module->nm, 0, sizeof(module->nm));
+			strcpy(module->nm.name, lieAboutSuccessModules[i].name);
 			module->isFake = true;
 			module->nm.entry_addr = -1;
 			module->nm.gp_value = -1;
@@ -2065,7 +2088,7 @@ int __KernelStartModule(SceUID moduleId, u32 argsize, u32 argAddr, u32 returnVal
 	return moduleId;
 }
 
-static u32 sceKernelStartModule(u32 moduleId, u32 argsize, u32 argAddr, u32 returnValueAddr, u32 optionAddr) {
+u32 sceKernelStartModule(u32 moduleId, u32 argsize, u32 argAddr, u32 returnValueAddr, u32 optionAddr) {
 	u32 error;
 	PSPModule *module = kernelObjects.Get<PSPModule>(moduleId, error);
 	if (!module) {
@@ -2576,7 +2599,7 @@ static u32 sceKernelGetModuleIdList(u32 resultBuffer, u32 resultBufferSize, u32 
 	u32 error;
 	for (SceUID moduleId : loadedModules) {
 		PSPModule *module = kernelObjects.Get<PSPModule>(moduleId, error);
-		if (!module->isFake) {
+		if (!module->isFake || liedAboutThisModule(module)) {
 			if (resultBufferOffset < resultBufferSize) {
 				Memory::Write_U32(module->GetUID(), resultBuffer + resultBufferOffset);
 				resultBufferOffset += 4;
@@ -2616,7 +2639,6 @@ const HLEFunction ModuleMgrForUser[] = {
 	{0XFBE27467, nullptr,                                               "ModuleMgrForUser_FBE27467",               '?', ""       },
 };
 
-
 const HLEFunction ModuleMgrForKernel[] = {
 	{0x50F0C1EC, &WrapU_UUUUU<sceKernelStartModule>,                    "sceKernelStartModule",                    'v', "xxxxx", HLE_NOT_IN_INTERRUPT | HLE_NOT_DISPATCH_SUSPENDED | HLE_KERNEL_SYSCALL },
 	{0x977DE386, &WrapU_CUU<sceKernelLoadModule>,                       "sceKernelLoadModule",                     'x', "sxx",   HLE_KERNEL_SYSCALL },
@@ -2626,6 +2648,7 @@ const HLEFunction ModuleMgrForKernel[] = {
 	{0x748CBED9, &WrapU_UU<sceKernelQueryModuleInfo>,                   "sceKernelQueryModuleInfo",                'x', "xx",    HLE_KERNEL_SYSCALL },
 	{0x644395E2, &WrapU_UUU<sceKernelGetModuleIdList>,                  "sceKernelGetModuleIdList",                'x', "xxx",   HLE_KERNEL_SYSCALL },
 	{0X2E0911AA, &WrapU_U<sceKernelUnloadModule>,                       "sceKernelUnloadModule",                   'x', "x" ,    HLE_KERNEL_SYSCALL },
+	{0xD675EBB8, &WrapU_UUU<sceKernelSelfStopUnloadModule>,             "sceKernelSelfStopUnloadModule",           'x', "xxx",   HLE_KERNEL_SYSCALL },
 };
 
 void Register_ModuleMgrForUser() {

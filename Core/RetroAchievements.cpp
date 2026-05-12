@@ -25,7 +25,11 @@
 #include "ext/rcheevos/include/rc_api_request.h"
 #include "ext/rcheevos/include/rc_api_runtime.h"
 
+#ifdef SYSTEM_RAPIDJSON
+#include <rapidjson/document.h>
+#else
 #include "ext/rapidjson/include/rapidjson/document.h"
+#endif
 
 #include "Common/Crypto/md5.h"
 #include "Common/Log.h"
@@ -92,7 +96,7 @@ static std::string FormatRCheevosMD5(uint8_t digest[16]) {
 
 // Consumes the blockDevice.
 // If failed, returns an empty string, otherwise a 32-character string with the hash in hex format.
-static std::string ComputePSPISOHash(BlockDevice *blockDevice) {
+static std::string ComputePSPISOHash(std::shared_ptr<BlockDevice> blockDevice) {
 	md5_context md5;
 	ppsspp_md5_starts(&md5);
 
@@ -287,7 +291,8 @@ static void server_call_callback(const rc_api_request_t *request,
 	// If post data is provided, we need to make a POST request, otherwise, a GET request will suffice.
 	auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
 	if (request->post_data) {
-		std::shared_ptr<http::Request> download = g_DownloadManager.AsyncPostWithCallback(std::string(request->url), std::string(request->post_data), "application/x-www-form-urlencoded", http::RequestFlags::ProgressBar | http::RequestFlags::ProgressBarDelayed, [=](http::Request &download) {
+		std::shared_ptr<http::Request> download = g_DownloadManager.AsyncPostWithCallback(std::string(request->url), std::string(request->post_data), "application/x-www-form-urlencoded", http::RequestFlags::ProgressBar | http::RequestFlags::ProgressBarDelayed,
+			[callback, callback_data](http::Request &download) {
 			std::string buffer;
 			download.buffer().TakeAll(&buffer);
 			rc_api_server_response_t response{};
@@ -297,7 +302,9 @@ static void server_call_callback(const rc_api_request_t *request,
 			callback(&response, callback_data);
 		}, ac->T("Contacting RetroAchievements server..."));
 	} else {
-		std::shared_ptr<http::Request> download = g_DownloadManager.StartDownloadWithCallback(std::string(request->url), Path(), http::RequestFlags::ProgressBar | http::RequestFlags::ProgressBarDelayed, [=](http::Request &download) {
+		std::shared_ptr<http::Request> download = g_DownloadManager.StartDownload(std::string(request->url), Path(), http::RequestFlags::ProgressBar | http::RequestFlags::ProgressBarDelayed, nullptr,
+			ac->T("Contacting RetroAchievements server..."),
+			[callback, callback_data](http::Request &download) {
 			std::string buffer;
 			download.buffer().TakeAll(&buffer);
 			rc_api_server_response_t response{};
@@ -305,7 +312,7 @@ static void server_call_callback(const rc_api_request_t *request,
 			response.body_length = buffer.size();
 			response.http_status_code = download.ResultCode();
 			callback(&response, callback_data);
-		}, ac->T("Contacting RetroAchievements server..."));
+		});
 	}
 }
 
@@ -326,6 +333,7 @@ static void event_handler_callback(const rc_client_event_t *event, rc_client_t *
 		break;
 
 	case RC_CLIENT_EVENT_GAME_COMPLETED:
+	case RC_CLIENT_EVENT_SUBSET_COMPLETED:
 	{
 		// TODO: Do some zany fireworks!
 
@@ -334,15 +342,27 @@ static void event_handler_callback(const rc_client_event_t *event, rc_client_t *
 
 		const rc_client_game_t *gameInfo = rc_client_get_game_info(g_rcClient);
 
-		// TODO: Translation?
-		std::string title = ApplySafeSubstitutions(ac->T("Mastered %1"), gameInfo->title);
+		std::string setTitle = gameInfo->title;
+		std::string badgeUrl = gameInfo->badge_url;
+		if (event->type == RC_CLIENT_EVENT_SUBSET_COMPLETED) {
+			const rc_client_subset_t *subset = event->subset;
+			setTitle = subset->title;
+			badgeUrl = subset->badge_url;
+		}
+
+		DownloadImageIfMissing(badgeUrl);
+
+		std::string_view completedMessage = rc_client_get_hardcore_enabled(g_rcClient) ? "Mastered %1" : "Completed %1";
+		std::string title = ApplySafeSubstitutions(ac->T(completedMessage), setTitle);
 
 		rc_client_user_game_summary_t summary;
 		rc_client_get_user_game_summary(g_rcClient, &summary);
 
 		std::string message = ApplySafeSubstitutions(ac->T("%1 achievements, %2 points"), summary.num_unlocked_achievements, summary.points_unlocked);
 
-		g_OSD.Show(OSDType::MESSAGE_INFO, title, message, DeNull(gameInfo->badge_name), 10.0f);
+		// TODO: Make a fancier message for hardcore completed, etc.
+		// Also, differentiate subset vs game completed?
+		g_OSD.Show(OSDType::MESSAGE_INFO, title, message, badgeUrl, 10.0f);
 
 		System_PostUIMessage(UIMessage::REQUEST_PLAY_SOUND, "achievement_unlocked");
 
@@ -558,6 +578,12 @@ static void raintegration_event_handler(const rc_client_raintegration_event_t *e
 		// it's appropriate, but the event lets the frontend do things like enable/disable rewind or cheats.
 		g_Config.bAchievementsHardcoreMode = rc_client_get_hardcore_enabled(client);
 		break;
+	case RC_CLIENT_RAINTEGRATION_EVENT_MENU_CHANGED:
+		System_RunCallbackInWndProc([](void *vhWnd, void *userdata) {
+			HWND hWnd = reinterpret_cast<HWND>(vhWnd);
+			rc_client_raintegration_rebuild_submenu(g_rcClient, GetMenu(hWnd));
+		}, nullptr);
+		break;
 	default:
 		ERROR_LOG(Log::Achievements, "Unsupported RAIntegration event %u\n", event->type);
 		break;
@@ -608,11 +634,20 @@ static void load_integration_callback(int result, const char *error_message, rc_
 
 void Initialize() {
 	if (!g_Config.bAchievementsEnable) {
-		_dbg_assert_(!g_rcClient);
 		INFO_LOG(Log::Achievements, "Achievements are disabled, not initializing.");
+		if (g_rcClient) {
+#ifdef RC_CLIENT_SUPPORTS_RAINTEGRATION
+			rc_client_unload_raintegration(g_rcClient);
+#endif
+			rc_client_destroy(g_rcClient);
+			g_rcClient = nullptr;
+		}
 		return;
 	}
-	_assert_msg_(!g_rcClient, "Achievements already initialized");
+	if (g_rcClient) {
+		INFO_LOG(Log::Achievements, "Achievements already initialized");
+		return;
+	}
 
 	g_rcClient = rc_client_create(read_memory_callback, server_call_callback);
 	if (!g_rcClient) {
@@ -882,15 +917,15 @@ bool HasAchievementsOrLeaderboards() {
 	return IsActive();
 }
 
-void DownloadImageIfMissing(const std::string &cache_key, std::string_view url) {
-	if (g_iconCache.MarkPending(cache_key)) {
-		INFO_LOG(Log::Achievements, "Downloading image: %.*s (%s)", (int)url.size(), url.data(), cache_key.c_str());
-		g_DownloadManager.StartDownloadWithCallback(url, Path(), http::RequestFlags::Default, [cache_key](http::Request &download) {
+void DownloadImageIfMissing(std::string_view url) {
+	if (g_iconCache.MarkPending(url)) {
+		INFO_LOG(Log::Achievements, "Downloading image: %.*s", STR_VIEW(url));
+		g_DownloadManager.StartDownload(url, Path(), http::RequestFlags::Default, nullptr, "", [](http::Request &download) {
 			if (download.ResultCode() != 200)
 				return;
 			std::string data;
 			download.buffer().TakeAll(&data);
-			g_iconCache.InsertIcon(cache_key, IconFormat::PNG, std::move(data));
+			g_iconCache.InsertIcon(download.url(), IconFormat::PNG, std::move(data));
 		});
 	}
 }
@@ -899,11 +934,16 @@ Statistics GetStatistics() {
 	return g_stats;
 }
 
-std::string GetGameAchievementSummary() {
+std::string GetGameAchievementSummary(uint32_t subsetId) {
 	auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
 
 	rc_client_user_game_summary_t summary;
-	rc_client_get_user_game_summary(g_rcClient, &summary);
+
+	if (subsetId) {
+		rc_client_get_user_subset_summary(g_rcClient, subsetId, &summary);
+	} else {
+		rc_client_get_user_game_summary(g_rcClient, &summary);
+	}
 
 	std::string summaryString;
 	if (summary.num_core_achievements + summary.num_unofficial_achievements == 0) {
@@ -945,13 +985,7 @@ void identify_and_load_callback(int result, const char *error_message, rc_client
 		// Successful! Show a message that we're active.
 		const rc_client_game_t *gameInfo = rc_client_get_game_info(client);
 
-		char cacheId[128];
-		snprintf(cacheId, sizeof(cacheId), "gi:%s", gameInfo->badge_name);
-
-		char temp[512];
-		if (RC_OK == rc_client_game_get_image_url(gameInfo, temp, sizeof(temp))) {
-			Achievements::DownloadImageIfMissing(cacheId, temp);
-		}
+		DownloadImageIfMissing(gameInfo->badge_url);
 
 		GameRegion region = DetectGameRegionFromID(g_paramSFO.GetDiscID());
 		auto ga = GetI18NCategory(I18NCat::GAME);
@@ -962,7 +996,8 @@ void identify_and_load_callback(int result, const char *error_message, rc_client
 			title += regionStr;
 			title += ")";
 		}
-		g_OSD.Show(OSDType::MESSAGE_INFO, title, GetGameAchievementSummary(), cacheId, 5.0f);
+		// TODO: Detect current subset.
+		g_OSD.Show(OSDType::MESSAGE_INFO, title, GetGameAchievementSummary(0), gameInfo->badge_url, 5.0f);
 		break;
 	}
 	case RC_NO_GAME_LOADED:
@@ -1045,7 +1080,7 @@ void SetGame(const Path &path, IdentifiedFileType fileType, FileLoader *fileLoad
 		// TODO: Fish the block device out of the loading process somewhere else. Though, probably easier to just do it here,
 		// we need a temporary blockdevice anyway since it gets consumed by ComputePSPISOHash.
 		std::string errorString;
-		BlockDevice *blockDevice(ConstructBlockDevice(fileLoader, &errorString));
+		std::shared_ptr<BlockDevice> blockDevice(ConstructBlockDevice(fileLoader, &errorString));
 		if (!blockDevice) {
 			ERROR_LOG(Log::Achievements, "Failed to construct block device for '%s' - can't identify: %s", path.c_str(), errorString.c_str());
 			g_isIdentifying = false;
@@ -1109,7 +1144,7 @@ void ChangeUMD(const Path &path, FileLoader *fileLoader) {
 	}
 
 	std::string errorString;
-	BlockDevice *blockDevice = ConstructBlockDevice(fileLoader, &errorString);
+	std::shared_ptr<BlockDevice> blockDevice(ConstructBlockDevice(fileLoader, &errorString));
 	if (!blockDevice) {
 		ERROR_LOG(Log::Achievements, "Failed to construct block device for '%s' - can't identify: %s", path.c_str(), errorString.c_str());
 		return;

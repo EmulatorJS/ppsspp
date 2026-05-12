@@ -1261,6 +1261,17 @@ skip:
 		}
 	}
 
+	bool GetAnalyzedFunctionAt(u32 addr, AnalyzedFunction *out) {
+		std::lock_guard<std::recursive_mutex> guard(functions_lock);
+		for (auto iter = functions.begin(), end = functions.end(); iter != end; ++iter) {
+			if (iter->start <= addr && iter->end >= addr) {
+				*out = *iter;
+				return true;
+			}
+		}
+		return false;
+	}
+
 	void ReplaceFunctions() {
 		std::lock_guard<std::recursive_mutex> guard(functions_lock);
 
@@ -1297,13 +1308,6 @@ skip:
 			return it->name;
 		}
 		return 0;
-	}
-
-	void SetHashMapFilename(const std::string& filename) {
-		if (filename.empty())
-			hashmapFileName = GetSysDirectory(DIRECTORY_SYSTEM) / "knownfuncs.ini";
-		else
-			hashmapFileName = Path(filename);
 	}
 
 	void StoreHashMap(Path filename) {
@@ -1346,7 +1350,7 @@ skip:
 			for (auto iter = range.first; iter != range.second; ++iter) {
 				AnalyzedFunction &f = *iter->second;
 				if (f.hash == mf->hash && f.size == mf->size) {
-					strncpy(f.name, mf->name, sizeof(mf->name) - 1);
+					truncate_cpy(f.name, mf->name);
 
 					std::string existingLabel = g_symbolMap->GetLabelString(f.start);
 					char defaultLabel[256];

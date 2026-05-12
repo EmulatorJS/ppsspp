@@ -289,6 +289,7 @@ public:
 		VkPhysicalDevicePresentIdFeaturesKHR presentId;
 		VkPhysicalDeviceProvokingVertexFeaturesEXT provokingVertex;
 		VkPhysicalDevicePresentModeFifoLatestReadyFeaturesKHR presentModeFifoProps;
+		VkPhysicalDeviceScalarBlockLayoutFeatures scalarBlockLayout;
 	};
 
 	const PhysicalDeviceProps &GetPhysicalDeviceProperties(int i = -1) const {
@@ -435,6 +436,10 @@ public:
 
 	u32 DeviceApiVersion() const {
 		return vulkanDeviceApiVersion_;
+	}
+
+	WindowSystem GetWindowSystem() const {
+		return winsys_;
 	}
 
 private:

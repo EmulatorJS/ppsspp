@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <algorithm>
 #include <string>
+#include <string_view>
 
 #include "Common/Data/Encoding/Utf8.h"
 #include "Common/Data/Encoding/Utf16.h"
@@ -312,14 +313,19 @@ size_t encode_utf8_modified(uint32_t code_point, unsigned char* output) {
 // A function to convert regular UTF-8 to Java Modified UTF-8. Only used on Android.
 // Written by ChatGPT and corrected and modified.
 void ConvertUTF8ToJavaModifiedUTF8(std::string *output, std::string_view input) {
+	// The overflow can't really happen on 64-bit, but let's do the check anyway.
+	if (input.length() > SIZE_MAX / 6) {
+		output->clear();
+		return;
+	}
 	output->resize(input.length() * 6); // worst case: every input character is encoded as 6 bytes. Can't really plausibly happen, though.
 	size_t out_idx = 0;
 	for (size_t i = 0; i < input.length(); ) {
 		unsigned char c = input[i];
 		if (c == 0) {
 			// Encode null character as 0xC0 0x80. TODO: We probably don't need to support this?
-			output[out_idx++] = (char)0xC0;
-			output[out_idx++] = (char)0x80;
+			(*output)[out_idx++] = (char)0xC0;
+			(*output)[out_idx++] = (char)0x80;
 			i++;
 		} else if ((c & 0xF0) == 0xF0) { // 4-byte sequence (U+10000 to U+10FFFF)
 			if (i + 4 > input.length()) {
@@ -366,6 +372,52 @@ void ConvertUTF8ToJavaModifiedUTF8(std::string *output, std::string_view input) 
 	}
 	output->resize(out_idx);
 	_dbg_assert_(output->size() >= input.size());
+}
+
+std::string NormalizeForSearch(std::string_view input) {
+	std::string result;
+	// Pre-allocating input size is a good heuristic, though the
+	// result could be slightly smaller after normalization.
+	result.reserve(input.size());
+
+	int index = 0;
+	int size = static_cast<int>(input.size());
+	char buffer[4]; // Temporary buffer for UTF-8 encoding
+
+	while (index < size) {
+		uint32_t codepoint = u8_nextchar(input.data(), &index, size);
+
+		// Skip spaces and control characters.
+		if (codepoint <= 0x20) {
+			continue;
+		}
+
+		// 1. Convert Fullwidth Roman/Numbers to ASCII
+		// These are common in Japanese game names.
+		// Range: U+FF01 (！) to U+FF5E (～)
+		if (codepoint >= 0xFF01 && codepoint <= 0xFF5E) {
+			codepoint -= 0xFEE0;
+		}
+		// Convert Fullwidth Space (U+3000) to standard space
+		else if (codepoint == 0x3000) {
+			codepoint = 0x20;
+		}
+
+		// 2. Lowercase (Basic Latin range)
+		// We do this after the wide-to-ascii conversion to catch characters
+		// that were originally wide uppercase (e.g., 'Ａ' -> 'A' -> 'a').
+		if (codepoint >= 'A' && codepoint <= 'Z') {
+			codepoint += ('a' - 'A');
+		}
+
+		// 3. Re-encode back to UTF-8
+		int bytes_written = u8_wc_toutf8(buffer, codepoint);
+		if (bytes_written > 0) {
+			result.append(buffer, bytes_written);
+		}
+	}
+
+	return result;
 }
 
 #ifndef _WIN32

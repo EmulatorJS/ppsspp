@@ -36,16 +36,19 @@ enum class IdentifiedFileType {
 
 	PSP_DISC_DIRECTORY,
 
-	UNKNOWN_BIN,
-	UNKNOWN_ELF,
-	UNKNOWN_ISO,
-
 	// Try to reduce support emails...
 	ARCHIVE_RAR,
 	ARCHIVE_ZIP,
 	ARCHIVE_7Z,
 	PSP_PS1_PBP,
-	ISO_MODE2,
+	PSX_ISO,
+	PS2_ISO,
+	PS3_ISO,
+	PSP_UMD_VIDEO_ISO,
+
+	UNKNOWN_BIN,
+	UNKNOWN_ELF,
+	UNKNOWN_ISO,
 
 	NORMAL_DIRECTORY,
 
@@ -149,8 +152,8 @@ inline u32 operator & (const FileLoader::Flags &a, const FileLoader::Flags &b) {
 }
 
 FileLoader *ConstructFileLoader(const Path &filename);
-// Resolve to the target binary, ISO, or other file (e.g. from a directory.)
-FileLoader *ResolveFileLoaderTarget(FileLoader *fileLoader);
+// Identifies the file and resolves to the target binary, ISO, or other file (e.g. from a directory.)
+FileLoader *ResolveFileLoaderTarget(FileLoader *fileLoader, IdentifiedFileType *fileType, std::string *errorString);
 
 Path ResolvePBPDirectory(const Path &filename);
 Path ResolvePBPFile(const Path &filename);
@@ -159,6 +162,10 @@ IdentifiedFileType Identify_File(FileLoader *fileLoader, std::string *errorStrin
 
 bool UmdReplace(const Path &filepath, FileLoader **fileLoader, std::string &error);
 
+enum class ArchiveType {
+	ZIP,
+	SevenZ,
+};
 
 enum class ZipFileContents {
 	NOT_A_ZIP_FILE = 0,
@@ -168,21 +175,28 @@ enum class ZipFileContents {
 	TEXTURE_PACK,
 	SAVE_DATA,
 	FRAME_DUMP,
+	EXTRACTED_GAME,
+	SAVE_STATES,
+	PRX_PLUGIN,
 };
 
+// TODO: Rename to ArchiveContentsInfo or something.
 struct ZipFileInfo {
-	ZipFileContents contents;
-	int numFiles;
-	int stripChars;  // for PSP game - how much to strip from the path.
-	int isoFileIndex;  // for ISO
-	int textureIniIndex;  // for textures
-	bool ignoreMetaFiles;
+	ArchiveType archiveType;
+	ZipFileContents contents = ZipFileContents::NOT_A_ZIP_FILE;
+	int numFiles = 0;
+	int stripChars = 0;  // for PSP game - how much to strip from the path.
+	int isoFileIndex = -1;  // for ISO
+	int textureIniIndex = -1;  // for textures
+	bool ignoreMetaFiles = false;
 	std::string gameTitle;  // from PARAM.SFO if available
 	std::string savedataTitle;
 	std::string savedataDetails;
 	std::string savedataDir;
 	std::string mTime;
-	s64 totalFileSize;
+	std::string iniContents;
+	std::string isoFilename; // Used by SevenZ only right now.
+	s64 totalFileSize = 0;
 
 	std::string contentName;
 };
@@ -190,5 +204,5 @@ struct ZipFileInfo {
 ZipContainer ZipOpenPath(const Path &fileName);
 void ZipClose(ZipContainer &z);
 
-bool DetectZipFileContents(const Path &fileName, ZipFileInfo *info);
 void DetectZipFileContents(zip_t *z, ZipFileInfo *info);
+bool DetectArchiveContents(VFSInterface *vfs, ZipFileInfo *info);

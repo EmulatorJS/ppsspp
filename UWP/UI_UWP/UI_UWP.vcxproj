@@ -85,6 +85,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="..\..\UI\AdhocServerScreen.h" />
     <ClInclude Include="..\..\UI\AudioCommon.h" />
     <ClInclude Include="..\..\UI\Background.h" />
     <ClInclude Include="..\..\UI\BackgroundAudio.h" />
@@ -100,6 +101,7 @@
     <ClInclude Include="..\..\UI\DisplayLayoutScreen.h" />
     <ClInclude Include="..\..\UI\DriverManagerScreen.h" />
     <ClInclude Include="..\..\UI\EmuScreen.h" />
+    <ClInclude Include="..\..\UI\GameBrowser.h" />
     <ClInclude Include="..\..\UI\GameInfoCache.h" />
     <ClInclude Include="..\..\UI\GamepadEmu.h" />
     <ClInclude Include="..\..\UI\GameScreen.h" />
@@ -140,6 +142,7 @@
     <ClInclude Include="targetver.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="..\..\UI\AdhocServerScreen.cpp" />
     <ClCompile Include="..\..\UI\AudioCommon.cpp" />
     <ClCompile Include="..\..\UI\Background.cpp" />
     <ClCompile Include="..\..\UI\BackgroundAudio.cpp" />
@@ -155,6 +158,7 @@
     <ClCompile Include="..\..\UI\DisplayLayoutScreen.cpp" />
     <ClCompile Include="..\..\UI\DriverManagerScreen.cpp" />
     <ClCompile Include="..\..\UI\EmuScreen.cpp" />
+    <ClCompile Include="..\..\UI\GameBrowser.cpp" />
     <ClCompile Include="..\..\UI\GameInfoCache.cpp" />
     <ClCompile Include="..\..\UI\GamepadEmu.cpp" />
     <ClCompile Include="..\..\UI\GameScreen.cpp" />

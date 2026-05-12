@@ -21,6 +21,7 @@ enum class TopBarFlags {
 	Default = 0,
 	Portrait = 1,
 	ContextMenuButton = 2,
+	NoBackButton = 4,
 };
 ENUM_CLASS_BITOPS(TopBarFlags);
 
@@ -36,12 +37,11 @@ public:
 private:
 	UI::Choice *backButton_ = nullptr;
 	UI::Choice *contextMenuButton_ = nullptr;
-	TopBarFlags flags_ = TopBarFlags::Default;
 };
 
 class ShinyIcon : public UI::ImageView {
 public:
-	ShinyIcon(ImageID atlasImage, UI::LayoutParams *layoutParams = 0) : UI::ImageView(atlasImage, "", UI::IS_DEFAULT, layoutParams) {}
+	ShinyIcon(ImageID atlasImage, UI::LayoutParams *layoutParams = 0) : UI::ImageView(atlasImage, "", layoutParams) {}
 	void Draw(UIContext &dc) override;
 	void SetAnimated(bool anim) { animated_ = anim; }
 private:
@@ -77,4 +77,58 @@ private:
 	float scale_ = 1.0f;
 };
 
+class GameInfoBGView : public UI::InertView {
+public:
+	GameInfoBGView(const Path &gamePath, UI::LayoutParams *layoutParams) : InertView(layoutParams), gamePath_(gamePath) {}
+
+	void Draw(UIContext &dc) override;
+	std::string DescribeText() const override { return ""; }
+	void SetColor(uint32_t c) { color_ = c; }
+
+protected:
+	Path gamePath_;
+	uint32_t color_ = 0xFFC0C0C0;
+};
+
+class SettingHint : public UI::TextView {
+public:
+	SettingHint(std::string_view text, UI::View *setting);
+	std::string DescribeText() const override { return setting_ ? setting_->DescribeText() : ""; }  // So that descriptions show up in searches under their parent views
+	void Draw(UIContext &dc) override;
+private:
+	UI::View *setting_;
+};
+
 void AddRotationPicker(ScreenManager *screenManager, UI::ViewGroup *parent, bool text);
+
+class SearchBar : public UI::InertView {
+public:
+	SearchBar(UI::LayoutParams *params);
+	void Draw(UIContext &dc) override;
+
+	bool Touch(const TouchInput &input) override;
+	void SetSearchFilter(std::string_view filter) {
+		searchFilter_ = filter;
+	}
+	void GetContentDimensions(const UIContext &dc, float &w, float &h) const override;
+
+	UI::Event OnCancel;
+private:
+	std::string searchFilter_ = "N/A";
+};
+
+enum class SearchState {
+	MATCH,
+	MISMATCH,
+	PENDING,
+};
+
+struct ViewSearch {
+	SearchBar *searchBar;
+	std::string searchFilter;
+	std::vector<SearchState> searchStates;
+	bool searchPending;
+
+	void ApplySearchFilter(UI::ViewGroup *viewGroup, bool setKeyboardFocus);
+	bool Key(UI::ViewGroup *viewGroup, const KeyInput &input);
+};

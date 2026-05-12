@@ -110,7 +110,7 @@ namespace SaveState {
 	bool IsOldVersion();
 
 	// Check if there's any save stating needing to be done.  Normally called once per frame.
-	bool Process();
+	void Process();
 
 	// Notify save state code that new save data has been written.
 	void NotifySaveData();

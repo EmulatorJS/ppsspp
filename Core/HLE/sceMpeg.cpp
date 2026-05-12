@@ -1400,6 +1400,12 @@ void PostPutAction::run(MipsCall &call) {
 		ringbufferPutPacketsAdded += packetsAddedThisRound;
 	}
 
+	if (!ctx) {
+		_dbg_assert_(false);
+		ERROR_LOG(Log::Mpeg, "sceMpegRingbufferPut: bad mpeg handle %08x", ringbuffer->mpeg);
+		return;
+	}
+
 	// It seems validation is done only by older mpeg libs.
 	if (mpegLibVersion < 0x0105 && packetsAddedThisRound > 0) {
 		// TODO: Faster / less wasteful validation.
@@ -1814,7 +1820,7 @@ static u32 sceMpegFlushAllStream(u32 mpeg) {
 		ringbuffer->packetsWritePos = 0;
 	}
 
-	return hleLogWarning(Log::Mpeg, 0, "UNIMPL");
+	return hleLogInfo(Log::Mpeg, 0, "UNIMPL");
 }
 
 static u32 sceMpegFlushStream(u32 mpeg, int stream_addr) {

@@ -87,7 +87,7 @@ struct DecVtxFormat {
 
 void GetIndexBounds(const void *inds, int count, u32 vertType, u16 *indexLowerBound, u16 *indexUpperBound);
 
-inline int RoundUp4(int x) {
+inline constexpr int RoundUp4(int x) {
 	return (x + 3) & ~3;
 }
 
@@ -366,7 +366,7 @@ public:
 
 	const DecVtxFormat &GetDecVtxFmt() const { return decFmt; }
 
-	void DecodeVerts(u8 *decoded, const void *verts, const UVScale *uvScaleOffset, int indexLowerBound, int indexUpperBound) const;
+	void DecodeVerts(u8 *decoded, const u8 *startPtr, const UVScale *uvScaleOffset, int count) const;
 
 	int VertexSize() const { return size; }  // PSP format size
 

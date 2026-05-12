@@ -4,11 +4,12 @@
 #include "Common/UI/PopupScreens.h"
 #include "UI/MiscViews.h"
 
+ViewLayoutMode UISimpleBaseDialogScreen::LayoutMode() const {
+	return (flags_ & SimpleDialogFlags::ContentsCanScroll) ? ViewLayoutMode::IgnoreBottomInset : ViewLayoutMode::ApplyInsets;
+}
+
 void UISimpleBaseDialogScreen::CreateViews() {
 	using namespace UI;
-
-	const bool canScroll = flags_ & SimpleDialogFlags::ContentsCanScroll;
-	ignoreBottomInset_ = canScroll;
 
 	const bool portrait = GetDeviceOrientation() == DeviceOrientation::Portrait;
 
@@ -29,15 +30,28 @@ void UISimpleBaseDialogScreen::CreateViews() {
 		});
 	}
 
-	if (canScroll) {
+	if (flags_ & SimpleDialogFlags::ContentsCanScroll) {
 		ScrollView *scroll = new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, FILL_PARENT, 1.0f));
-		LinearLayout *contents = new LinearLayoutList(ORIENT_VERTICAL, new LinearLayoutParams(Margins(0, 0, 8, 0)));
+		LinearLayout *contents = new LinearLayoutList(ORIENT_VERTICAL, new LinearLayoutParams(Margins(0, 0, portrait ? 0 : 8, 0)));
 		contents->SetSpacing(0);
 		CreateDialogViews(contents);
 		scroll->Add(contents);
 		root_->Add(scroll);
 	} else {
 		CreateDialogViews(root_);
+	}
+}
+
+ViewLayoutMode UITwoPaneBaseDialogScreen::LayoutMode() const {
+	const bool portrait = GetDeviceOrientation() == DeviceOrientation::Portrait;
+	if (portrait) {
+		if ((flags_ & TwoPaneFlags::SettingsCanScroll) || (flags_ & TwoPaneFlags::ContentsCanScroll)) {
+			return ViewLayoutMode::IgnoreBottomInset;
+		} else {
+			return ViewLayoutMode::ApplyInsets;
+		}
+	} else {
+		return ViewLayoutMode::ApplyInsets;
 	}
 }
 
@@ -50,9 +64,11 @@ void UITwoPaneBaseDialogScreen::CreateViews() {
 
 	BeforeCreateViews();
 
-	auto createContentViews = [this](UI::ViewGroup *parent) {
+	auto createContentViews = [this, portrait](UI::ViewGroup *parent) {
 		if (flags_ & TwoPaneFlags::ContentsCanScroll) {
-			Margins margins(8, 8, 8, 0);
+			int scrollMargin = (!portrait && (flags_ & TwoPaneFlags::NoTopbarInLandscape)) ? 0 : 8;
+
+			Margins margins(8, scrollMargin, 8, 0);
 			if (flags_ & TwoPaneFlags::SettingsToTheRight) {
 				// If settings are in context menu, we want to avoid double margins on the sides.
 				margins.left = 0;
@@ -70,9 +86,6 @@ void UITwoPaneBaseDialogScreen::CreateViews() {
 
 	if (portrait) {
 		// Portrait layout is just a vertical stack.
-		if (flags_ & TwoPaneFlags::SettingsCanScroll) {
-			ignoreBottomInset_ = true;
-		}
 		LinearLayout *root = new LinearLayout(ORIENT_VERTICAL, new LayoutParams(FILL_PARENT, FILL_PARENT));
 
 		TopBarFlags topBarFlags = TopBarFlags::Portrait;
@@ -98,9 +111,9 @@ void UITwoPaneBaseDialogScreen::CreateViews() {
 		if (!(flags_ & TwoPaneFlags::SettingsInContextMenu)) {
 			LinearLayout *settingsPane;
 			if (flags_ & TwoPaneFlags::SettingsCanScroll) {
-				settingsPane = new LinearLayout(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT));
+				settingsPane = new LinearLayout(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, Margins(8)));
 				settingsPane->SetSpacing(0.0f);
-				ScrollView *settingsScroll = new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, FILL_PARENT, 1.0f, Margins(8)));
+				ScrollView *settingsScroll = new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, FILL_PARENT, 1.0f));
 				settingsScroll->Add(settingsPane);
 				root->Add(settingsScroll);
 			} else {
@@ -112,17 +125,19 @@ void UITwoPaneBaseDialogScreen::CreateViews() {
 		}
 		root_ = root;
 	} else {
-		ignoreBottomInset_ = false;
 		LinearLayout *root = new LinearLayout(ORIENT_VERTICAL, new LayoutParams(FILL_PARENT, FILL_PARENT));
 		std::string title(GetTitle());
 		TopBarFlags topBarFlags = portrait ? TopBarFlags::Portrait : TopBarFlags::Default;
 		if (flags_ & TwoPaneFlags::CustomContextMenu) {
 			topBarFlags |= TopBarFlags::ContextMenuButton;
 		}
-		TopBar *topBar = root->Add(new TopBar(*screenManager()->getUIContext(), topBarFlags, title));
+		TopBar *topBar = nullptr;
+		if (!(flags_ & TwoPaneFlags::NoTopbarInLandscape)) {
+			topBar = root->Add(new TopBar(*screenManager()->getUIContext(), topBarFlags, title));
+		}
 		root->SetSpacing(0);
 
-		if (flags_ & TwoPaneFlags::CustomContextMenu) {
+		if ((flags_ & TwoPaneFlags::CustomContextMenu) && topBar) {
 			View *menuButton = topBar->GetContextMenuButton();
 			topBar->OnContextMenuClick.Add([this, menuButton](UI::EventParams &e) {
 				this->screenManager()->push(new PopupCallbackScreen([this](UI::ViewGroup *parent) {
@@ -137,9 +152,14 @@ void UITwoPaneBaseDialogScreen::CreateViews() {
 		ScrollView *settingsScroll = new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(SettingsWidth(), FILL_PARENT, 0.0f, Margins(0, 8, 0, 0)));
 		LinearLayout *settingsPane = new LinearLayout(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, Margins(0, 8, 0, 0)));
 		settingsPane->SetSpacing(0.0f);
+
+		if (flags_ & TwoPaneFlags::NoTopbarInLandscape) {
+			// We still need a back button.
+			settingsPane->Add(new Choice(di->T("Back"), ImageID("I_NAVIGATE_BACK")))->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
+			settingsPane->Add(new Spacer(8.0f));
+		}
 		CreateSettingsViews(settingsPane);
 		// settingsPane->Add(new BorderView(BORDER_BOTTOM, BorderStyle::HEADER_FG, 2.0f, new LayoutParams(FILL_PARENT, 40.0f)));
-		// settingsPane->Add(new Choice(di->T("Back"), ImageID("I_NAVIGATE_BACK")))->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
 		settingsScroll->Add(settingsPane);
 
 		if (flags_ & TwoPaneFlags::SettingsToTheRight) {

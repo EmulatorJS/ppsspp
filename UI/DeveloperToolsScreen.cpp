@@ -36,6 +36,7 @@
 #include "Core/Core.h"
 #include "Core/System.h"
 #include "Core/WebServer.h"
+#include "Core/Util/PathUtil.h"
 #include "UI/GPUDriverTestScreen.h"
 #include "UI/DeveloperToolsScreen.h"
 #include "UI/DevScreens.h"
@@ -79,6 +80,9 @@ static std::string PostShaderTranslateName(std::string_view value) {
 		return std::string(value);
 	}
 }
+
+DeveloperToolsScreen::DeveloperToolsScreen(const Path &gamePath)
+	: UITabbedBaseDialogScreen(gamePath, &g_Config.iDeveloperSettingsCurrentTab, TabDialogFlags::AddAutoTitles) {}
 
 void DeveloperToolsScreen::CreateTextureReplacementTab(UI::LinearLayout *list) {
 	using namespace UI;
@@ -165,6 +169,20 @@ void DeveloperToolsScreen::CreateGeneralTab(UI::LinearLayout *list) {
 		screenManager()->push(new LogConfigScreen());
 	});
 	list->Add(new CheckBox(&g_Config.bEnableFileLogging, dev->T("Log to file")))->SetEnabledPtr(&g_Config.bEnableLogging);
+	if (System_GetPropertyInt(SYSPROP_DEVICE_TYPE) == DEVICE_TYPE_DESKTOP) {
+		list->Add(new Choice(dev->T("Show log file in folder")))->OnClick.Add([](UI::EventParams &e) {
+			Path logFilePath = g_logManager.GetLogFilePath();
+			if (logFilePath.empty()) {
+				ERROR_LOG(Log::System, "No log file path configured.");
+				return;
+			}
+			if (File::Exists(logFilePath)) {
+				System_ShowFileInFolder(logFilePath);
+			} else {
+				System_LaunchUrl(LaunchUrlType::LOCAL_FILE, logFilePath.NavigateUp().ToString());
+			}
+		});
+	}
 	list->Add(new CheckBox(&g_Config.bLogFrameDrops, dev->T("Log Dropped Frame Statistics")));
 	if (GetGPUBackend() == GPUBackend::VULKAN) {
 		list->Add(new CheckBox(&g_Config.bGpuLogProfiler, dev->T("GPU log profiler")));
@@ -183,6 +201,8 @@ void DeveloperToolsScreen::CreateGeneralTab(UI::LinearLayout *list) {
 		screenManager()->push(new GPIGPOScreen(dev->T("GPI/GPO switches/LEDs")));
 	});
 
+	list->Add(new CheckBox(&g_Config.bShowSaveLoadIndicator, dev->T("Show indicator when saving/loading")));
+
 #if PPSSPP_PLATFORM(ANDROID)
 	static const char *framerateModes[] = { "Default", "Request 60 Hz", "Force 60Hz" };
 	PopupMultiChoice *framerateMode = list->Add(new PopupMultiChoice(&g_Config.iDisplayFramerateMode, gr->T("Framerate mode"), framerateModes, 0, ARRAY_SIZE(framerateModes), I18NCat::GRAPHICS, screenManager()));
@@ -193,7 +213,7 @@ void DeveloperToolsScreen::CreateGeneralTab(UI::LinearLayout *list) {
 #endif
 
 #if PPSSPP_PLATFORM(IOS)
-	list->Add(new NoticeView(NoticeLevel::WARN, ms->T("Moving the memstick directory is NOT recommended on iOS"), ""));
+	list->Add(new NoticeView(NoticeLevel::WARN, ms->T("Moving the memstick directory is NOT recommended on iOS"), ""))->SetWrapText(true);
 	list->Add(new Choice(sy->T("Set Memory Stick folder")))->OnClick.Add(
 		[=](UI::EventParams &) {
 		SetMemStickDirDarwin(GetRequesterToken());
@@ -205,13 +225,27 @@ void DeveloperToolsScreen::CreateGeneralTab(UI::LinearLayout *list) {
 #if PPSSPP_PLATFORM(IOS)
 	list->Add(new Choice(dev->T("Copy savestates to memstick root")))->OnClick.Handle(this, &DeveloperToolsScreen::OnCopyStatesToRoot);
 #endif
+
+	auto di = GetI18NCategory(I18NCat::DIALOG);
+	// Reuse strings to the max, heh.
+	list->Add(new Choice(ApplySafeSubstitutions("%1: ppsspp.ini", di->T("Copy to clipboard"))))->OnClick.Add([=](UI::EventParams &) {
+		auto di = GetI18NCategory(I18NCat::DIALOG);
+		std::string configStr = g_Config.GetConfigAsString();
+		if (!configStr.empty()) {
+			System_CopyStringToClipboard(configStr);
+			g_OSD.Show(OSDType::MESSAGE_INFO, ApplySafeSubstitutions(di->T("Copied to clipboard: %1"), "ppsspp.ini"), 0.0f, "copyToClip");
+		}
+	});
 }
 
 void DeveloperToolsScreen::CreateTestsTab(UI::LinearLayout *list) {
 	using namespace UI;
 	auto dev = GetI18NCategory(I18NCat::DEVELOPER);
 
-	list->Add(new Choice(dev->T("Touchscreen Test")))->OnClick.Handle(this, &DeveloperToolsScreen::OnTouchscreenTest);
+	list->Add(new Choice(dev->T("Touchscreen Test")))->OnClick.Add([this](UI::EventParams &e) {
+		screenManager()->push(new TouchTestScreen(gamePath_));
+		// Handle touchscreen test event
+	});
 	// list->Add(new Choice(dev->T("Memstick Test")))->OnClick.Handle(this, &DeveloperToolsScreen::OnMemstickTest);
 	Choice *frameDumpTests = list->Add(new Choice(dev->T("Framedump tests")));
 	frameDumpTests->OnClick.Add([this](UI::EventParams &e) {
@@ -242,6 +276,7 @@ void DeveloperToolsScreen::CreateDumpFileTab(UI::LinearLayout *list) {
 	list->Add(new BitCheckBox(&g_Config.iDumpFileTypes, (int)DumpFileType::EBOOT, dev->T("Dump Decrypted Eboot", "Dump Decrypted EBOOT.BIN (If Encrypted) When Booting Game")));
 	list->Add(new BitCheckBox(&g_Config.iDumpFileTypes, (int)DumpFileType::PRX, dev->T("PRX")));
 	list->Add(new BitCheckBox(&g_Config.iDumpFileTypes, (int)DumpFileType::Atrac3, dev->T("Atrac3/3+")));
+	list->Add(new BitCheckBox(&g_Config.iDumpFileTypes, (int)DumpFileType::PBP_ISO, dev->T("ISO from PBP")));
 }
 
 void DeveloperToolsScreen::CreateHLETab(UI::LinearLayout *list) {
@@ -393,11 +428,9 @@ void DeveloperToolsScreen::CreateUITab(UI::LinearLayout *list) {
 	// This one is clickable
 	list->Add(new Choice(si->T("Success")))->OnClick.Add([&](UI::EventParams &) {
 		g_OSD.Show(OSDType::MESSAGE_SUCCESS, "Success", 0.0f, "clickable");
-		g_OSD.SetClickCallback("clickable", [](bool clicked, void *) {
-			if (clicked) {
-				System_LaunchUrl(LaunchUrlType::BROWSER_URL, "https://www.google.com/");
-			}
-		}, nullptr);
+		g_OSD.SetClickCallback("clickable", []() {
+			System_LaunchUrl(LaunchUrlType::BROWSER_URL, "https://www.google.com/");
+		});
 	});
 	list->Add(new Choice(sy->T("RetroAchievements")))->OnClick.Add([&](UI::EventParams &) {
 		g_OSD.Show(OSDType::MESSAGE_WARNING, "RetroAchievements warning", "", "I_RETROACHIEVEMENTS_LOGO");
@@ -430,11 +463,11 @@ void DeveloperToolsScreen::CreateUITab(UI::LinearLayout *list) {
 	});
 
 	list->Add(new ItemHeader(ac->T("Notifications")));
-	list->Add(new PopupMultiChoice(&g_Config.iNotificationPos, "General notifications", positions, 0, ARRAY_SIZE(positions), I18NCat::DIALOG, screenManager()));
+	list->Add(new PopupMultiChoice(&g_Config.iNotificationPos, sy->T("Notification screen position"), positions, 0, ARRAY_SIZE(positions), I18NCat::DIALOG, screenManager()));
 	list->Add(new PopupMultiChoice(&g_Config.iAchievementsLeaderboardTrackerPos, ac->T("Leaderboard tracker"), positions, 0, ARRAY_SIZE(positions), I18NCat::DIALOG, screenManager()));
-	list->Add(new CheckBox(&pretendIngame_, ac->T("Pretend to be in-game (for testing)")));
 
 #ifdef _DEBUG
+	list->Add(new CheckBox(&pretendIngame_, ac->T("Pretend to be in-game (for testing)")));
 	// Untranslated string because this is debug mode only, only for PPSSPP developers.
 	list->Add(new ItemHeader(ac->T("Assert")));
 	list->Add(new Choice("Assert"))->OnClick.Add([=](UI::EventParams &) {
@@ -455,11 +488,14 @@ void DeveloperToolsScreen::CreateNetworkTab(UI::LinearLayout *list) {
 	auto ri = GetI18NCategory(I18NCat::REMOTEISO);
 	list->Add(new ItemHeader(ms->T("Networking")));
 	list->Add(new CheckBox(&g_Config.bDontDownloadInfraJson, dev->T("Don't download infra-dns.json")));
-
+	list->Add(new CheckBox(&g_Config.bAdhocServerShowPlayerPorts, dev->T("Show player ports in adhoc server status")));
 	// This is shared between RemoteISO and the remote debugger.
 	PopupSliderChoice *portChoice = new PopupSliderChoice(&g_Config.iRemoteISOPort, 0, 65535, 0, ri->T("Local Server Port", "Local Server Port"), 100, screenManager());
 	list->Add(portChoice);
 }
+
+// TODO: Make this generic
+extern int DefaultDepthRaster();
 
 void DeveloperToolsScreen::CreateGraphicsTab(UI::LinearLayout *list) {
 	using namespace UI;
@@ -495,10 +531,11 @@ void DeveloperToolsScreen::CreateGraphicsTab(UI::LinearLayout *list) {
 		});
 	}
 
-	static const char *depthRasterModes[] = { "Auto (default)", "Low", "Off", "Always on" };
+	static const char *depthRasterModes[] = { "Auto", "Low", "Off", "Always on" };
 
 	PopupMultiChoice *depthRasterMode = list->Add(new PopupMultiChoice(&g_Config.iDepthRasterMode, gr->T("Lens flare occlusion"), depthRasterModes, 0, ARRAY_SIZE(depthRasterModes), I18NCat::GRAPHICS, screenManager()));
 	depthRasterMode->SetDisabledPtr(&g_Config.bSoftwareRendering);
+	depthRasterMode->SetDefault(DefaultDepthRaster());
 	depthRasterMode->SetChoiceIcon(3, ImageID("I_WARNING"));  // It's a performance trap.
 
 	list->Add(new ItemHeader(dev->T("Ubershaders")));
@@ -656,7 +693,7 @@ void DeveloperToolsScreen::OnOpenTexturesIniFile(UI::EventParams &e) {
 		} else {
 			// Can't do much here, let's send a "toast" so the user sees that something happened.
 			auto dev = GetI18NCategory(I18NCat::DEVELOPER);
-			System_Toast((generatedFilename.ToVisualString() + ": " + dev->T_cstr("Texture ini file created")).c_str());
+			System_Toast((GetFriendlyPath(generatedFilename) + ": " + dev->T_cstr("Texture ini file created")).c_str());
 		}
 
 		hasTexturesIni_ = HasIni::YES;
@@ -669,10 +706,6 @@ void DeveloperToolsScreen::OnJitDebugTools(UI::EventParams &e) {
 
 void DeveloperToolsScreen::OnGPUDriverTest(UI::EventParams &e) {
 	screenManager()->push(new GPUDriverTestScreen());
-}
-
-void DeveloperToolsScreen::OnTouchscreenTest(UI::EventParams &e) {
-	screenManager()->push(new TouchTestScreen(gamePath_));
 }
 
 void DeveloperToolsScreen::OnJitAffectingSetting(UI::EventParams &e) {

@@ -67,6 +67,7 @@ TabHolder::TabHolder(Orientation orientation, float stripSize, TabHolderFlags fl
 void TabHolder::AddBack(UIScreen *parent) {
 	if (tabContainer_) {
 		auto di = GetI18NCategory(I18NCat::DIALOG);
+		tabContainer_->Add(new UI::Spacer(8.0f));
 		tabContainer_->Add(new Choice(di->T("Back"), ImageID("I_NAVIGATE_BACK"), new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, 0.0f, Margins(0, 0, 10, 10))))->OnClick.Handle<UIScreen>(parent, &UIScreen::OnBack);
 	}
 }
@@ -102,10 +103,6 @@ void TabHolder::AddTabDeferred(std::string_view title, ImageID imageId, std::fun
 	}
 	tabTweens_.push_back(nullptr);
 	createFuncs_.push_back(createCb);
-
-	if (tabs_.size() == 1) {
-		EnsureTab(0);
-	}
 }
 
 void TabHolder::EnsureAllCreated() {
@@ -137,64 +134,81 @@ bool TabHolder::EnsureTab(int index) {
 	}
 }
 
+void TabHolder::SetInitialTab(int tab) {
+	currentTab_ = tab;
+	tabStrip_->SetSelection(tab, false);
+}
+
 bool TabHolder::SetCurrentTab(int tab, bool skipTween) {
-	if (tab >= (int)tabs_.size()) {
+	if (tab < 0 || tab >= (int)tabs_.size()) {
 		// Ignore
 		return false;
 	}
 
-	bool created = false;
-
-	if (tab != currentTab_) {
-		_dbg_assert_(tabs_[currentTab_]);  // we should always have a tab to switch *from*.
-		created = EnsureTab(tab);
+	if (currentTab_ < 0 || currentTab_ >= (int)tabs_.size()) {
+		EnsureTab(tab);
+		_dbg_assert_(tabs_[tab]);
+		// No current tab, so just switch immediately.
+		currentTab_ = tab;
+		tabStrip_->SetSelection(tab, false);
+		if (tabs_[tab]) {
+			tabs_[tab]->SetVisibility(V_VISIBLE);
+		}
+		return true;
 	}
 
-	auto setupTween = [&](View *view, AnchorTranslateTween *&tween) {
-		_dbg_assert_(view != nullptr);
-		if (tween)
-			return;
+	if (tab == currentTab_) {
+		tabStrip_->SetSelection(tab, false);
+		return false;
+	}
 
+	auto setupTween = [this](View *view, AnchorTranslateTween *&tween) {
+		_dbg_assert_(view != nullptr);
+		if (!view) {
+			return;
+		}
+		if (tween) {
+			return;
+		}
 		tween = new AnchorTranslateTween(0.15f, bezierEaseInOut);
-		tween->Finish.Add([&](EventParams &e) {
+		tween->Finish.Add([this](EventParams &e) {
 			e.v->SetVisibility(tabs_[currentTab_] == e.v ? V_VISIBLE : V_GONE);
 		});
 		view->AddTween(tween)->Persist();
 	};
 
-	if (tab != currentTab_) {
-		Orientation orient = Opposite(orientation_);
-		// Direction from which the new tab will come.
-		float dir = tab < currentTab_ ? -1.0f : 1.0f;
+	bool created = EnsureTab(tab);
 
-		// First, setup any missing tweens.
-		setupTween(tabs_[currentTab_], tabTweens_[currentTab_]);
-		setupTween(tabs_[tab], tabTweens_[tab]);
+	Orientation orient = Opposite(orientation_);
+	// Direction from which the new tab will come.
+	float dir = tab < currentTab_ ? -1.0f : 1.0f;
 
-		// Currently displayed, so let's reset it.
-		if (skipTween) {
-			tabs_[currentTab_]->SetVisibility(V_GONE);
-			tabTweens_[tab]->Reset(Point2D(0.0f, 0.0f));
-			tabTweens_[tab]->Apply(tabs_[tab]);
+	// First, setup any missing tweens.
+	setupTween(tabs_[currentTab_], tabTweens_[currentTab_]);
+	setupTween(tabs_[tab], tabTweens_[tab]);
+
+	// Currently displayed, so let's reset it.
+	if (skipTween) {
+		tabs_[currentTab_]->SetVisibility(V_GONE);
+		tabTweens_[tab]->Reset(Point2D(0.0f, 0.0f));
+		tabTweens_[tab]->Apply(tabs_[tab]);
+	} else {
+		tabTweens_[currentTab_]->Reset(Point2D(0.0f, 0.0f));
+
+		if (orient == ORIENT_HORIZONTAL) {
+			tabTweens_[tab]->Reset(Point2D(bounds_.w * dir, 0.0f));
+			tabTweens_[currentTab_]->Divert(Point2D(bounds_.w * -dir, 0.0f));
 		} else {
-			tabTweens_[currentTab_]->Reset(Point2D(0.0f, 0.0f));
-
-			if (orient == ORIENT_HORIZONTAL) {
-				tabTweens_[tab]->Reset(Point2D(bounds_.w * dir, 0.0f));
-				tabTweens_[currentTab_]->Divert(Point2D(bounds_.w * -dir, 0.0f));
-			} else {
-				tabTweens_[tab]->Reset(Point2D(0.0f, bounds_.h * dir));
-				tabTweens_[currentTab_]->Divert(Point2D(0.0f, bounds_.h * -dir));
-			}
-			// Actually move it to the initial position now, just to avoid any flicker.
-			tabTweens_[tab]->Apply(tabs_[tab]);
-			tabTweens_[tab]->Divert(Point2D(0.0f, 0.0f));
+			tabTweens_[tab]->Reset(Point2D(0.0f, bounds_.h * dir));
+			tabTweens_[currentTab_]->Divert(Point2D(0.0f, bounds_.h * -dir));
 		}
-		tabs_[tab]->SetVisibility(V_VISIBLE);
-
-		currentTab_ = tab;
+		// Actually move it to the initial position now, just to avoid any flicker.
+		tabTweens_[tab]->Apply(tabs_[tab]);
+		tabTweens_[tab]->Divert(Point2D(0.0f, 0.0f));
 	}
-	tabStrip_->SetSelection(tab, false);
+	tabs_[tab]->SetVisibility(V_VISIBLE);
+
+	currentTab_ = tab;
 
 	return created;
 }
@@ -203,7 +217,7 @@ void TabHolder::OnTabClick(EventParams &e) {
 	// We have e.b set when it was an explicit click action.
 	// In that case, we make the view gone and then visible - this scrolls scrollviews to the top.
 	if (e.b != 0) {
-		EnsureTab(e.a);
+		// SetCurrentTab calls EnsureTab if needed.
 		SetCurrentTab((int)e.a);
 	}
 }
@@ -237,7 +251,6 @@ void TabHolder::PersistData(PersistStatus status, std::string anonId, PersistMap
 void TabHolder::EnableTab(int tab, bool enabled) {
 	tabStrip_->EnableChoice(tab, enabled);
 }
-
 
 ChoiceStrip::ChoiceStrip(Orientation orientation, LayoutParams *layoutParams)
 	: LinearLayout(orientation, layoutParams) {
@@ -315,23 +328,42 @@ void ChoiceStrip::EnableChoice(int choice, bool enabled) {
 }
 
 bool ChoiceStrip::Key(const KeyInput &input) {
-	bool ret = false;
 	if (topTabs_ && (input.flags & KeyInputFlags::DOWN)) {
+		// These keyboard shortcuts ignore focus - the assumption is that there's only
+		// one choice strip with topTabs_ enabled visible at a time.
 		if (IsTabLeftKey(input)) {
 			if (selected_ > 0) {
 				SetSelection(selected_ - 1, true);
 				UI::PlayUISound(UI::UISound::TOGGLE_OFF);  // Maybe make specific sounds for this at some point?
 			}
-			ret = true;
+			return true;
 		} else if (IsTabRightKey(input)) {
 			if (selected_ < (int)choices_.size() - 1) {
 				SetSelection(selected_ + 1, true);
 				UI::PlayUISound(UI::UISound::TOGGLE_ON);
 			}
-			ret = true;
+			return true;
+		}
+
+		// Support Ctrl+Tab / Ctrl+Shift+Tab as well, as these are common shortcuts for tab switching even outside of browsers.
+		if (input.keyCode == NKCODE_TAB && (input.flags & KeyInputFlags::MOD_CTRL)) {
+			if (input.flags & KeyInputFlags::MOD_SHIFT) {
+				if (selected_ > 0) {
+					SetSelection(selected_ - 1, true);
+				} else if (!choices_.empty()) {
+					SetSelection((int)choices_.size() - 1, true);
+				}
+			} else {
+				if (selected_ < (int)choices_.size() - 1) {
+					SetSelection(selected_ + 1, true);
+				} else {
+					SetSelection(0, true);
+				}
+			}
+			return true;
 		}
 	}
-	return ret || ViewGroup::Key(input);
+	return ViewGroup::Key(input);
 }
 
 std::string ChoiceStrip::DescribeText() const {

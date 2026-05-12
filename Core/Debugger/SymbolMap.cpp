@@ -250,7 +250,7 @@ bool SymbolMap::SaveSymbolMap(const Path &filename) const {
 			return false;
 		}
 		strm.next_in = (Bytef *)data.data();
-		strm.avail_in = data.size();
+		strm.avail_in = (u32)data.size();
 		strm.next_out = out_data;
 		strm.avail_out = out_size;
 		int flush = Z_NO_FLUSH;
@@ -457,7 +457,7 @@ u32 SymbolMap::GetNextSymbolAddress(u32 address, SymbolType symmask) {
 
 std::string SymbolMap::GetDescription(unsigned int address) {
 	std::lock_guard<std::recursive_mutex> guard(lock_);
-	const char *labelName = nullptr;
+	std::string labelName;
 
 	u32 funcStart = GetFunctionStart(address);
 	if (funcStart != INVALID_ADDRESS) {
@@ -468,7 +468,7 @@ std::string SymbolMap::GetDescription(unsigned int address) {
 			labelName = GetLabelName(dataStart);
 	}
 
-	if (labelName)
+	if (!labelName.empty())
 		return labelName;
 
 	char descriptionTemp[32];

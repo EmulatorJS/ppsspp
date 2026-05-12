@@ -810,7 +810,7 @@ int PSPOskDialog::NativeKeyboard() {
 
 		// There's already ConvertUCS2ToUTF8 in this file. Should we use that instead of the global ones?
 		System_InputBoxGetString(NON_EPHEMERAL_TOKEN, ::ConvertUCS2ToUTF8(titleText), ::ConvertUCS2ToUTF8(defaultText), false,
-			[&](const std::string &value, int) {
+			[this](const std::string &value, int) {
 				// Success callback
 				std::lock_guard<std::mutex> guard(nativeMutex_);
 				if (nativeStatus_ != PSPOskNativeStatus::WAITING) {
@@ -819,7 +819,7 @@ int PSPOskDialog::NativeKeyboard() {
 				nativeValue_ = value;
 				nativeStatus_ = PSPOskNativeStatus::SUCCESS;
 			},
-			[&]() {
+			[this](int responseValue) {
 				// Failure callback
 				std::lock_guard<std::mutex> guard(nativeMutex_);
 				if (nativeStatus_ != PSPOskNativeStatus::WAITING) {
@@ -891,7 +891,7 @@ int PSPOskDialog::Update(int animSpeed) {
 	// Windows: Fall back to the OSK/continue normally if we're in fullscreen.
 	// The dialog box doesn't work right if in fullscreen.
 	if (System_GetPropertyBool(SYSPROP_HAS_KEYBOARD)) {
-		if (g_Config.bBypassOSKWithKeyboard && !g_Config.UseFullScreen())
+		if (g_Config.bBypassOSKWithKeyboard && !g_Config.bFullScreen)
 			return NativeKeyboard();
 	}
 #endif

@@ -41,6 +41,7 @@
 #include "Core/HLE/sceKernelInterrupt.h"
 #include "Core/HLE/sceKernelMemory.h"
 #include "Core/HLE/sceKernelThread.h"
+#include "Core/HLE/sceKernelModule.h"
 #include "Core/HLE/scePower.h"
 #include "Core/HLE/sceAtrac.h"
 #include "Core/HLE/sceUtility.h"
@@ -524,6 +525,9 @@ static int sceUtilitySavedataInitStart(u32 paramAddr) {
 			return hleLogWarning(Log::sceUtility, SCE_ERROR_UTILITY_WRONG_TYPE, "wrong dialog type");
 		}
 	}
+
+	// TODO: In issue #19957, we're looking at NFL Street 3 which gets stuck. Possibly if a dialog is already open here,
+	// we should block until it's done?
 
 	ActivateDialog(UtilityDialogType::SAVEDATA);
 	return hleLogDebug(Log::sceUtility, saveDialog->Init(paramAddr));
@@ -1300,6 +1304,29 @@ static u32 sceUtilityGetSystemParamInt(u32 id, u32 destaddr) {
 }
 
 static u32 sceUtilityLoadNetModule(u32 module) {
+	// Driver 76 actually checks using sceKernelGetModuleIdList, so we load the HLE module here for checking
+	std::vector<const char *> mod_list;
+
+	if (module == 1) {
+		// PSP_NET_MODULE_COMMON on pspsdk
+		mod_list.push_back("flash0:/kd/ifhandle.prx");
+		mod_list.push_back("flash0:/kd/pspnet.prx");
+	} else if (module == 2) {
+		// PSP_NET_MODULE_ADHOC on pspsdk
+		mod_list.push_back("flash0:/kd/pspnet_adhoc.prx");
+		mod_list.push_back("flash0:/kd/pspnet_adhocctl.prx");
+		mod_list.push_back("flash0:/kd/pspnet_adhoc_matching.prx");
+		mod_list.push_back("flash0:/kd/pspnet_adhoc_download.prx");
+		mod_list.push_back("flash0:/kd/pspnet_adhoc_discover.prx");
+	}
+
+	for (const char *mod_path : mod_list) {
+		u32 modid = hleCall(ModuleMgrForUser, u32, sceKernelLoadModule, mod_path, 0, 0);
+		if (modid >= 0) {
+			hleCall(ModuleMgrForUser, u32, sceKernelStartModule, modid, 0, 0, 0, 0);
+		}
+	}
+
 	return hleLogInfo(Log::sceUtility, 0, "FAKE");
 }
 

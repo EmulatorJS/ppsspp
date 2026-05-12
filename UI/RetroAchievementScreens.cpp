@@ -7,6 +7,7 @@
 #include "Common/UI/Context.h"
 #include "Common/UI/IconCache.h"
 #include "Common/UI/PopupScreens.h"
+#include "Common/UI/Notice.h"
 #include "Common/StringUtils.h"
 
 #include "Core/Config.h"
@@ -36,11 +37,11 @@ AudioFileChooser::AudioFileChooser(RequesterToken token, std::string *value, std
 		layoutParams_->width = FILL_PARENT;
 		layoutParams_->height = ITEM_HEIGHT;
 	}
-	Add(new Choice(ImageID("I_PLAY"), new LinearLayoutParams(ITEM_HEIGHT, ITEM_HEIGHT)))->OnClick.Add([=](UI::EventParams &) {
+	Add(new Choice(ImageID("I_PLAY"), new LinearLayoutParams(ITEM_HEIGHT, ITEM_HEIGHT)))->OnClick.Add([this](UI::EventParams &) {
 		float achievementVolume = Volume100ToMultiplier(g_Config.iAchievementVolume);
 		g_BackgroundAudio.SFX().Play(sound_, achievementVolume);
 	});
-	Add(new FileChooserChoice(token, value, title, BrowseFileType::SOUND_EFFECT, new LinearLayoutParams(1.0f)))->OnChange.Add([=](UI::EventParams &e) {
+	Add(new FileChooserChoice(token, value, title, BrowseFileType::SOUND_EFFECT, new LinearLayoutParams(1.0f)))->OnChange.Add([sound, value](UI::EventParams &e) {
 		std::string path = e.s;
 		Sample *sample = Sample::Load(path);
 		if (sample) {
@@ -52,38 +53,17 @@ AudioFileChooser::AudioFileChooser(RequesterToken token, std::string *value, std
 		}
 	});
 	Choice *trash = new Choice(ImageID("I_TRASHCAN"), new LinearLayoutParams(ITEM_HEIGHT, ITEM_HEIGHT));
-	trash->OnClick.Add([=](UI::EventParams &) {
+	trash->OnClick.Add([sound, value](UI::EventParams &) {
 		g_BackgroundAudio.SFX().UpdateSample(sound, nullptr);
 		value->clear();
 	});
 	Add(trash);
-	trash->SetEnabledFunc([=]() {
+	trash->SetEnabledFunc([value]() {
 		return !value->empty();
 	});
 }
 
-void RetroAchievementsListScreen::CreateTabs() {
-	auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
-
-	AddTab("Achievements", ac->T("Achievements"), ImageID::invalid(), [this](UI::LinearLayout *parent) {
-		parent->SetSpacing(5.0f);
-		CreateAchievementsTab(parent);
-	});
-
-	AddTab("Leaderboards", ac->T("Leaderboards"), ImageID::invalid(), [this](UI::LinearLayout *parent) {
-		parent->SetSpacing(5.0f);
-		CreateLeaderboardsTab(parent);
-	});
-
-#ifdef _DEBUG
-	AddTab("AchievementsStatistics", ac->T("Statistics"), ImageID::invalid(), [this](UI::LinearLayout *parent) {
-		parent->SetSpacing(5.0f);
-		CreateStatisticsTab(parent);
-	});
-#endif
-}
-
-inline const char *AchievementBucketTitle(int bucketType) {
+static const char *AchievementBucketTitle(int bucketType) {
 	switch (bucketType) {
 	case RC_CLIENT_ACHIEVEMENT_BUCKET_LOCKED:               return "Locked";
 	case RC_CLIENT_ACHIEVEMENT_BUCKET_UNLOCKED:             return "Unlocked";
@@ -96,41 +76,48 @@ inline const char *AchievementBucketTitle(int bucketType) {
 	}
 }
 
-void RetroAchievementsListScreen::CreateAchievementsTab(UI::ViewGroup *achievements) {
+static uint32_t GetListFilter() {
+	int filter = RC_CLIENT_ACHIEVEMENT_CATEGORY_CORE;
+	if (Achievements::UnofficialEnabled()) {
+		filter = RC_CLIENT_ACHIEVEMENT_CATEGORY_CORE_AND_UNOFFICIAL;
+	}
+	return filter;
+}
+
+// Temporary.
+struct SubsetInfo {
+	u32 id;
+	bool isDefault;
+	std::string title;
+	std::vector<const rc_client_achievement_bucket_t *> buckets;
+};
+
+void CreateAchievementsTab(UI::ViewGroup *achievements, const SubsetInfo &subset) {
 	auto di = GetI18NCategory(I18NCat::DIALOG);
 	auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
 
 	using namespace UI;
 
-	int filter = RC_CLIENT_ACHIEVEMENT_CATEGORY_CORE;
-	if (Achievements::UnofficialEnabled()) {
-		filter = RC_CLIENT_ACHIEVEMENT_CATEGORY_CORE_AND_UNOFFICIAL;
-	}
+	const rc_client_game_t *client_game = rc_client_get_game_info(Achievements::GetClient());
 
-	achievements->Add(new GameAchievementSummaryView());
+	if (!subset.isDefault) {
+		achievements->Add(new Spacer(8.0f));
+		achievements->Add(new TextView(subset.title))->SetTextSize(UI::TextSize::Big);
+	}
+	achievements->Add(new GameAchievementSummaryView(subset.id));
 
 	if (Achievements::EncoreModeActive()) {
 		achievements->Add(new NoticeView(NoticeLevel::WARN, ac->T("In Encore mode - unlock state may not be accurate"), ""));
 	}
 
-	rc_client_achievement_list_t *list = rc_client_create_achievement_list(Achievements::GetClient(),
-		filter, RC_CLIENT_ACHIEVEMENT_LIST_GROUPING_PROGRESS);
-
-	const rc_client_game_t *client_game = rc_client_get_game_info(Achievements::GetClient());
-
-	for (uint32_t i = 0; i < list->num_buckets; i++) {
-		const rc_client_achievement_bucket_t &bucket = list->buckets[i];
+	for (uint32_t i = 0; i < subset.buckets.size(); i++) {
+		const rc_client_achievement_bucket_t &bucket = *subset.buckets[i];
 		if (!bucket.num_achievements) {
 			continue;
 		}
 		// Populate the subset list as we go.
 		const rc_client_subset_t *subset = rc_client_get_subset_info(Achievements::GetClient(), bucket.subset_id);
-		std::string title;
-		if (!subset || equals(subset->title, client_game->title)) {
-			title = StringFromFormat("%s (%d)", ac->T_cstr(AchievementBucketTitle(bucket.bucket_type)), bucket.num_achievements);
-		} else {
-			title = StringFromFormat("%s - %s (%d)", subset->title, ac->T_cstr(AchievementBucketTitle(bucket.bucket_type)), bucket.num_achievements);
-		}
+		std::string title = StringFromFormat("%s (%d)", ac->T_cstr(AchievementBucketTitle(bucket.bucket_type)), bucket.num_achievements);
 
 		CollapsibleSection *section = achievements->Add(new CollapsibleSection(title));
 		section->SetSpacing(2.0f);
@@ -140,13 +127,26 @@ void RetroAchievementsListScreen::CreateAchievementsTab(UI::ViewGroup *achieveme
 	}
 }
 
+RetroAchievementsListScreen::RetroAchievementsListScreen(const Path &gamePath) : UITabbedBaseDialogScreen(gamePath) {
+	list_ = rc_client_create_achievement_list(Achievements::GetClient(),
+		GetListFilter(), RC_CLIENT_ACHIEVEMENT_LIST_GROUPING_PROGRESS);
+}
+
+RetroAchievementsListScreen::~RetroAchievementsListScreen() {
+	if (list_) {
+		rc_client_destroy_achievement_list(list_);
+		list_ = nullptr;
+	}
+}
+
 void RetroAchievementsListScreen::CreateLeaderboardsTab(UI::ViewGroup *viewGroup) {
 	auto di = GetI18NCategory(I18NCat::DIALOG);
 	auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
 
 	using namespace UI;
 
-	viewGroup->Add(new GameAchievementSummaryView());
+	// TODO: subset?
+	viewGroup->Add(new GameAchievementSummaryView(0));
 
 	viewGroup->Add(new ItemHeader(ac->T("Leaderboards")));
 
@@ -161,10 +161,11 @@ void RetroAchievementsListScreen::CreateLeaderboardsTab(UI::ViewGroup *viewGroup
 
 	for (auto &leaderboard : leaderboards) {
 		int leaderboardID = leaderboard->id;
-		viewGroup->Add(new LeaderboardSummaryView(leaderboard))->OnClick.Add([=](UI::EventParams &e) -> void {
+		viewGroup->Add(new LeaderboardSummaryView(leaderboard))->OnClick.Add([this, leaderboardID](UI::EventParams &e) -> void {
 			screenManager()->push(new RetroAchievementsLeaderboardScreen(gamePath_, leaderboardID));
 		});
 	}
+	rc_client_destroy_leaderboard_list(list);
 }
 
 void RetroAchievementsListScreen::CreateStatisticsTab(UI::ViewGroup *viewGroup) {
@@ -175,6 +176,58 @@ void RetroAchievementsListScreen::CreateStatisticsTab(UI::ViewGroup *viewGroup) 
 	Achievements::Statistics stats = Achievements::GetStatistics();
 	viewGroup->Add(new ItemHeader(ac->T("Statistics")));
 	viewGroup->Add(new InfoItem(ac->T("Bad memory accesses"), StringFromFormat("%d", stats.badMemoryAccessCount)));
+}
+
+void RetroAchievementsListScreen::CreateTabs() {
+	auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
+
+	std::map<uint32_t, SubsetInfo> bucketsBySubset;
+	const rc_client_game_t *client_game = rc_client_get_game_info(Achievements::GetClient());
+
+	for (uint32_t i = 0; i < list_->num_buckets; i++) {
+		const rc_client_achievement_bucket_t &bucket = list_->buckets[i];
+		if (!bucket.num_achievements) {
+			continue;
+		}
+
+		const rc_client_subset_t *subset = rc_client_get_subset_info(Achievements::GetClient(), bucket.subset_id);
+
+		if (bucketsBySubset.find(bucket.subset_id) == bucketsBySubset.end()) {
+			bucketsBySubset[bucket.subset_id] = SubsetInfo();
+			bucketsBySubset[bucket.subset_id].id = bucket.subset_id;
+		}
+
+		// Populate the subset list as we go.
+		bucketsBySubset[bucket.subset_id].buckets.push_back(&bucket);
+		if (bucketsBySubset[bucket.subset_id].title.empty()) {
+			if (!subset || equals(subset->title, client_game->title)) {
+				bucketsBySubset[bucket.subset_id].title = ac->T("Achievements");
+				bucketsBySubset[bucket.subset_id].isDefault = true;
+			} else {
+				bucketsBySubset[bucket.subset_id].title = subset->title;
+				bucketsBySubset[bucket.subset_id].isDefault = false;
+			}
+		}
+	}
+
+	for (auto &[subsetID, subsetInfo] : bucketsBySubset) {
+		AddTab("Achievements", subsetInfo.title, ImageID::invalid(), [subsetInfo = subsetInfo](UI::LinearLayout *parent) {
+			parent->SetSpacing(5.0f);
+			CreateAchievementsTab(parent, subsetInfo);
+		});
+	}
+
+	AddTab("Leaderboards", ac->T("Leaderboards"), ImageID::invalid(), [this](UI::LinearLayout *parent) {
+		parent->SetSpacing(5.0f);
+		CreateLeaderboardsTab(parent);
+	});
+
+#ifdef _DEBUG
+	AddTab("AchievementsStatistics", ac->T("Statistics"), ImageID::invalid(), [this](UI::LinearLayout *parent) {
+		parent->SetSpacing(5.0f);
+		CreateStatisticsTab(parent);
+	});
+#endif
 }
 
 RetroAchievementsLeaderboardScreen::~RetroAchievementsLeaderboardScreen() {
@@ -231,7 +284,7 @@ void RetroAchievementsLeaderboardScreen::CreateLeaderboardTab(UI::LinearLayout *
 	auto strip = layout->Add(new ChoiceStrip(ORIENT_HORIZONTAL));
 	strip->AddChoice(ac->T("Top players"));
 	strip->AddChoice(ac->T("Around me"));
-	strip->OnChoice.Add([=](UI::EventParams &e) {
+	strip->OnChoice.Add([this, strip](UI::EventParams &e) {
 		strip->SetSelection(e.a, false);
 		nearMe_ = e.a != 0;
 		FetchEntries();
@@ -317,18 +370,19 @@ void RetroAchievementsSettingsScreen::CreateAccountTab(UI::ViewGroup *viewGroup)
 		}
 		viewGroup->Add(new InfoItem(di->T("Username"), info->username));
 		// viewGroup->Add(new InfoItem(ac->T("Unread messages"), info.numUnreadMessages));
-		viewGroup->Add(new Choice(di->T("Log out")))->OnClick.Add([=](UI::EventParams &) -> void {
+		viewGroup->Add(new Choice(di->T("Log out")))->OnClick.Add([](UI::EventParams &) -> void {
 			Achievements::Logout();
 		});
 	} else {
 		std::string errorMessage;
 		if (Achievements::LoginProblems(&errorMessage)) {
 			viewGroup->Add(new NoticeView(NoticeLevel::WARN, ac->T("Failed logging in to RetroAchievements"), errorMessage));
-			viewGroup->Add(new Choice(di->T("Log out")))->OnClick.Add([=](UI::EventParams &) -> void {
+			viewGroup->Add(new Choice(di->T("Log out")))->OnClick.Add([](UI::EventParams &) -> void {
 				Achievements::Logout();
 			});
 		} else if (System_GetPropertyBool(SYSPROP_HAS_LOGIN_DIALOG)) {
-			viewGroup->Add(new Choice(di->T("Log in")))->OnClick.Add([=](UI::EventParams &) -> void {
+			viewGroup->Add(new Choice(di->T("Log in")))->OnClick.Add([this](UI::EventParams &) -> void {
+				auto di = GetI18NCategory(I18NCat::DIALOG);
 				std::string title = StringFromFormat("RetroAchievements: %s", di->T_cstr("Log in"));
 				System_AskUsernamePassword(GetRequesterToken(), title, g_Config.sAchievementsUserName, [](const std::string &value, int) {
 					std::vector<std::string> parts;
@@ -343,25 +397,25 @@ void RetroAchievementsSettingsScreen::CreateAccountTab(UI::ViewGroup *viewGroup)
 			viewGroup->Add(new PopupTextInputChoice(GetRequesterToken(), &g_Config.sAchievementsUserName, di->T("Username"), "", 128, screenManager()));
 			viewGroup->Add(new PopupTextInputChoice(GetRequesterToken(), &password_, di->T("Password"), "", 128, screenManager()))->SetPasswordDisplay();
 			Choice *loginButton = viewGroup->Add(new Choice(di->T("Log in")));
-			loginButton->OnClick.Add([=](UI::EventParams &) -> void {
+			loginButton->OnClick.Add([this](UI::EventParams &) -> void {
 				if (!g_Config.sAchievementsUserName.empty() && !password_.empty()) {
 					Achievements::LoginAsync(g_Config.sAchievementsUserName.c_str(), password_.c_str());
 					memset(&password_[0], 0, password_.size());
 					password_.clear();
 				}
 			});
-			loginButton->SetEnabledFunc([&]() {
+			loginButton->SetEnabledFunc([this]() {
 				return !g_Config.sAchievementsUserName.empty() && !password_.empty();
 			});
 		}
-		viewGroup->Add(new Choice(ac->T("Register on www.retroachievements.org")))->OnClick.Add([&](UI::EventParams &) -> void {
+		viewGroup->Add(new Choice(ac->T("Register on www.retroachievements.org")))->OnClick.Add([](UI::EventParams &) -> void {
 			System_LaunchUrl(LaunchUrlType::BROWSER_URL, "https://retroachievements.org/createaccount.php");
 		});
 	}
 
 	using namespace UI;
 	viewGroup->Add(new ItemHeader(di->T("Settings")));
-	viewGroup->Add(new CheckBox(&g_Config.bAchievementsEnable, ac->T("Achievements enabled")))->OnClick.Add([&](UI::EventParams &e) -> void {
+	viewGroup->Add(new CheckBox(&g_Config.bAchievementsEnable, ac->T("Achievements enabled")))->OnClick.Add([this](UI::EventParams &e) -> void {
 		Achievements::UpdateSettings();
 		RecreateViews();
 	});
@@ -369,10 +423,10 @@ void RetroAchievementsSettingsScreen::CreateAccountTab(UI::ViewGroup *viewGroup)
 	viewGroup->Add(new CheckBox(&g_Config.bAchievementsSoundEffects, ac->T("Sound Effects")))->SetEnabledPtr(&g_Config.bAchievementsEnable);
 
 	viewGroup->Add(new ItemHeader(di->T("Links")));
-	viewGroup->Add(new Choice(ac->T("RetroAchievements website"), ImageID("I_LINK_OUT")))->OnClick.Add([&](UI::EventParams &) -> void {
+	viewGroup->Add(new Choice(ac->T("RetroAchievements website"), ImageID("I_LINK_OUT")))->OnClick.Add([](UI::EventParams &) -> void {
 		System_LaunchUrl(LaunchUrlType::BROWSER_URL, "https://www.retroachievements.org/");
 	});
-	viewGroup->Add(new Choice(ac->T("How to use RetroAchievements"), ImageID("I_LINK_OUT")))->OnClick.Add([&](UI::EventParams &) -> void {
+	viewGroup->Add(new Choice(ac->T("How to use RetroAchievements"), ImageID("I_LINK_OUT")))->OnClick.Add([](UI::EventParams &) -> void {
 		System_LaunchUrl(LaunchUrlType::BROWSER_URL, "https://www.ppsspp.org/docs/reference/retro-achievements");
 	});
 }
@@ -500,9 +554,11 @@ void RenderAchievement(UIContext &dc, const rc_client_achievement_t *achievement
 	dc.Flush();
 	dc.Begin();
 
-	dc.SetFontStyle(dc.GetTheme().uiFont);
+	dc.SetFontStyle(*GetTextStyle(dc, UI::TextSize::Normal));
 
 	char temp[512];
+
+	auto ac = GetI18NCategory(I18NCat::ACHIEVEMENTS);
 
 	switch (style) {
 	case AchievementRenderStyle::LISTED:
@@ -510,45 +566,47 @@ void RenderAchievement(UIContext &dc, const rc_client_achievement_t *achievement
 	{
 		dc.SetFontScale(1.0f, 1.0f);
 		std::string title = achievement->title;
+		std::string_view badge = "";
 
 		// Add simple display of the achievement types.
 		// Needs refinement, but works.
 		// See issue #19632
 		switch (achievement->type) {
 		case RC_CLIENT_ACHIEVEMENT_TYPE_MISSABLE:
-			title += " [m]";
+			badge = ac->T("Missable");
 			break;
 		case RC_CLIENT_ACHIEVEMENT_TYPE_PROGRESSION:
-			title += " [p]";
+			badge = ac->T("Progression");
 			break;
 		case RC_CLIENT_ACHIEVEMENT_TYPE_WIN:
-			title += " [win]";
+			badge = ac->T("Win");
 			break;
 		}
 
 		dc.DrawTextRect(title, bounds.Inset(iconSpace + 12.0f, 2.0f, padding, padding), fgColor, ALIGN_TOPLEFT);
 
-		dc.SetFontScale(0.66f, 0.66f);
+		dc.SetFontStyle(*GetTextStyle(dc, UI::TextSize::Small));
 		dc.DrawTextRectSqueeze(DeNull(achievement->description), bounds.Inset(iconSpace + 12.0f, 39.0f, padding, padding), fgColor, ALIGN_TOPLEFT);
 
+		dc.DrawTextRect(badge, bounds, fgColor, ALIGN_TOPRIGHT);
+
 		if (style == AchievementRenderStyle::LISTED && strlen(achievement->measured_progress) > 0) {
-			dc.SetFontScale(1.0f, 1.0f);
+			dc.SetFontStyle(*GetTextStyle(dc, UI::TextSize::Normal));
 			dc.DrawTextRect(achievement->measured_progress, bounds.Inset(iconSpace + 12.0f, padding, padding + 100.0f, padding), fgColor, ALIGN_VCENTER | ALIGN_RIGHT);
 		}
 
 		// TODO: Draw measured_progress / measured_percent in a cute way
 		snprintf(temp, sizeof(temp), "%d", achievement->points);
 
-		dc.SetFontScale(1.5f, 1.5f);
-		dc.DrawTextRect(temp, bounds.Expand(-5.0f, -5.0f), fgColor, ALIGN_RIGHT | ALIGN_VCENTER);
+		// The points number to the right.
+		dc.SetFontStyle(*GetTextStyle(dc, UI::TextSize::Big));
+		dc.DrawTextRect(temp, bounds.Expand(-5.0f, -5.0f), fgColor, ALIGN_RIGHT | (badge.empty() ? ALIGN_VCENTER : ALIGN_BOTTOMRIGHT));
 
-		dc.SetFontScale(1.0f, 1.0f);
 		dc.Flush();
 		break;
 	}
 	case AchievementRenderStyle::PROGRESS_INDICATOR:
 		// TODO: Also render a progress bar.
-		dc.SetFontScale(1.0f, 1.0f);
 		dc.DrawTextRect(achievement->measured_progress, bounds.Inset(iconSpace + padding * 2.0f, padding, padding, padding), fgColor, ALIGN_LEFT | ALIGN_VCENTER);
 		// Show the unlocked icon.
 		iconState = RC_CLIENT_ACHIEVEMENT_STATE_UNLOCKED;
@@ -560,35 +618,31 @@ void RenderAchievement(UIContext &dc, const rc_client_achievement_t *achievement
 	}
 
 	// Download and display the image.
-	char cacheKey[256];
-	snprintf(cacheKey, sizeof(cacheKey), "ai:%s:%s", achievement->badge_name, iconState == RC_CLIENT_ACHIEVEMENT_STATE_UNLOCKED ? "unlocked" : "locked");
-	if (RC_OK == rc_client_achievement_get_image_url(achievement, iconState, temp, sizeof(temp))) {
-		Achievements::DownloadImageIfMissing(cacheKey, temp);
-		if (g_iconCache.BindIconTexture(&dc, cacheKey)) {
-			dc.Draw()->DrawTexRect(Bounds(bounds.x + padding, bounds.y + padding, iconSpace, iconSpace), 0.0f, 0.0f, 1.0f, 1.0f, whiteAlpha(alpha));
-		}
-		dc.Flush();
-		dc.RebindTexture();
+	const char *url = iconState == RC_CLIENT_ACHIEVEMENT_STATE_UNLOCKED ? achievement->badge_url : achievement->badge_locked_url;
+	Achievements::DownloadImageIfMissing(url);
+	if (g_iconCache.BindIconTexture(&dc, url)) {
+		dc.Draw()->DrawTexRect(Bounds(bounds.x + padding, bounds.y + padding, iconSpace, iconSpace), 0.0f, 0.0f, 1.0f, 1.0f, whiteAlpha(alpha));
 	}
-
+	dc.SetFontStyle(*GetTextStyle(dc, UI::TextSize::Normal));
 	dc.Flush();
+	dc.RebindTexture();
 	dc.PopScissor();
 }
 
-static void MeasureGameAchievementSummary(const UIContext &dc, std::string_view title, float maxWidth, float *w, float *h) {
-	std::string description = Achievements::GetGameAchievementSummary();
+static void MeasureGameAchievementSummary(const UIContext &dc, std::string_view title, float maxWidth, float *w, float *h, uint32_t subsetId) {
+	std::string description = Achievements::GetGameAchievementSummary(subsetId);
 
 	float iconSpace = 64.0f;
 	float availableWidth = maxWidth - iconSpace - 5.0f - 5.0f - 8.0f;
 
 	float titleWidth, titleHeight;
 	dc.MeasureTextRect(dc.GetTheme().uiFont, 1.0f, 1.0f, title, availableWidth, &titleWidth, &titleHeight, FLAG_ELLIPSIZE_TEXT);
-	dc.MeasureTextRect(dc.GetTheme().uiFont, 0.66f, 0.66f, description, availableWidth, w, h, FLAG_WRAP_TEXT);
+	dc.MeasureTextRect(dc.GetTheme().uiFontSmall, 1.0f, 1.0f, description, availableWidth, w, h, FLAG_WRAP_TEXT);
 	*h += 8.0f + titleHeight;
 	*w += 8.0f;
 }
 
-static void RenderGameAchievementSummary(UIContext &dc, const Bounds &bounds, float alpha, const rc_client_game_t *gameInfo) {
+static void RenderGameAchievementSummary(UIContext &dc, const Bounds &bounds, float alpha, const rc_client_game_t *gameInfo, uint32_t subsetId) {
 	using namespace UI;
 	UI::Drawable background = dc.GetTheme().itemStyle.background;
 
@@ -601,27 +655,22 @@ static void RenderGameAchievementSummary(UIContext &dc, const Bounds &bounds, fl
 	dc.Begin();
 	dc.FillRect(background, bounds);
 
+	dc.SetFontScale(1.0f, 1.0f);
 	dc.SetFontStyle(dc.GetTheme().uiFont);
 
-	dc.SetFontScale(1.0f, 1.0f);
 	dc.DrawTextRect(gameInfo->title, bounds.Inset(iconSpace + 5.0f, 2.0f, 5.0f, 5.0f), fgColor, ALIGN_TOPLEFT | FLAG_ELLIPSIZE_TEXT);
 
-	std::string description = Achievements::GetGameAchievementSummary();
+	std::string description = Achievements::GetGameAchievementSummary(subsetId);
 
-	dc.SetFontScale(0.66f, 0.66f);
+	dc.SetFontStyle(dc.GetTheme().uiFontSmall);
 	dc.DrawTextRect(description, bounds.Inset(iconSpace + 5.0f, 38.0f, 5.0f, 5.0f), fgColor, ALIGN_TOPLEFT | FLAG_WRAP_TEXT);
 
-	dc.SetFontScale(1.0f, 1.0f);
+	dc.SetFontStyle(dc.GetTheme().uiFont);
 	dc.Flush();
 
-	char url[512];
-	char cacheKey[256];
-	snprintf(cacheKey, sizeof(cacheKey), "gi:%s", gameInfo->badge_name);
-	if (RC_OK == rc_client_game_get_image_url(gameInfo, url, sizeof(url))) {
-		Achievements::DownloadImageIfMissing(cacheKey, url);
-		if (g_iconCache.BindIconTexture(&dc, cacheKey)) {
-			dc.Draw()->DrawTexRect(Bounds(bounds.x, bounds.y + (bounds.h - iconSpace) * 0.5f, iconSpace, iconSpace), 0.0f, 0.0f, 1.0f, 1.0f, whiteAlpha(alpha));
-		}
+	Achievements::DownloadImageIfMissing(gameInfo->badge_url);
+	if (g_iconCache.BindIconTexture(&dc, gameInfo->badge_url)) {
+		dc.Draw()->DrawTexRect(Bounds(bounds.x, bounds.y + (bounds.h - iconSpace) * 0.5f, iconSpace, iconSpace), 0.0f, 0.0f, 1.0f, 1.0f, whiteAlpha(alpha));
 	}
 
 	dc.Flush();
@@ -648,12 +697,12 @@ static void RenderLeaderboardSummary(UIContext &dc, const rc_client_leaderboard_
 	dc.Begin();
 	dc.FillRect(background, bounds);
 
+	dc.SetFontScale(1.0f, 1.0f);
 	dc.SetFontStyle(dc.GetTheme().uiFont);
 
-	dc.SetFontScale(1.0f, 1.0f);
 	dc.DrawTextRect(DeNull(leaderboard->title), bounds.Inset(12.0f, 2.0f, 5.0f, 5.0f), fgColor, ALIGN_TOPLEFT);
 
-	dc.SetFontScale(0.66f, 0.66f);
+	dc.SetFontStyle(dc.GetTheme().uiFontSmall);
 	dc.DrawTextRectSqueeze(DeNull(leaderboard->description), bounds.Inset(12.0f, 39.0f, 5.0f, 5.0f), fgColor, ALIGN_TOPLEFT);
 
 	/*
@@ -665,7 +714,7 @@ static void RenderLeaderboardSummary(UIContext &dc, const rc_client_leaderboard_
 
 	dc.Flush();
 	*/
-	dc.SetFontScale(1.0f, 1.0f);
+	dc.SetFontStyle(dc.GetTheme().uiFont);
 
 	dc.Flush();
 	dc.RebindTexture();
@@ -699,27 +748,25 @@ static void RenderLeaderboardEntry(UIContext &dc, const rc_client_leaderboard_en
 	dc.Begin();
 	dc.FillRect(background, bounds);
 
-	dc.SetFontStyle(dc.GetTheme().uiFont);
+	dc.SetFontScale(1.0f, 1.0f);
+	dc.SetFontStyle(dc.GetTheme().uiFontBig);
 
-	dc.SetFontScale(1.5f, 1.5f);
 	dc.DrawTextRect(StringFromFormat("%d", entry->rank), Bounds(bounds.x + 4.0f, bounds.y + 4.0f, numberSpace - 10.0f, bounds.h - 4.0f * 2.0f), fgColor, ALIGN_TOPRIGHT);
 
-	dc.SetFontScale(1.0f, 1.0f);
+	dc.SetFontStyle(dc.GetTheme().uiFont);
 	dc.DrawTextRect(entry->user, bounds.Inset(iconSpace + 5.0f, 2.0f, 5.0f, 5.0f), fgColor, ALIGN_TOPLEFT);
 
-	dc.SetFontScale(0.66f, 0.66f);
+	dc.SetFontStyle(dc.GetTheme().uiFontSmall);
 	dc.DrawTextRect(DeNull(entry->display), bounds.Inset(iconSpace + 5.0f, 38.0f, 5.0f, 5.0f), fgColor, ALIGN_TOPLEFT);
 
-	dc.SetFontScale(1.0f, 1.0f);
+	dc.SetFontStyle(dc.GetTheme().uiFont);
 	dc.Flush();
 
 	// Come up with a unique name for the icon entry.
-	char cacheKey[256];
-	snprintf(cacheKey, sizeof(cacheKey), "lbe:%s", entry->user);
-	char temp[512];
-	if (RC_OK == rc_client_leaderboard_entry_get_user_image_url(entry, temp, sizeof(temp))) {
-		Achievements::DownloadImageIfMissing(cacheKey, temp);
-		if (g_iconCache.BindIconTexture(&dc, cacheKey)) {
+	char userImageUrl[512];
+	if (RC_OK == rc_client_leaderboard_entry_get_user_image_url(entry, userImageUrl, sizeof(userImageUrl))) {
+		Achievements::DownloadImageIfMissing(userImageUrl);
+		if (g_iconCache.BindIconTexture(&dc, userImageUrl)) {
 			dc.Draw()->DrawTexRect(Bounds(bounds.x + iconLeft, bounds.y + 4.0f, 64.0f, 64.0f), 0.0f, 0.0f, 1.0f, 1.0f, whiteAlpha(alpha));
 		}
 	}
@@ -764,7 +811,7 @@ void AchievementView::ClickInternal() {
 void GameAchievementSummaryView::Draw(UIContext &dc) {
 	const rc_client_game_t *client_game = rc_client_get_game_info(Achievements::GetClient());
 	if (client_game) {
-		RenderGameAchievementSummary(dc, bounds_, 1.0f, client_game);
+		RenderGameAchievementSummary(dc, bounds_, 1.0f, client_game, subsetId_);
 	}
 }
 
@@ -781,7 +828,7 @@ void GameAchievementSummaryView::GetContentDimensionsBySpec(const UIContext &dc,
 		layoutWidth = horiz.size;
 	}
 	ApplyBoundBySpec(layoutWidth, horiz);
-	MeasureGameAchievementSummary(dc, client_game->title, layoutWidth, &w, &h);
+	MeasureGameAchievementSummary(dc, client_game->title, layoutWidth, &w, &h, subsetId_);
 }
 
 void LeaderboardSummaryView::Draw(UIContext &dc) {

@@ -77,7 +77,6 @@ double g_lastSaveTime = -1.0;
 static bool needsProcess = false;
 static bool needsRestart = false;
 static std::mutex mutex;
-static int screenshotFailures = 0;
 static bool hasLoadedState = false;
 static const int STALE_STATE_USES = 2;
 // 4 hours of total gameplay since the virtual PSP started the game.
@@ -102,21 +101,22 @@ enum class OperationType {
 	Load,
 	Verify,
 	Rewind,
-	SaveScreenshot,
 };
 
-	struct Operation {
-		// The slot number is for visual purposes only. Set to -1 for operations where we don't display a message for example.
-		Operation(OperationType t, const Path &f, int slot_, Callback cb)
-			: type(t), filename(f), callback(cb), slot(slot_) {}
+struct Operation {
+	// The slot number is for visual purposes only. Set to -1 for operations where we don't display a message for example.
+	Operation(OperationType t, const Path &f, int slot_, Callback cb)
+		: type(t), filename(f), callback(cb), slot(slot_) {}
 
-		OperationType type;
-		Path filename;
-		Callback callback;
-		int slot;
-	};
+	OperationType type;
+	Path filename;
+	Callback callback;
+	int slot;
+};
 
-	static std::vector<Operation> pending;
+static std::vector<Operation> g_pendingOperations;
+
+int g_screenshotFailures;
 
 	CChunkFileReader::Error SaveToRam(std::vector<u8> &data) {
 		SaveStart state;
@@ -202,7 +202,7 @@ enum class OperationType {
 			return;
 		}
 		if (Achievements::HardcoreModeActive()) {
-			if (g_Config.bAchievementsSaveStateInHardcoreMode && ((op.type == SaveState::OperationType::Save) || (op.type == OperationType::SaveScreenshot))) {
+			if (g_Config.bAchievementsSaveStateInHardcoreMode && ((op.type == SaveState::OperationType::Save))) {
 				// We allow saving in hardcore mode if this setting is on.
 			} else {
 				// Operation not allowed
@@ -211,7 +211,7 @@ enum class OperationType {
 		}
 
 		std::lock_guard<std::mutex> guard(mutex);
-		pending.push_back(op);
+		g_pendingOperations.push_back(op);
 
 		// Don't actually run it until next frame.
 		// It's possible there might be a duplicate but it won't hurt us.
@@ -253,11 +253,6 @@ enum class OperationType {
 		Enqueue(Operation(OperationType::Rewind, Path(), -1, callback));
 	}
 
-	static void SaveScreenshot(const Path &filename) {
-		screenshotFailures = 0;
-		Enqueue(Operation(OperationType::SaveScreenshot, filename, -1, nullptr));
-	}
-
 	bool CanRewind() {
 		return !rewindStates.Empty();
 	}
@@ -266,7 +261,7 @@ enum class OperationType {
 
 	std::string AppendSlotTitle(const std::string &filename, const std::string &title) {
 		char slotChar = 0;
-		auto detectSlot = [&](const std::string &ext) {
+		auto detectSlot = [&slotChar, filename](const std::string &ext) {
 			if (!endsWith(filename, std::string(".") + ext)) {
 				return false;
 			}
@@ -383,6 +378,30 @@ enum class OperationType {
 		}
 	}
 
+	static void ScheduleSaveScreenshot(const Path &path) {
+		std::lock_guard<std::mutex> guard(mutex);
+		g_screenshotFailures = 0;
+
+		// Savestate thumbnails don't need to be bigger.
+		constexpr int maxResMultiplier = 2;
+		ScheduleScreenshot(path, ScreenshotFormat::JPG, ScreenshotType::Display, maxResMultiplier, [path](ScreenshotResult result) {
+			switch (result) {
+			case ScreenshotResult::ScreenshotNotPossible:
+				// Try again soon, for a short while.
+				WARN_LOG(Log::SaveState, "Failed to take a screenshot for the savestate! (%s) The savestate will lack an icon.", path.c_str());
+				if (coreState != CORE_STEPPING_CPU && g_screenshotFailures++ < SCREENSHOT_FAILURE_RETRIES) {
+					// Requeue for next frame (if we were stepping, no point, will just spam errors quickly).
+					ScheduleSaveScreenshot(path);
+				}
+				break;
+			case ScreenshotResult::FailedToWriteFile:
+			case ScreenshotResult::Success:
+				g_screenshotFailures = 0;
+				break;
+			}
+		});
+	}
+
 	void LoadSlot(std::string_view gamePrefix, int slot, Callback callback) {
 		if (!NetworkAllowSaveState()) {
 			return;
@@ -394,11 +413,12 @@ enum class OperationType {
 			if (g_Config.bEnableStateUndo) {
 				Path backup = GetSysDirectory(DIRECTORY_SAVESTATE) / LOAD_UNDO_NAME;
 				
-				auto saveCallback = [=](Status status, std::string_view message) {
+				std::string prefix(gamePrefix);
+				auto saveCallback = [prefix, fn, backup, slot, callback](Status status, std::string_view message) {
 					if (status != Status::FAILURE) {
 						DeleteIfExists(backup);
 						File::Rename(backup.WithExtraExtension(".tmp"), backup);
-						g_Config.sStateLoadUndoGame = gamePrefix;
+						g_Config.sStateLoadUndoGame = prefix;
 						g_Config.Save("Saving config for savestate last load undo");
 					} else {
 						ERROR_LOG(Log::SaveState, "Saving load undo state failed: %.*s", (int)message.size(), message.data());
@@ -458,12 +478,14 @@ enum class OperationType {
 		Path fnUndo = GenerateSaveSlotPath(gamePrefix, slot, UNDO_STATE_EXTENSION);
 		if (!fn.empty()) {
 			Path shot = GenerateSaveSlotPath(gamePrefix, slot, SCREENSHOT_EXTENSION);
-			auto renameCallback = [=](Status status, std::string_view message) {
+
+			std::string prefix(gamePrefix);
+			auto renameCallback = [fn, fnUndo, prefix, slot, callback](Status status, std::string_view message) {
 				if (status != Status::FAILURE) {
 					if (g_Config.bEnableStateUndo) {
 						DeleteIfExists(fnUndo);
 						RenameIfExists(fn, fnUndo);
-						g_Config.sStateUndoLastSaveGame = gamePrefix;
+						g_Config.sStateUndoLastSaveGame = prefix;
 						g_Config.iStateUndoLastSaveSlot = slot;
 						g_Config.Save("Saving config for savestate last save undo");
 					} else {
@@ -481,7 +503,7 @@ enum class OperationType {
 				DeleteIfExists(shotUndo);
 				RenameIfExists(shot, shotUndo);
 			}
-			SaveScreenshot(shot);
+			ScheduleSaveScreenshot(shot);
 			Save(fn.WithExtraExtension(".tmp"), slot, renameCallback);
 		} else {
 			if (callback) {
@@ -686,8 +708,8 @@ enum class OperationType {
 
 	std::vector<Operation> Flush() {
 		std::lock_guard<std::mutex> guard(mutex);
-		std::vector<Operation> copy = pending;
-		pending.clear();
+		std::vector<Operation> copy = g_pendingOperations;
+		g_pendingOperations.clear();
 
 		return copy;
 	}
@@ -772,22 +794,20 @@ enum class OperationType {
 	// NOTE: This can cause ending of the current renderpass, due to the readback needed for the screenshot.
 	// TODO: This should run the actual operations on a thread. While this returns true (for example), emulation
 	// *must* not run further, in order not to disturb the current state operation.
-	bool Process() {
+	void Process() {
 		rewindStates.Process();
 
 		if (!needsProcess)
-			return false;
+			return;
 		needsProcess = false;
 
 		if (!__KernelIsRunning()) {
 			ERROR_LOG(Log::SaveState, "Savestate failure: Unable to load without kernel, this should never happen.");
-			return false;
+			return;
 		}
 
 		std::vector<Operation> operations = Flush();
 		SaveStart state;
-
-		bool readbackImage = false;
 
 		for (const auto &op : operations) {
 			CChunkFileReader::Error result;
@@ -913,42 +933,8 @@ enum class OperationType {
 				}
 				break;
 
-			case OperationType::SaveScreenshot:
-			{
-				_dbg_assert_(!op.callback);
-
-				int maxResMultiplier = 2;
-				ScreenshotResult tempResult = TakeGameScreenshot(nullptr, op.filename, ScreenshotFormat::JPG, SCREENSHOT_DISPLAY, maxResMultiplier, [](bool success) {
-					if (success) {
-						screenshotFailures = 0;
-					}
-				});
-				
-				switch (tempResult) {
-				case ScreenshotResult::ScreenshotNotPossible:
-					// Try again soon, for a short while.
-					callbackResult = Status::FAILURE;
-					WARN_LOG(Log::SaveState, "Failed to take a screenshot for the savestate! (%s) The savestate will lack an icon.", op.filename.c_str());
-					if (coreState != CORE_STEPPING_CPU && screenshotFailures++ < SCREENSHOT_FAILURE_RETRIES) {
-						// Requeue for next frame (if we were stepping, no point, will just spam errors quickly).
-						SaveScreenshot(op.filename);
-					}
-					break;
-				case ScreenshotResult::DelayedResult:
-				case ScreenshotResult::Success:
-					// We might not know if the file write succeeded yet though.
-					callbackResult = Status::SUCCESS;
-					readbackImage = true;
-					break;
-				case ScreenshotResult::FailedToWriteFile:
-					// Can't reach here when we pass in a callback to TakeGameScreenshot.
-					callbackResult = Status::SUCCESS;
-					break;
-				}
-				break;
-			}
 			default:
-				ERROR_LOG(Log::SaveState, "Savestate failure: unknown operation type %d", op.type);
+				ERROR_LOG(Log::SaveState, "Savestate failure: unknown operation type %d", (int)op.type);
 				callbackResult = Status::FAILURE;
 				break;
 			}
@@ -961,8 +947,6 @@ enum class OperationType {
 			// Avoid triggering frame skipping due to slowdown
 			__DisplaySetWasPaused();
 		}
-
-		return readbackImage;
 	}
 
 	void NotifySaveData() {
@@ -1006,4 +990,5 @@ enum class OperationType {
 			return time_now_d() - g_lastSaveTime;
 		}
 	}
-}
+
+}  // namespace SaveState

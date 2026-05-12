@@ -150,7 +150,7 @@ FILE *OpenCFile(const Path &path, const char *mode) {
 	case PathType::CONTENT_URI:
 		// We're gonna need some error codes..
 		if (!strcmp(mode, "r") || !strcmp(mode, "rb") || !strcmp(mode, "rt")) {
-			INFO_LOG(Log::IO, "Opening content file for read: '%s'", path.c_str());
+			DEBUG_LOG(Log::IO, "Opening content file for read: '%s'", path.c_str());
 			// Read, let's support this - easy one.
 			int descriptor = Android_OpenContentUriFd(path.ToString(), Android_OpenContentUriMode::READ);
 			if (descriptor < 0) {
@@ -163,7 +163,7 @@ FILE *OpenCFile(const Path &path, const char *mode) {
 			// This is also a terrible possible data race, ugh. Anyway...
 			// Not exactly sure which abstractions are best, let's start simple.
 			if (!File::Exists(path)) {
-				INFO_LOG(Log::IO, "OpenCFile(%s): Opening content file for write. Doesn't exist, creating empty and reopening.", path.c_str());
+				DEBUG_LOG(Log::IO, "OpenCFile(%s): Opening content file for write. Doesn't exist, creating empty and reopening.", path.c_str());
 				std::string name = path.GetFilename();
 				if (path.CanNavigateUp()) {
 					Path parent = path.NavigateUp();
@@ -176,7 +176,7 @@ FILE *OpenCFile(const Path &path, const char *mode) {
 					return nullptr;
 				}
 			} else {
-				INFO_LOG(Log::IO, "OpenCFile(%s): Opening existing content file for write (truncating). Requested mode: '%s'", path.c_str(), mode);
+				DEBUG_LOG(Log::IO, "OpenCFile(%s): Opening existing content file for write (truncating). Requested mode: '%s'", path.c_str(), mode);
 			}
 
 			// TODO: Support append modes and stuff... For now let's go with the most common one.
@@ -210,18 +210,19 @@ FILE *OpenCFile(const Path &path, const char *mode) {
 
 #ifdef HAVE_LIBRETRO_VFS
 	if (!strcmp(mode, "r") || !strcmp(mode, "rb") || !strcmp(mode, "rt")) {
-		INFO_LOG(Log::IO, "OpenCFile(%s): Opening content file for read.", path.c_str());
-		return filestream_open(path.c_str(), RETRO_VFS_FILE_ACCESS_READ, RETRO_VFS_FILE_ACCESS_HINT_NONE);
+		FILE *f = filestream_open(path.c_str(), RETRO_VFS_FILE_ACCESS_READ, RETRO_VFS_FILE_ACCESS_HINT_NONE);
+		INFO_LOG(Log::IO, "OpenCFile(%s): Opening content file for read (libretro vfs): %s", path.c_str(), f ? "ok" : "null");
+		return f;
 	} else if (!strcmp(mode, "w") || !strcmp(mode, "wb") || !strcmp(mode, "wt") || !strcmp(mode, "at") || !strcmp(mode, "a")) {
-		INFO_LOG(Log::IO, "OpenCFile(%s): Opening content file for write.", path.c_str());
 		bool append = !strcmp(mode, "at") || !strcmp(mode, "a");
 		FILE *f = filestream_open(path.c_str(), append && Exists(path) ? RETRO_VFS_FILE_ACCESS_WRITE | RETRO_VFS_FILE_ACCESS_UPDATE_EXISTING : RETRO_VFS_FILE_ACCESS_WRITE, RETRO_VFS_FILE_ACCESS_HINT_NONE);
+		INFO_LOG(Log::IO, "OpenCFile(%s): Opening content file for write (libretro vfs): %s", path.c_str(), f ? "ok" : "null");
 		if (f != nullptr && append) {
 			Fseek(f, 0, SEEK_END);
 		}
 		return f;
 	} else {
-		ERROR_LOG(Log::IO, "OpenCFile(%s): Mode not yet supported: %s", path.c_str(), mode);
+		ERROR_LOG(Log::IO, "OpenCFile(%s): Mode not yet supported (libretro vfs): %s", path.c_str(), mode);
 		return nullptr;
 	}
 #elif defined(_WIN32) && defined(UNICODE)
@@ -316,7 +317,7 @@ int OpenFD(const Path &path, OpenFlag flags) {
 		return -1;
 	}
 
-	INFO_LOG(Log::IO, "Android_OpenContentUriFd: %s (%s)", path.c_str(), OpenFlagToString(flags).c_str());
+	DEBUG_LOG(Log::IO, "Android_OpenContentUriFd: %s (%s)", path.c_str(), OpenFlagToString(flags).c_str());
 	int descriptor = Android_OpenContentUriFd(path.ToString(), mode);
 	if (descriptor < 0) {
 		// File probably just doesn't exist. No biggie.
@@ -1069,7 +1070,7 @@ bool DeleteDir(const Path &path) {
 #ifdef HAVE_LIBRETRO_VFS
 	if (filestream_delete(path.c_str()) == 0)
 		return true;
-	ERROR_LOG(Log::IO, "DeleteDir: %s", path.c_str());
+	ERROR_LOG(Log::IO, "DeleteDir (libretro vfs): %s", path.c_str());
 	return false;
 #else
 #ifdef _WIN32
@@ -1155,8 +1156,7 @@ const Path GetCurDirectory() {
 	return Path(curDir);
 #else
 	char temp[4096]{};
-	getcwd(temp, 4096);
-	return Path(temp);
+	return Path(getcwd(temp, 4096));
 #endif
 }
 
@@ -1495,6 +1495,12 @@ bool IsProbablyInDownloadsFolder(const Path &filename) {
 	default:
 		break;
 	}
+#if PPSSPP_PLATFORM(IOS)
+	if (filename.FilePathContainsNoCase("com~apple~CloudDocs")) {
+		return true;
+	}
+#endif
+
 	return filename.FilePathContainsNoCase("download");
 }
 

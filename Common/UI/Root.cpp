@@ -19,6 +19,34 @@ bool focusForced;
 
 static std::function<void(UISound)> soundCallback;
 
+// Repeat key handling below.
+// TODO: Figure out where this should really live.
+// Simple simulation of key repeat on platforms and for gamepads where we don't
+// automatically get it.
+
+static int frameCount;
+
+// Ignore deviceId when checking for matches. Turns out that Ouya for example sends
+// completely broken input where the original keypresses have deviceId = 10 and the repeats
+// have deviceId = 0.
+struct HeldKey {
+	InputKeyCode key;
+	InputDeviceID deviceId;
+	double triggerTime;
+
+	// Ignores startTime
+	bool operator <(const HeldKey &other) const {
+		if (key < other.key) return true;
+		return false;
+	}
+	bool operator ==(const HeldKey &other) const { return key == other.key; }
+};
+
+static std::set<HeldKey> heldKeys;
+
+const double repeatDelay = 15 * (1.0 / 60.0f);  // 15 frames like before.
+const double repeatInterval = 5 * (1.0 / 60.0f);  // 5 frames like before.
+
 struct DispatchQueueItem {
 	Event *e;
 	EventParams params;
@@ -73,13 +101,13 @@ View *GetFocusedView() {
 	return focusedView;
 }
 
-void SetFocusedView(View *view, bool force) {
+void SetFocusedView(View *view, FocusFlags cause, bool force) {
 	if (focusedView) {
-		focusedView->FocusChanged(FF_LOSTFOCUS);
+		focusedView->FocusChanged(FocusFlags::LOST_FOCUS | cause);
 	}
 	focusedView = view;
 	if (focusedView) {
-		focusedView->FocusChanged(FF_GOTFOCUS);
+		focusedView->FocusChanged(FocusFlags::GOT_FOCUS | cause);
 		if (force) {
 			focusForced = true;
 		}
@@ -87,11 +115,14 @@ void SetFocusedView(View *view, bool force) {
 }
 
 void EnableFocusMovement(bool enable) {
+	// INFO_LOG(Log::UI, "EnableFocusMovement: %s", enable ? "true" : "false");
 	focusMovementEnabled = enable;
 	if (!enable) {
 		if (focusedView) {
-			focusedView->FocusChanged(FF_LOSTFOCUS);
+			focusedView->FocusChanged(FocusFlags::LOST_FOCUS | FocusFlags::CAUSE_KB_FOCUS_DISABLED);
 		}
+		focusMoves.clear();
+		heldKeys.clear();
 		focusedView = nullptr;
 	}
 }
@@ -100,35 +131,41 @@ bool IsFocusMovementEnabled() {
 	return focusMovementEnabled;
 }
 
-void LayoutViewHierarchy(const UIContext &dc, const UI::Margins &rootMargins, ViewGroup *root, bool ignoreInsets, bool ignoreBottomInset) {
-	Bounds rootBounds = ignoreInsets ? dc.GetBounds() : dc.GetLayoutBounds(ignoreBottomInset);
+void LayoutViewHierarchy(const UIContext &dc, const UI::Margins &rootMargins, ViewGroup *root, ViewLayoutMode layoutMode, bool immersiveMode) {
+	Bounds rootBounds = dc.GetLayoutBounds(layoutMode, immersiveMode);
 
-	MeasureSpec horiz(EXACTLY, rootBounds.w);
-	MeasureSpec vert(EXACTLY, rootBounds.h);
+	MeasureSpec horiz(EXACTLY, rootBounds.w - (rootMargins.left + rootMargins.right));
+	MeasureSpec vert(EXACTLY, rootBounds.h - (rootMargins.top + rootMargins.bottom));
 
 	// Two phases - measure contents, layout.
 	root->Measure(dc, horiz, vert);
 	// Root has a specified size. Set it, then let root layout all its children.
 	rootBounds.x += rootMargins.left;
 	rootBounds.y += rootMargins.top;
-	rootBounds.w -= rootMargins.right;
-	rootBounds.h -= rootMargins.bottom;
+	rootBounds.w -= rootMargins.left + rootMargins.right;
+	rootBounds.h -= rootMargins.top + rootMargins.bottom;
 	root->SetBounds(rootBounds);
 	root->Layout();
 }
 
-static void MoveFocus(ViewGroup *root, FocusDirection direction) {
+static void MoveFocus(ViewGroup *root, FocusMove direction) {
 	View *focusedView = GetFocusedView();
 	if (!focusedView) {
 		// Nothing was focused when we got in here. Focus the first non-group in the hierarchy.
-		root->SetFocus();
+		root->SetFocus(FocusFlags::CAUSE_FOCUS_MOVE);
+		return;
+	}
+
+	if (!focusedView->CanMoveFocus(direction)) {
 		return;
 	}
 
 	NeighborResult neigh = root->FindNeighbor(focusedView, direction, NeighborResult());
 	if (neigh.view) {
-		neigh.view->SetFocus();
+		neigh.view->SetFocus(FocusFlags::CAUSE_FOCUS_MOVE);
 		root->SubviewFocused(neigh.view);
+
+		// INFO_LOG(Log::UI, "Focus moved from %s to %s", focusedView->DescribeText().c_str(), neigh.view->DescribeText().c_str());
 
 		PlayUISound(UISound::SELECT);
 	}
@@ -143,33 +180,6 @@ void PlayUISound(UISound sound) {
 		soundCallback(sound);
 	}
 }
-
-// TODO: Figure out where this should really live.
-// Simple simulation of key repeat on platforms and for gamepads where we don't
-// automatically get it.
-
-static int frameCount;
-
-// Ignore deviceId when checking for matches. Turns out that Ouya for example sends
-// completely broken input where the original keypresses have deviceId = 10 and the repeats
-// have deviceId = 0.
-struct HeldKey {
-	InputKeyCode key;
-	InputDeviceID deviceId;
-	double triggerTime;
-
-	// Ignores startTime
-	bool operator <(const HeldKey &other) const {
-		if (key < other.key) return true;
-		return false;
-	}
-	bool operator ==(const HeldKey &other) const { return key == other.key; }
-};
-
-static std::set<HeldKey> heldKeys;
-
-const double repeatDelay = 15 * (1.0 / 60.0f);  // 15 frames like before.
-const double repeatInterval = 5 * (1.0 / 60.0f);  // 5 frames like before.
 
 bool IsScrollKey(const KeyInput &input) {
 	switch (input.keyCode) {
@@ -388,22 +398,23 @@ DialogResult UpdateViewHierarchy(ViewGroup *root) {
 			View *defaultView = root->GetDefaultFocusView();
 			// Can't focus what you can't see.
 			if (defaultView && defaultView->GetVisibility() == V_VISIBLE) {
-				root->GetDefaultFocusView()->SetFocus();
+				root->GetDefaultFocusView()->SetFocus(UI::FocusFlags::CAUSE_FOCUS_MOVE);
 			} else {
-				root->SetFocus();
+				root->SetFocus(UI::FocusFlags::CAUSE_FOCUS_MOVE);
 			}
 			root->SubviewFocused(GetFocusedView());
 		} else {
 			for (size_t i = 0; i < focusMoves.size(); i++) {
 				switch (focusMoves[i]) {
-				case NKCODE_DPAD_LEFT: MoveFocus(root, FOCUS_LEFT); break;
-				case NKCODE_DPAD_RIGHT: MoveFocus(root, FOCUS_RIGHT); break;
-				case NKCODE_DPAD_UP: MoveFocus(root, FOCUS_UP); break;
-				case NKCODE_DPAD_DOWN: MoveFocus(root, FOCUS_DOWN); break;
-				case NKCODE_PAGE_UP: MoveFocus(root, FOCUS_PREV_PAGE); break;
-				case NKCODE_PAGE_DOWN: MoveFocus(root, FOCUS_NEXT_PAGE); break;
-				case NKCODE_MOVE_HOME: MoveFocus(root, FOCUS_FIRST); break;
-				case NKCODE_MOVE_END: MoveFocus(root, FOCUS_LAST); break;
+				case NKCODE_DPAD_LEFT: MoveFocus(root, FocusMove::LEFT); break;
+				case NKCODE_DPAD_RIGHT: MoveFocus(root, FocusMove::RIGHT); break;
+				case NKCODE_DPAD_UP: MoveFocus(root, FocusMove::UP); break;
+				case NKCODE_DPAD_DOWN: MoveFocus(root, FocusMove::DOWN); break;
+				case NKCODE_PAGE_UP: MoveFocus(root, FocusMove::PREV_PAGE); break;
+				case NKCODE_PAGE_DOWN: MoveFocus(root, FocusMove::NEXT_PAGE); break;
+				case NKCODE_MOVE_HOME: MoveFocus(root, FocusMove::FIRST); break;
+				case NKCODE_MOVE_END: MoveFocus(root, FocusMove::LAST); break;
+				case NKCODE_TAB: MoveFocus(root, FocusMove::NEXT); break;
 				}
 			}
 		}

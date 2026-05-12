@@ -53,6 +53,7 @@
 #include "Core/HW/Display.h"
 #include "Core/Util/PPGeDraw.h"
 #include "Core/RetroAchievements.h"
+#include "Core/ControlMapper.h"
 
 #include "GPU/GPU.h"
 #include "GPU/GPUState.h"
@@ -156,8 +157,12 @@ void __DisplayVblankEndCallback(SceUID threadID, SceUID prevCallbackId);
 void __DisplayFlip(int cyclesLate);
 static void __DisplaySetFramerate(void);
 
+static bool UseAutoFrameSkip() {
+	return g_Config.bAutoFrameSkip && !g_Config.bSkipBufferEffects;
+}
+
 static bool UseLagSync() {
-	return g_Config.bForceLagSync && !g_Config.bAutoFrameSkip;
+	return g_Config.bForceLagSync && !UseAutoFrameSkip();
 }
 
 static void ScheduleLagSync(int over = 0) {
@@ -175,7 +180,6 @@ static void ScheduleLagSync(int over = 0) {
 
 void __DisplayInit() {
 	__DisplaySetFramerate();
-	DisplayHWReset();
 	hasSetMode = false;
 	mode = 0;
 	resumeMode = 0;
@@ -402,6 +406,8 @@ static void DoFrameTiming(bool throttle, bool *skipFrame, float scaledTimestep, 
 	PROFILE_THIS_SCOPE("timing");
 	*skipFrame = false;
 
+	const bool autoFrameSkip = UseAutoFrameSkip();
+
 	// Check if the frameskipping code should be enabled. If neither throttling or frameskipping is on,
 	// we have nothing to do here.
 	bool doFrameSkip = g_Config.iFrameSkip != 0;
@@ -424,19 +430,21 @@ static void DoFrameTiming(bool throttle, bool *skipFrame, float scaledTimestep, 
 	}
 
 	// Auto-frameskip automatically if speed limit is set differently than the default.
-	int frameSkipNum = g_Config.iFrameSkip;
-	if (g_Config.bAutoFrameSkip && !g_Config.bSkipBufferEffects) {
+	if (autoFrameSkip) {
 		// autoframeskip
 		// Argh, we are falling behind! Let's skip a frame and see if we catch up.
 		if (curFrameTime > nextFrameTime && doFrameSkip) {
 			*skipFrame = true;
 		}
-	} else if (frameSkipNum >= 1) {
-		// fixed frameskip
-		if (numSkippedFrames >= frameSkipNum)
-			*skipFrame = false;
-		else
-			*skipFrame = true;
+	} else {
+		const int frameSkipNum = g_Config.iFrameSkip;
+		if (frameSkipNum >= 1) {
+			// fixed frameskip
+			if (numSkippedFrames >= frameSkipNum)
+				*skipFrame = false;
+			else
+				*skipFrame = true;
+		}
 	}
 
 	if (curFrameTime < nextFrameTime && throttle) {
@@ -532,6 +540,9 @@ void hleEnterVblank(u64 userdata, int cyclesLate) {
 	if (wokeThreads) {
 		__KernelReSchedule("entered vblank");
 	}
+
+	// We use the emulation timebase here, for auto movements to be smooth as seen from the game.
+	g_controlMapper.UpdateAutoMovements(CoreTiming::GetGlobalTimeUs() / 1000000.0);
 
 	numVBlanksSinceFlip++;
 
@@ -655,7 +666,7 @@ void __DisplayFlip(int cyclesLate) {
 			}
 		}
 		if (nextFrame) {
-			gpu->CopyDisplayToOutput(g_displayLayoutConfigCached, fbReallyDirty);
+			gpu->SetCurFramebufferDirty(fbReallyDirty);
 			if (fbReallyDirty) {
 				DisplayFireActualFlip();
 			}

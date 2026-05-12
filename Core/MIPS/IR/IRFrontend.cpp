@@ -243,7 +243,6 @@ void IRFrontend::DoJit(u32 em_address, std::vector<IRInst> &instructions, u32 &m
 	js.cancel = false;
 	js.blockStart = em_address;
 	js.compilerPC = em_address;
-	js.lastContinuedPC = 0;
 	js.initialBlockSize = 0;
 	js.nextExit = 0;
 	js.downcountAmount = 0;
@@ -254,6 +253,7 @@ void IRFrontend::DoJit(u32 em_address, std::vector<IRInst> &instructions, u32 &m
 	js.inDelaySlot = false;
 	js.PrefixStart();
 	ir.Clear();
+	ir.Reserve(64); // Estimate a reasonable number of IR instructions per block
 
 	js.numInstructions = 0;
 	while (js.compiling) {
@@ -306,7 +306,7 @@ void IRFrontend::DoJit(u32 em_address, std::vector<IRInst> &instructions, u32 &m
 	}
 	else {
 		std::vector<IRInst> block_instructions = code->GetInstructions();
-		instructions.reserve(block_instructions.capacity());
+		instructions.reserve(block_instructions.size() + 2); // +2 for Downcount and LogIRBlock
 		// The first instruction is "Downcount"
 		instructions.push_back(block_instructions.front());
 		instructions.push_back({ IROp::LogIRBlock, {0}, 0, 0, 0 });

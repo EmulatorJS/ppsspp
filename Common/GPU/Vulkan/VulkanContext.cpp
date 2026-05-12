@@ -308,6 +308,12 @@ VkResult VulkanContext::CreateInstance(const CreateInfo &info) {
 		}
 	}
 
+	// Log the list of devices.
+	INFO_LOG(Log::G3D, "%d Vulkan devices found:", (int)physicalDeviceProperties_.size());
+	for (const auto &props : physicalDeviceProperties_) {
+		INFO_LOG(Log::G3D, "%s (vendor: %08x)", props.properties.deviceName, props.properties.vendorID);
+	}
+
 	if (extensionsLookup_.EXT_debug_utils) {
 		_assert_(vkCreateDebugUtilsMessengerEXT != nullptr);
 		InitDebugUtilsCallback();
@@ -608,6 +614,7 @@ VkResult VulkanContext::CreateDevice(int physical_device) {
 		WARN_LOG(Log::G3D, "CheckLayers for device %d failed", physical_device);
 	}
 
+	queue_count = 0;
 	vkGetPhysicalDeviceQueueFamilyProperties(physical_devices_[physical_device_], &queue_count, nullptr);
 	_dbg_assert_(queue_count >= 1);
 
@@ -685,6 +692,8 @@ VkResult VulkanContext::CreateDevice(int physical_device) {
 	extensionsLookup_.KHR_maintenance4 = EnableDeviceExtension("VK_KHR_maintenance4", VK_API_VERSION_1_3);
 	extensionsLookup_.KHR_multiview = EnableDeviceExtension(VK_KHR_MULTIVIEW_EXTENSION_NAME, VK_API_VERSION_1_1);
 
+	extensionsLookup_.EXT_scalar_block_layout = EnableDeviceExtension(VK_EXT_SCALAR_BLOCK_LAYOUT_EXTENSION_NAME, VK_API_VERSION_1_2);
+
 	if (EnableDeviceExtension(VK_KHR_GET_MEMORY_REQUIREMENTS_2_EXTENSION_NAME, VK_API_VERSION_1_1)) {
 		extensionsLookup_.KHR_get_memory_requirements2 = true;
 		extensionsLookup_.KHR_dedicated_allocation = EnableDeviceExtension(VK_KHR_DEDICATED_ALLOCATION_EXTENSION_NAME, VK_API_VERSION_1_1);
@@ -723,6 +732,7 @@ VkResult VulkanContext::CreateDevice(int physical_device) {
 		VkPhysicalDevicePresentIdFeaturesKHR presentIdFeatures{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR };
 		VkPhysicalDeviceProvokingVertexFeaturesEXT provokingVertexFeatures{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROVOKING_VERTEX_FEATURES_EXT };
 		VkPhysicalDevicePresentModeFifoLatestReadyFeaturesKHR presentModeFifoProps{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_MODE_FIFO_LATEST_READY_FEATURES_KHR};
+		VkPhysicalDeviceScalarBlockLayoutFeatures scalarBlockLayoutFeatures = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES};
 
 		ChainStruct(features2, &multiViewFeatures);
 		if (extensionsLookup_.KHR_present_wait) {
@@ -737,9 +747,15 @@ VkResult VulkanContext::CreateDevice(int physical_device) {
 		if (extensionsLookup_.KHR_present_mode_fifo_latest_ready) {
 			ChainStruct(features2, &presentModeFifoProps);
 		}
+		if (extensionsLookup_.EXT_scalar_block_layout) {
+			ChainStruct(features2, &scalarBlockLayoutFeatures);
+		}
 		vkGetPhysicalDeviceFeatures2(physical_devices_[physical_device_], &features2);
 		deviceFeatures_.available.standard = features2.features;
 		deviceFeatures_.available.multiview = multiViewFeatures;
+		if (extensionsLookup_.EXT_scalar_block_layout) {
+			deviceFeatures_.available.scalarBlockLayout = scalarBlockLayoutFeatures;
+		}
 		if (extensionsLookup_.KHR_present_wait) {
 			deviceFeatures_.available.presentWait = presentWaitFeatures;
 		}
@@ -796,6 +812,11 @@ VkResult VulkanContext::CreateDevice(int physical_device) {
 		deviceFeatures_.enabled.presentModeFifoProps.presentModeFifoLatestReady = deviceFeatures_.available.presentModeFifoProps.presentModeFifoLatestReady;
 	}
 
+	deviceFeatures_.enabled.scalarBlockLayout = {VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES};
+	if (extensionsLookup_.EXT_scalar_block_layout) {
+		deviceFeatures_.enabled.scalarBlockLayout.scalarBlockLayout = deviceFeatures_.available.scalarBlockLayout.scalarBlockLayout;
+	}
+
 	// deviceFeatures_.enabled.multiview.multiviewGeometryShader = deviceFeatures_.available.multiview.multiviewGeometryShader;
 
 	VkPhysicalDeviceFeatures2 features2{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2 };
@@ -820,6 +841,9 @@ VkResult VulkanContext::CreateDevice(int physical_device) {
 		}
 		if (extensionsLookup_.EXT_provoking_vertex) {
 			ChainStruct(features2, &deviceFeatures_.enabled.provokingVertex);
+		}
+		if (extensionsLookup_.EXT_scalar_block_layout) {
+			ChainStruct(features2, &deviceFeatures_.enabled.scalarBlockLayout);
 		}
 		if (extensionsLookup_.KHR_present_mode_fifo_latest_ready) {
 			ChainStruct(features2, &deviceFeatures_.enabled.presentModeFifoProps);
@@ -876,9 +900,13 @@ VkResult VulkanContext::CreateDevice(int physical_device) {
 	case VULKAN_VENDOR_QUALCOMM:
 		devicePerfClass_ = PerfClass::SLOW;
 #if PPSSPP_PLATFORM(ANDROID)
+		// The roughest heuristic ever, this needs improvement.
 		if (System_GetPropertyInt(SYSPROP_SYSTEMVERSION) >= 30) {
 			devicePerfClass_ = PerfClass::FAST;
 		}
+#elif PPSSPP_PLATFORM(WINDOWS)
+		// All the modern Qualcomm PC laptops are fast enough to be called FAST.
+		devicePerfClass_ = PerfClass::FAST;
 #endif
 		break;
 
@@ -932,7 +960,6 @@ bool VulkanContext::CreateInstanceAndDevice(const CreateInfo &info) {
 		DestroyInstance();
 		return false;
 	}
-
 	return true;
 }
 
@@ -1245,13 +1272,14 @@ VkResult VulkanContext::ReinitSurface() {
 
 	// Query presentation modes. We need to know which ones are available for InitSwapchain().
 	availablePresentModes_.clear();
-	uint32_t presentModeCount;
+	uint32_t presentModeCount = 0;
 	VkResult res = vkGetPhysicalDeviceSurfacePresentModesKHR(physical_devices_[physical_device_], surface_, &presentModeCount, nullptr);
-	availablePresentModes_.resize(presentModeCount);
 	_dbg_assert_(res == VK_SUCCESS);
-	res = vkGetPhysicalDeviceSurfacePresentModesKHR(physical_devices_[physical_device_], surface_, &presentModeCount, availablePresentModes_.data());
-	_dbg_assert_(res == VK_SUCCESS);
-
+	if (res == VK_SUCCESS) {
+		availablePresentModes_.resize(presentModeCount);
+		res = vkGetPhysicalDeviceSurfacePresentModesKHR(physical_devices_[physical_device_], surface_, &presentModeCount, availablePresentModes_.data());
+		_dbg_assert_(res == VK_SUCCESS);
+	}
 	return VK_SUCCESS;
 }
 
@@ -1550,7 +1578,7 @@ bool VulkanContext::InitSwapchain(VkPresentModeKHR desiredPresentMode) {
 
 	res = vkCreateSwapchainKHR(device_, &swap_chain_info, NULL, &swapchain_);
 	if (res != VK_SUCCESS) {
-		ERROR_LOG(Log::G3D, "vkCreateSwapchainKHR failed!");
+		ERROR_LOG(Log::G3D, "vkCreateSwapchainKHR failed! %s", VulkanResultToString(res));
 		return false;
 	}
 	INFO_LOG(Log::G3D, "Created swapchain: %dx%d %s", swap_chain_info.imageExtent.width, swap_chain_info.imageExtent.height, (surfCapabilities_.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_SRC_BIT) ? "(TRANSFER_SRC_BIT supported)" : "");

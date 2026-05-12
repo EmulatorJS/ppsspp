@@ -5,11 +5,21 @@
 #include "Common/UI/ScrollView.h"
 #include "Common/Data/Text/I18n.h"
 #include "Common/Log.h"
+#include "Common/StringUtils.h"
 
 namespace UI {
 
 float ScrollView::lastScrollPosX = 0;
 float ScrollView::lastScrollPosY = 0;
+
+ScrollView::ScrollView(Orientation orientation, LayoutParams *layoutParams)
+	: ViewGroup(layoutParams), orientation_(orientation) {
+	if (orientation == ORIENT_HORIZONTAL) {
+		gesture_.SetGestureMask(GESTURE_DRAG_HORIZONTAL);
+	} else {
+		gesture_.SetGestureMask(GESTURE_DRAG_VERTICAL);
+	}
+}
 
 ScrollView::~ScrollView() {
 	lastScrollPosX = 0;
@@ -54,6 +64,9 @@ void ScrollView::Measure(const UIContext &dc, MeasureSpec horiz, MeasureSpec ver
 			if (layoutParams_->height == WRAP_CONTENT)
 				MeasureBySpec(layoutParams_->height, views_[0]->GetMeasuredHeight(), vert, &measuredHeight_);
 		}
+
+		// The below seems misguided and leads to wrong sized scrollviews. Need to investigate if it's needed somewhere...
+		/*
 		if (orientation_ == ORIENT_VERTICAL && vert.type != EXACTLY) {
 			float bestHeight = std::max(views_[0]->GetMeasuredHeight(), views_[0]->GetBounds().h);
 			if (vert.type == AT_MOST)
@@ -62,7 +75,7 @@ void ScrollView::Measure(const UIContext &dc, MeasureSpec horiz, MeasureSpec ver
 			if (measuredHeight_ < bestHeight && layoutParams_->height < 0.0f) {
 				measuredHeight_ = bestHeight;
 			}
-		}
+		}*/
 	}
 }
 
@@ -142,6 +155,16 @@ const float friction = 0.92f;
 const float stop_threshold = 0.1f;
 
 bool ScrollView::Touch(const TouchInput &input) {
+	if (input.flags & TouchInputFlags::MOUSE) {
+		// Kinda hacky, we should make a proper hover mechanism.
+		mouseHover_ = bounds_.Contains(input.x, input.y);
+	}
+
+	// Ignore buttons other than the left one.
+	if ((input.flags & TouchInputFlags::MOUSE) && (input.buttons & 1) == 0) {
+		return false;
+	}
+
 	if ((input.flags & TouchInputFlags::DOWN) && scrollTouchId_ == -1 && bounds_.Contains(input.x, input.y)) {
 		if (orientation_ == ORIENT_VERTICAL) {
 			Bob bob = ComputeBob();
@@ -166,11 +189,6 @@ bool ScrollView::Touch(const TouchInput &input) {
 		}
 		scrollTouchId_ = -1;
 		draggingBob_ = false;
-	}
-
-	if (input.flags & TouchInputFlags::MOUSE) {
-		// Kinda hacky, we should make a proper hover mechanism.
-		mouseHover_ = bounds_.Contains(input.x, input.y);
 	}
 
 	// We modify the input2 we send to children, so we can cancel drags if we start scrolling, and stuff like that.
@@ -270,8 +288,8 @@ void ScrollView::Draw(UIContext &dc) {
 	// If not anchored at the top of the screen exactly, and not scrolled to the top,
 	// draw a subtle drop shadow to indicate scrollability.
 
-	const float darkness = 0.4f;
-	if (bounds_.y > 0.0f && orientation_ == ORIENT_VERTICAL) {
+	constexpr float darkness = 0.4f;
+	if (shadows_ && bounds_.y > 0.0f && orientation_ == ORIENT_VERTICAL) {
 		float radius = 20.0f;
 
 		Bounds shadowBounds = bounds_;
@@ -285,9 +303,9 @@ void ScrollView::Draw(UIContext &dc) {
 		dc.DrawRectDropShadow(shadowBounds, radius, fade);
 	}
 
-	// Same at the bottom.
-	float y2 = dc.GetLayoutBounds().y2();
-	if (bounds_.y2() < y2 && orientation_ == ORIENT_VERTICAL) {
+	// Same at the bottom. (we check against the common UI layout mode)
+	const float y2 = dc.GetLayoutBounds(ViewLayoutMode::IgnoreBottomInset, false).y2();
+	if (shadows_ && bounds_.y2() < y2 && orientation_ == ORIENT_VERTICAL) {
 		float radius = 20.0f;
 
 		Bounds shadowBounds = bounds_;
@@ -356,7 +374,7 @@ bool ScrollView::SubviewFocused(View *view) {
 	return true;
 }
 
-NeighborResult ScrollView::FindScrollNeighbor(View *view, const Point2D &target, FocusDirection direction, NeighborResult best) {
+NeighborResult ScrollView::FindScrollNeighbor(View *view, const Point2D &target, FocusMove direction, NeighborResult best) {
 	if (ContainsSubview(view) && views_[0]->IsViewGroup()) {
 		ViewGroup *vg = static_cast<ViewGroup *>(views_[0]);
 		int found = -1;
@@ -372,10 +390,10 @@ NeighborResult ScrollView::FindScrollNeighbor(View *view, const Point2D &target,
 		if (found != -1) {
 			float mult = 0.0f;
 			switch (direction) {
-			case FOCUS_PREV_PAGE:
+			case FocusMove::PREV_PAGE:
 				mult = -1.0f;
 				break;
-			case FOCUS_NEXT_PAGE:
+			case FocusMove::NEXT_PAGE:
 				mult = 1.0f;
 				break;
 			default:
@@ -477,10 +495,10 @@ float ScrollView::ClampedScrollPos(float pos) {
 		float maxPull = bounds_.h * 0.1f;
 		if (pos < 0.0f) {
 			float dist = std::min(-pos * (1.0f / bounds_.h), 1.0f);
-			pull_ = -(sqrt(dist) * maxPull);
+			pull_ = -(sqrtf(dist) * maxPull);
 		} else if (pos > scrollMax) {
 			float dist = std::min((pos - scrollMax) * (1.0f / bounds_.h), 1.0f);
-			pull_ = sqrt(dist) * maxPull;
+			pull_ = sqrtf(dist) * maxPull;
 		} else {
 			pull_ = 0.0f;
 		}
@@ -572,17 +590,21 @@ void ListView::CreateAllItems() {
 	linLayout_->Clear();
 	// Let's not be clever yet, we'll just create them all up front and add them all in.
 	for (int i = 0; i < adaptor_->GetNumItems(); i++) {
-		if (hidden_.find(i) == hidden_.end()) {
-			ImageID *imageID = nullptr;
-			auto iter = icons_.find(i);
-			if (iter != icons_.end()) {
-				imageID = &iter->second;
-			}
-			View *v = linLayout_->Add(adaptor_->CreateItemView(i, imageID));
-			adaptor_->AddEventCallback(v, [this, i](UI::EventParams &e) {
-				OnItemCallback(i, e);
-			});
+		if (hidden_.count(i)) {
+			// Item was hidden, skip it.
+			continue;
 		}
+
+		ImageID *imageID = nullptr;
+		auto iter = icons_.find(i);
+		if (iter != icons_.end()) {
+			imageID = &iter->second;
+		}
+		const bool selected = adaptor_->GetSelected() == i;
+		View *v = linLayout_->Add(adaptor_->CreateItemView(i, selected, imageID));
+		adaptor_->AddEventCallback(v, [this, i](UI::EventParams &e) {
+			OnItemCallback(i, e);
+		});
 	}
 }
 
@@ -607,37 +629,51 @@ void ListView::OnItemCallback(int num, EventParams &e) {
 	CreateAllItems();
 }
 
-View *ChoiceListAdaptor::CreateItemView(int index, ImageID *optionalImageID) {
+View *ChoiceListAdaptor::CreateItemView(int index, bool selected, ImageID *optionalImageID) {
 	Choice *choice;
+
+	std::string title = items_[index];
+	if (default_ == index) {
+		auto di = GetI18NCategory(I18NCat::DIALOG);
+		title = ApplySafeSubstitutions("%1 (%2)", title, di->T("Default"));
+	}
+
 	if (optionalImageID) {
-		choice = new Choice(items_[index], *optionalImageID);
+		choice = new Choice(title, *optionalImageID);
 	} else {
-		choice = new Choice(items_[index]);
-		//choice->SetIconRight(*optionalImageID);
+		choice = new Choice(title);
+	}
+	if (selected) {
+		choice->SetSelectedIndicator(true);
 	}
 	return choice;
 }
 
 void ChoiceListAdaptor::AddEventCallback(View *view, std::function<void(EventParams &)> callback) {
-	Choice *choice = (Choice *)view;
-	choice->OnClick.Add(callback);
+	Clickable *choice = dynamic_cast<Clickable *>(view);
+	if (choice) {
+		choice->OnClick.Add(callback);
+	}
 }
 
-View *StringVectorListAdaptor::CreateItemView(int index, ImageID *optionalImageID) {
-	ImageID temp;
-	if (optionalImageID) {
-		temp = *optionalImageID;
+View *StringVectorListAdaptor::CreateItemView(int index, bool selected, ImageID *optionalImageID) {
+	std::string title = items_[index];
+	if (index == default_) {
+		auto di = GetI18NCategory(I18NCat::DIALOG);
+		title = ApplySafeSubstitutions("%1 (%2)", title, di->T("Default"));
 	}
-	Choice *choice = new Choice(items_[index], temp);
-	// if (optionalImageID) {
-	// 	choice->SetIconRight(*optionalImageID);
-	// }
+	Choice *choice = new Choice(title, optionalImageID ? *optionalImageID : ImageID());
+	if (selected) {
+		choice->SetSelectedIndicator(true);
+	}
 	return choice;
 }
 
 void StringVectorListAdaptor::AddEventCallback(View *view, std::function<void(EventParams &)> callback) {
-	Choice *choice = (Choice *)view;
-	choice->OnClick.Add(callback);
+	Clickable *choice = dynamic_cast<Clickable *>(view);
+	if (choice) {
+		choice->OnClick.Add(callback);
+	}
 }
 
 }  // namespace

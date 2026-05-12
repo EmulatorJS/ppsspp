@@ -26,6 +26,9 @@ public:
 	virtual void CreateContextMenu(UI::ViewGroup *parent) {}  // only called if CustomContextMenu is set in flags.
 	virtual std::string_view GetTitle() const { return ""; }
 
+protected:
+	ViewLayoutMode LayoutMode() const override;
+
 private:
 	void CreateViews() override;
 	SimpleDialogFlags flags_;
@@ -38,6 +41,7 @@ enum class TwoPaneFlags {
 	SettingsCanScroll = 4,
 	ContentsCanScroll = 8,
 	CustomContextMenu = 16,
+	NoTopbarInLandscape = 32,
 };
 ENUM_CLASS_BITOPS(TwoPaneFlags);
 
@@ -59,6 +63,9 @@ public:
 	virtual void CreateContextMenu(UI::ViewGroup *parent) {}  // only called if CustomContextMenu is set in flags.
 	virtual std::string_view GetTitle() const { return ""; }
 	virtual float SettingsWidth() const { return 350.0f; }
+
+protected:
+	ViewLayoutMode LayoutMode() const override;
 
 private:
 	void CreateViews() override;

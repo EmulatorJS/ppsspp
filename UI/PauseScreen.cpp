@@ -24,6 +24,7 @@
 #include "Common/UI/Context.h"
 #include "Common/UI/UIScreen.h"
 #include "Common/UI/PopupScreens.h"
+#include "Common/UI/Notice.h"
 #include "Common/GPU/thin3d.h"
 
 #include "Common/Data/Text/I18n.h"
@@ -68,6 +69,12 @@
 #include "UI/TouchControlLayoutScreen.h"
 #include "UI/BackgroundAudio.h"
 #include "UI/MiscViews.h"
+#include "UI/AdhocServerScreen.h"
+
+// This is in an objective-C file.
+#if PPSSPP_PLATFORM(IOS)
+void copyDeepLinkForPath(std::string_view filePath);
+#endif
 
 static void AfterSaveStateAction(SaveState::Status status, std::string_view message) {
 	if (!message.empty() && (!g_Config.bDumpFrames || !g_Config.bDumpVideoOutput)) {
@@ -79,7 +86,7 @@ static void AfterSaveStateAction(SaveState::Status status, std::string_view mess
 class ScreenshotViewScreen : public UI::PopupScreen {
 public:
 	ScreenshotViewScreen(const Path &screenshotFilename, std::string_view saveStatePrefix, std::string_view title, int slot, Path gamePath)
-		: PopupScreen(title), screenshotFilename_(screenshotFilename), saveStatePrefix_(saveStatePrefix), slot_(slot), gamePath_(gamePath), title_(title) {}   // PopupScreen will translate Back on its own
+		: PopupScreen(title), screenshotFilename_(screenshotFilename), saveStatePrefix_(saveStatePrefix), slot_(slot), gamePath_(gamePath), title_(title) {}
 
 	int GetSlot() const {
 		return slot_;
@@ -102,11 +109,9 @@ protected:
 		Margins contentMargins(10, 0);
 		content->Add(new AsyncImageFileView(screenshotFilename_, IS_KEEP_ASPECT, new LinearLayoutParams(480, 272, contentMargins)))->SetCanBeFocused(false);
 
-		GridLayoutSettings gridsettings(240, 64, 5);
+		GridLayoutSettings gridsettings(235, 64, 10);
 		gridsettings.fillCells = true;
-		GridLayout *grid = content->Add(new GridLayoutList(gridsettings, new LayoutParams(FILL_PARENT, WRAP_CONTENT)));
-
-		Choice *back = new Choice(di->T("Back"));
+		GridLayout *grid = content->Add(new GridLayoutList(gridsettings, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, Margins(10, 0))));
 
 		const bool hasUndo = SaveState::HasUndoSaveInSlot(saveStatePrefix_, slot_);
 		const bool undoEnabled = g_Config.bEnableStateUndo;
@@ -115,18 +120,18 @@ protected:
 		if (undoEnabled || hasUndo) {
 			// Show the undo button if state undo is enabled in settings, OR one is available. We can load it
 			// even if making new undo states is not enabled.
-			Choice *undoButton = new Choice(pa->T("Undo last save"));
+			undoButton = new Choice(pa->T("Undo last save"));
 			undoButton->SetEnabled(hasUndo);
 		}
 
-		grid->Add(new Choice(pa->T("Save State")))->OnClick.Handle(this, &ScreenshotViewScreen::OnSaveState);
+		grid->Add(new Choice(pa->T("Save State"), ImageID("I_FILE_SAVE")))->OnClick.Handle(this, &ScreenshotViewScreen::OnSaveState);
 		// We can unconditionally show the load state button, because you can only pop this dialog up if a state exists.
-		grid->Add(new Choice(pa->T("Load State")))->OnClick.Handle(this, &ScreenshotViewScreen::OnLoadState);
-		grid->Add(new Choice(pa->T("Delete State")))->OnClick.Handle(this, &ScreenshotViewScreen::OnDeleteState);
+		grid->Add(new Choice(pa->T("Load State"), ImageID("I_FOLDER_OPEN")))->OnClick.Handle(this, &ScreenshotViewScreen::OnLoadState);
+		grid->Add(new Choice(di->T("Delete"), ImageID("I_TRASHCAN")))->OnClick.Handle(this, &ScreenshotViewScreen::OnDeleteState);
 		if (undoButton) {
 			grid->Add(undoButton)->OnClick.Handle(this, &ScreenshotViewScreen::OnUndoState);
 		}
-		grid->Add(back)->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
+		grid->Add(new Choice(di->T("Back"), ImageID("I_NAVIGATE_BACK")))->OnClick.Handle<UIScreen>(this, &UIScreen::OnBack);
 
 		scroll->Add(content);
 		parent->Add(scroll);
@@ -164,7 +169,7 @@ void ScreenshotViewScreen::OnLoadState(UI::EventParams &e) {
 void ScreenshotViewScreen::OnUndoState(UI::EventParams &e) {
 	if (!NetworkWarnUserIfOnlineAndCantSavestate()) {
 		SaveState::UndoSaveSlot(saveStatePrefix_, slot_);
-		TriggerFinish(DR_CANCEL);
+		TriggerFinish(DR_YES);  // DR_YES signals that we need a refresh, but not to close the pause menu.
 	}
 }
 
@@ -179,10 +184,10 @@ void ScreenshotViewScreen::OnDeleteState(UI::EventParams &e) {
 
 	// TODO: Also show the screenshot on the confirmation screen?
 
-	screenManager()->push(new UI::MessagePopupScreen(title, message, di->T("Delete"), di->T("Cancel"), [=](bool result) {
+	screenManager()->push(new UI::MessagePopupScreen(title, message, di->T("Delete"), di->T("Cancel"), [this](bool result) {
 		if (result) {
 			SaveState::DeleteSlot(saveStatePrefix_, slot_);
-			TriggerFinish(DR_CANCEL);
+			TriggerFinish(DR_YES);  // DR_YES signals that we need a refresh, but not to close the pause menu.
 		}
 	}));
 }
@@ -338,7 +343,7 @@ void GamePauseScreen::update() {
 
 	if (playButton_) {
 		const bool mustRunBehind = MustRunBehind();
-		playButton_->SetVisibility(mustRunBehind ? UI::V_GONE : UI::V_VISIBLE);
+		playButton_->SetEnabled(!mustRunBehind);
 	}
 
 	SetVRAppMode(VRAppMode::VR_MENU_MODE);
@@ -351,33 +356,35 @@ GamePauseScreen::GamePauseScreen(const Path &filename, bool bootPending)
 	SetExtraAssertInfo(assertStr.c_str());
 	saveStatePrefix_ = SaveState::GetGamePrefix(g_paramSFO);
 	SaveState::Rescan(saveStatePrefix_);
+	g_controlMapper.AddListener(this);
+	createdTime_ = time_now_d();
 }
 
 GamePauseScreen::~GamePauseScreen() {
+	g_controlMapper.RemoveListener(this);
 	__DisplaySetWasPaused();
 }
 
-bool GamePauseScreen::key(const KeyInput &key) {
-	bool handled = UIDialogScreen::key(key);
-
-	if (!handled && (key.flags & KeyInputFlags::DOWN)) {
-		// Special case to be able to unpause with a bound pause key.
-		// Normally we can't bind keys used in the UI.
-		InputMapping mapping(key.deviceId, key.keyCode);
-		std::vector<int> pspButtons;
-		KeyMap::InputMappingToPspButton(mapping, &pspButtons);
-		for (auto button : pspButtons) {
-			if (button == VIRTKEY_PAUSE) {
-				TriggerFinish(DR_CANCEL);
-				return true;
-			}
-		}
-		return false;
-	}
-	return handled;
+bool GamePauseScreen::UnsyncKey(const KeyInput &key) {
+	int retval = UIScreen::UnsyncKey(key);
+	bool pauseTrigger = false;
+	return retval || g_controlMapper.Key(key, &pauseTrigger);
 }
 
-void GamePauseScreen::CreateSavestateControls(UI::LinearLayout *leftColumnItems) {
+void GamePauseScreen::UnsyncAxis(const AxisInput *axes, size_t count) {
+	UIScreen::UnsyncAxis(axes, count);
+	g_controlMapper.Axis(axes, count);
+}
+
+void GamePauseScreen::OnVKey(VirtKey virtualKeyCode, bool down) {
+	// Simple de-bounce using createdTime_, just to be safe.
+	if (down && virtualKeyCode == VIRTKEY_PAUSE && time_now_d() > createdTime_ + 0.1) {
+		finishNextFrame_ = true;
+		finishNextFrameResult_ = DR_BACK;
+	}
+}
+
+void GamePauseScreen::CreateSavestateControls(UI::LinearLayout *leftColumnItems, UI::LinearLayout **extraRow) {
 	auto pa = GetI18NCategory(I18NCat::PAUSE);
 
 	using namespace UI;
@@ -404,23 +411,39 @@ void GamePauseScreen::CreateSavestateControls(UI::LinearLayout *leftColumnItems)
 			RecreateViews();
 		});
 	}
-	leftColumnItems->Add(new Spacer(0.0));
 
-	LinearLayout *buttonRow = leftColumnItems->Add(new LinearLayout(ORIENT_HORIZONTAL, new LinearLayoutParams(Margins(10, 0, 0, 0))));
+	*extraRow = nullptr;
+
+	LinearLayout *buttonRow = new LinearLayout(ORIENT_HORIZONTAL, new LinearLayoutParams(Margins(10, 0, 0, 10)));
 	if (g_Config.bEnableStateUndo && !Achievements::HardcoreModeActive() && NetworkAllowSaveState()) {
-		UI::Choice *loadUndoButton = buttonRow->Add(new Choice(pa->T("Undo last load"), ImageID("I_NAVIGATE_BACK")));
-		loadUndoButton->SetEnabled(SaveState::HasUndoLoad(saveStatePrefix_));
-		loadUndoButton->OnClick.Handle(this, &GamePauseScreen::OnLoadUndo);
-
-		UI::Choice *saveUndoButton = buttonRow->Add(new Choice(pa->T("Undo last save"), ImageID("I_NAVIGATE_BACK")));
+		UI::Choice *saveUndoButton = buttonRow->Add(new Choice(pa->T("Undo last save"), ImageID("I_NAVIGATE_BACK"), new LinearLayoutParams(WRAP_CONTENT, WRAP_CONTENT)));
 		saveUndoButton->SetEnabled(SaveState::HasUndoLastSave(saveStatePrefix_));
-		saveUndoButton->OnClick.Handle(this, &GamePauseScreen::OnLastSaveUndo);
+		saveUndoButton->OnClick.Add([this](UI::EventParams &e) {
+			SaveState::UndoLastSave(saveStatePrefix_);
+			RecreateViews();
+		});
+
+		UI::Choice *loadUndoButton = buttonRow->Add(new Choice(pa->T("Undo last load"), ImageID("I_NAVIGATE_BACK"), new LinearLayoutParams(WRAP_CONTENT, WRAP_CONTENT)));
+		loadUndoButton->SetEnabled(SaveState::HasUndoLoad(saveStatePrefix_));
+		loadUndoButton->OnClick.Add([this](UI::EventParams &e) {
+			SaveState::UndoLoad(saveStatePrefix_, &AfterSaveStateAction);
+			TriggerFinish(DR_CANCEL);
+		});
 	}
 
 	if (g_Config.iRewindSnapshotInterval > 0 && !Achievements::HardcoreModeActive() && NetworkAllowSaveState()) {
-		UI::Choice *rewindButton = buttonRow->Add(new Choice(pa->T("Rewind"), ImageID("I_REWIND")));
+		UI::Choice *rewindButton = buttonRow->Add(new Choice(pa->T("Rewind"), ImageID("I_REWIND"), new LinearLayoutParams(WRAP_CONTENT, WRAP_CONTENT)));
 		rewindButton->SetEnabled(SaveState::CanRewind());
-		rewindButton->OnClick.Handle(this, &GamePauseScreen::OnRewind);
+		rewindButton->OnClick.Add([this](UI::EventParams &e) {
+			SaveState::Rewind(&AfterSaveStateAction);
+			TriggerFinish(DR_CANCEL);
+		});
+	}
+
+	if (buttonRow->GetNumSubviews() == 0) {
+		delete buttonRow;
+	} else {
+		*extraRow = buttonRow;
 	}
 }
 
@@ -455,7 +478,7 @@ void GamePauseScreen::CreateViews() {
 	}
 
 	if (portrait) {
-		// We have room for a title bar. Use the game DB title if available.
+		// We have room for a title bar in portrait mode. Use the game DB title if available.
 		std::string title;
 		std::vector<GameDBInfo> dbInfos;
 		const bool inGameDB = g_gameDB.GetGameInfos(g_paramSFO.GetDiscID(), &dbInfos);
@@ -473,15 +496,19 @@ void GamePauseScreen::CreateViews() {
 		});
 	}
 
-	ViewGroup *saveStateScroll = new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(1.0f, scrollMargins));
-	root_->Add(saveStateScroll);
+	ViewGroup *saveScrollContainer = new LinearLayout(ORIENT_VERTICAL, new LinearLayoutParams(1.0f, scrollMargins));
+	root_->Add(saveScrollContainer);
+
+	ScrollView *saveStateScroll = saveScrollContainer->Add(new ScrollView(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, FILL_PARENT, 1.0f)));
+	saveStateScroll->SetShadows(false);
 
 	LinearLayout *saveDataScrollItems = new LinearLayoutList(ORIENT_VERTICAL, new LayoutParams(FILL_PARENT, WRAP_CONTENT));
 	saveStateScroll->Add(saveDataScrollItems);
 
 	saveDataScrollItems->SetSpacing(5.0f);
 	if (Achievements::IsActive()) {
-		saveDataScrollItems->Add(new GameAchievementSummaryView());
+		// TODO: active subset?
+		saveDataScrollItems->Add(new GameAchievementSummaryView(0));
 
 		char buf[512];
 		size_t sz = Achievements::GetRichPresenceMessage(buf, sizeof(buf));
@@ -491,41 +518,52 @@ void GamePauseScreen::CreateViews() {
 	}
 
 	if (IsNetworkConnected()) {
-		saveDataScrollItems->Add(new NoticeView(NoticeLevel::INFO, nw->T("Network connected"), ""));
-
 		const InfraDNSConfig &dnsConfig = GetInfraDNSConfig();
+		LinearLayout *networkInfo = saveDataScrollItems->Add(new LinearLayout(ORIENT_VERTICAL, new LinearLayoutParams(FILL_PARENT, WRAP_CONTENT, Margins(12, 0))));
 		if (dnsConfig.loaded && __NetApctlConnected()) {
-			saveDataScrollItems->Add(new NoticeView(NoticeLevel::INFO, nw->T("Infrastructure"), ""));
+			networkInfo->Add(new NoticeView(NoticeLevel::SUCCESS, ApplySafeSubstitutions("%1: %2", nw->T("Network connected"), nw->T("Infrastructure")), ""));
 
 			if (dnsConfig.state == InfraGameState::NotWorking) {
-				saveDataScrollItems->Add(new NoticeView(NoticeLevel::WARN, nw->T("Some network functionality in this game is not working"), ""));
+				networkInfo->Add(new NoticeView(NoticeLevel::WARN, nw->T("Some network functionality in this game is not working"), ""));
 				if (!dnsConfig.workingIDs.empty()) {
 					std::string str(nw->T("Other versions of this game that should work:"));
 					for (auto &id : dnsConfig.workingIDs) {
 						str.append("\n - ");
 						str += id;
 					}
-					saveDataScrollItems->Add(new TextView(str));
+					networkInfo->Add(new TextView(str));
 				}
 			} else if (dnsConfig.state == InfraGameState::Unknown) {
-				saveDataScrollItems->Add(new NoticeView(NoticeLevel::WARN, nw->T("Network functionality in this game is not guaranteed"), ""));
+				networkInfo->Add(new NoticeView(NoticeLevel::WARN, nw->T("Network functionality in this game is not guaranteed"), ""));
 			}
 			if (!dnsConfig.revivalTeam.empty()) {
-				saveDataScrollItems->Add(new TextView(std::string(nw->T("Infrastructure server provided by:"))));
-				saveDataScrollItems->Add(new TextView(dnsConfig.revivalTeam));
+				networkInfo->Add(new TextView(std::string(nw->T("Infrastructure server provided by:"))));
+				networkInfo->Add(new TextView(dnsConfig.revivalTeam));
 				if (!dnsConfig.revivalTeamURL.empty()) {
-					saveDataScrollItems->Add(new Button(dnsConfig.revivalTeamURL))->OnClick.Add([&dnsConfig](UI::EventParams &e) {
+					networkInfo->Add(new Button(dnsConfig.revivalTeamURL))->OnClick.Add([&dnsConfig](UI::EventParams &e) {
 						if (!dnsConfig.revivalTeamURL.empty()) {
 							System_LaunchUrl(LaunchUrlType::BROWSER_URL, dnsConfig.revivalTeamURL.c_str());
 						}
 					});
 				}
 			}
-		}
-
-		if (NetAdhocctl_GetState() >= ADHOCCTL_STATE_CONNECTED) {
-			// Awkwardly re-using a string here
-			saveDataScrollItems->Add(new TextView(std::string(nw->T("AdHoc server")) + ": " + std::string(nw->T("Connected"))));
+		} else if (NetAdhocctl_GetState() >= ADHOCCTL_STATE_CONNECTED) {
+			// If we have it (thanks to the server list), add more metadata about the connected ad-hoc server here.
+			AdhocServerListEntry entry{};
+			if (AdhocGetServerByHost(g_Config.sProAdhocServer, &entry)) {
+				networkInfo->Add(new NoticeView(NoticeLevel::SUCCESS, ApplySafeSubstitutions("%1: %2", nw->T("AdHoc server"), nw->T("Connected")), ""));
+				Choice *status = networkInfo->Add(new Choice(ApplySafeSubstitutions(nw->T("Server status: %1"), entry.name), new LinearLayoutParams(WRAP_CONTENT, ITEM_HEIGHT)));
+				status->SetIconLeft(ImageID("I_INFO"));
+				status->OnClick.Add([this, entry](UI::EventParams &) {
+					screenManager()->push(new AdhocServerInfoScreen(entry));
+				});
+			} else {
+				// Awkwardly re-using a string here
+				networkInfo->Add(new NoticeView(NoticeLevel::SUCCESS, ApplySafeSubstitutions("%1: %2 (%3)", nw->T("AdHoc server"), nw->T("Connected"), g_Config.sProAdhocServer), ""));
+			}
+		} else {
+			// Hm, other kind of network connection, maybe plain sockets.
+			networkInfo->Add(new NoticeView(NoticeLevel::SUCCESS, nw->T("Network connected"), ""));
 		}
 	}
 
@@ -544,7 +582,11 @@ void GamePauseScreen::CreateViews() {
 				System_LaunchUrl(LaunchUrlType::BROWSER_URL, "https://www.ppsspp.org/docs/troubleshooting/save-state-time-warps");
 			});
 		}
-		CreateSavestateControls(saveDataScrollItems);
+		LinearLayout *extraRow = nullptr;
+		CreateSavestateControls(saveDataScrollItems, &extraRow);
+		if (extraRow) {
+			saveScrollContainer->Add(extraRow);
+		}
 	} else {
 		// Let's show the active challenges.
 		std::set<uint32_t> ids = Achievements::GetActiveChallengeIDs();
@@ -588,7 +630,7 @@ void GamePauseScreen::CreateViews() {
 
 	rightColumnItems->SetSpacing(0.0f);
 	if (getUMDReplacePermit()) {
-		rightColumnItems->Add(new Choice(pa->T("Switch UMD"), ImageID("I_UMD")))->OnClick.Add([=](UI::EventParams &) {
+		rightColumnItems->Add(new Choice(pa->T("Switch UMD"), ImageID("I_UMD")))->OnClick.Add([this](UI::EventParams &) {
 			screenManager()->push(new UmdReplaceScreen());
 		});
 	}
@@ -604,7 +646,7 @@ void GamePauseScreen::CreateViews() {
 		rightColumnItems->Add(new Choice(pa->T("Game Settings"), ImageID("I_GEAR")))->OnClick.Handle(this, &GamePauseScreen::OnGameSettings);
 		auto pa = GetI18NCategory(I18NCat::PAUSE);
 		if (g_Config.HasGameConfig(g_paramSFO.GetValueString("DISC_ID"))) {
-			Choice *delGameConfig = rightColumnItems->Add(new Choice(pa->T("Delete Game Config")));
+			Choice *delGameConfig = rightColumnItems->Add(new Choice(pa->T("Delete Game Config"), ImageID("I_TRASHCAN")));
 			delGameConfig->OnClick.Handle(this, &GamePauseScreen::OnDeleteConfig);
 			delGameConfig->SetEnabled(!bootPending_);
 		}
@@ -616,22 +658,22 @@ void GamePauseScreen::CreateViews() {
 	}
 
 	if (g_Config.bAchievementsEnable && Achievements::HasAchievementsOrLeaderboards()) {
-		rightColumnItems->Add(new Choice(ac->T("Achievements"), ImageID("I_ACHIEVEMENT")))->OnClick.Add([&](UI::EventParams &e) {
+		rightColumnItems->Add(new Choice(ac->T("Achievements"), ImageID("I_ACHIEVEMENT")))->OnClick.Add([this](UI::EventParams &e) {
 			screenManager()->push(new RetroAchievementsListScreen(gamePath_));
 		});
 	}
 
-	rightColumnItems->Add(new Choice(gr->T("Display layout & effects"), ImageID("I_DISPLAY")))->OnClick.Add([&](UI::EventParams &) -> void {
+	rightColumnItems->Add(new Choice(gr->T("Display layout & effects"), ImageID("I_DISPLAY")))->OnClick.Add([this](UI::EventParams &) -> void {
 		screenManager()->push(new DisplayLayoutScreen(gamePath_));
 	});
 	if (g_Config.bShowTouchControls) {
-		rightColumnItems->Add(new Choice(co->T("Edit touch control layout..."), ImageID("I_CONTROLLER")))->OnClick.Add([&](UI::EventParams &) -> void {
+		rightColumnItems->Add(new Choice(co->T("Edit touch control layout"), ImageID("I_CONTROLLER")))->OnClick.Add([this](UI::EventParams &) -> void {
 			screenManager()->push(new TouchControlLayoutScreen(gamePath_));
 		});
 	}
 
 	if (g_Config.bEnableCheats && PSP_CoreParameter().fileType != IdentifiedFileType::PPSSPP_GE_DUMP) {
-		rightColumnItems->Add(new Choice(pa->T("Cheats"), ImageID("I_CHEAT")))->OnClick.Add([&](UI::EventParams &e) {
+		rightColumnItems->Add(new Choice(pa->T("Cheats"), ImageID("I_CHEAT")))->OnClick.Add([this](UI::EventParams &e) {
 			screenManager()->push(new CwCheatScreen(gamePath_));
 		});
 	}
@@ -668,18 +710,22 @@ void GamePauseScreen::CreateViews() {
 	exit->SetEnabled(!bootPending_);
 
 	if (middleColumn) {
-		middleColumn->SetSpacing(portrait ? 8.0f : 20.0f);
-		playButton_ = middleColumn->Add(new Choice(g_Config.bRunBehindPauseMenu ? ImageID("I_PAUSE") : ImageID("I_PLAY"), new LinearLayoutParams(64, 64)));
-		playButton_->OnClick.Add([=](UI::EventParams &e) {
+		middleColumn->SetSpacing(portrait ? 8.0f : 0.0f);
+		playButton_ = middleColumn->Add(new Choice(g_Config.bRunBehindPauseMenu ? ImageID("I_PAUSE_LINE") : ImageID("I_PLAY_LINE"), new LinearLayoutParams(64, 64)));
+		playButton_->OnClick.Add([this](UI::EventParams &e) {
 			g_Config.bRunBehindPauseMenu = !g_Config.bRunBehindPauseMenu;
-			playButton_->SetIconLeft(g_Config.bRunBehindPauseMenu ? ImageID("I_PAUSE") : ImageID("I_PLAY"));
+			playButton_->SetIconLeft(g_Config.bRunBehindPauseMenu ? ImageID("I_PAUSE_LINE") : ImageID("I_PLAY_LINE"));
 		});
 
 		bool mustRunBehind = MustRunBehind();
-		playButton_->SetVisibility(mustRunBehind ? UI::V_GONE : UI::V_VISIBLE);
+		playButton_->SetEnabled(!mustRunBehind);
+
+		if (!portrait) {
+			middleColumn->Add(new Spacer(20.0f));
+		}
 
 		Choice *infoButton = middleColumn->Add(new Choice(ImageID("I_INFO"), new LinearLayoutParams(64, 64)));
-		infoButton->OnClick.Add([=](UI::EventParams &e) {
+		infoButton->OnClick.Add([this](UI::EventParams &e) {
 			screenManager()->push(new GameScreen(gamePath_, true));
 		});
 
@@ -702,17 +748,21 @@ void GamePauseScreen::ShowContextMenu(UI::View *menuButton, bool portrait) {
 	using namespace UI;
 	PopupCallbackScreen *contextMenu = new UI::PopupCallbackScreen([this, portrait](UI::ViewGroup *parent) {
 		auto di = GetI18NCategory(I18NCat::DIALOG);
-		parent->Add(new Choice(di->T("Reset")))->OnClick.Add([this](UI::EventParams &e) {
+		parent->Add(new Choice(di->T("Reset"), ImageID("I_WARNING")))->OnClick.Add([this](UI::EventParams &e) {
 			std::string confirmMessage = GetConfirmExitMessage();
 			if (!confirmMessage.empty()) {
 				auto di = GetI18NCategory(I18NCat::DIALOG);
-				screenManager()->push(new UI::MessagePopupScreen(di->T("Reset"), confirmMessage, di->T("Reset"), di->T("Cancel"), [=](bool result) {
+				screenManager()->push(new UI::MessagePopupScreen(di->T("Reset"), confirmMessage, di->T("Reset"), di->T("Cancel"), [this](bool result) {
 					if (result) {
 						System_PostUIMessage(UIMessage::REQUEST_GAME_RESET);
+						finishNextFrameResult_ = DR_BACK;  // resume
+						finishNextFrame_ = true;
 					}
 				}));
 			} else {
 				System_PostUIMessage(UIMessage::REQUEST_GAME_RESET);
+				finishNextFrameResult_ = DR_BACK;  // resume
+				finishNextFrame_ = true;
 			}
 		});
 
@@ -742,13 +792,21 @@ void GamePauseScreen::OnState(UI::EventParams &e) {
 
 void GamePauseScreen::dialogFinished(const Screen *dialog, DialogResult dr) {
 	std::string tag = dialog->tag();
-	if (tag == "ScreenshotView" && dr == DR_OK) {
-		finishNextFrame_ = true;
+	if (tag == "ScreenshotView") {
+		if (dr == DR_OK) {
+			finishNextFrame_ = true;
+		} else if (dr != DR_CANCEL && dr != DR_BACK) {
+			// Just go back to the pause menu, but refresh the savestate thumbnails in case something changed.
+			SaveState::Rescan(saveStatePrefix_);
+			RecreateViews();
+		}
 	} else {
 		if (tag == "Game") {
 			g_BackgroundAudio.SetGame(Path());
-		} else if (tag != "Prompt" && tag != "ContextMenuPopup") {
+		} else if (tag != "MessagePopupScreen" && tag != "Prompt" && tag != "ContextMenuPopup" && tag != "ContextMenuCallbackPopup" && tag != "Report" && tag != "listpopup") {
+			// Maybe should invert the logic here, so many cases..
 			// There may have been changes to our savestates, so let's recreate.
+			SaveState::Rescan(saveStatePrefix_);
 			RecreateViews();
 		}
 	}
@@ -764,6 +822,10 @@ int GetUnsavedProgressSeconds() {
 // If empty, no confirmation dialog should be shown.
 std::string GetConfirmExitMessage() {
 	std::string confirmMessage;
+
+	if (!PSP_IsInited()) {
+		return std::string();
+	}
 
 	int unsavedSeconds = GetUnsavedProgressSeconds();
 
@@ -789,7 +851,7 @@ std::string GetConfirmExitMessage() {
 			return confirmMessage;
 		}
 		auto di = GetI18NCategory(I18NCat::DIALOG);
-		confirmMessage = ApplySafeSubstitutions(di->T("You haven't saved your progress for %1."), NiceTimeFormat((int)unsavedSeconds));
+		confirmMessage += ApplySafeSubstitutions(di->T("You haven't saved your progress for %1."), NiceTimeFormat((int)unsavedSeconds));
 		confirmMessage += '\n';
 	}
 
@@ -800,9 +862,10 @@ void GamePauseScreen::OnExit(UI::EventParams &e) {
 	std::string confirmExitMessage = GetConfirmExitMessage();
 
 	if (!confirmExitMessage.empty()) {
+		auto mm = GetI18NCategory(I18NCat::MAINMENU);
 		auto di = GetI18NCategory(I18NCat::DIALOG);
 		std::string_view title = di->T("Are you sure you want to exit?");
-		screenManager()->push(new UI::MessagePopupScreen(title, confirmExitMessage, di->T("Exit"), di->T("Cancel"), [=](bool result) {
+		screenManager()->push(new UI::MessagePopupScreen(title, confirmExitMessage, mm->T("Exit"), di->T("Cancel"), [this](bool result) {
 			if (result) {
 				if (g_Config.bPauseMenuExitsEmulator) {
 					System_ExitApp();
@@ -825,34 +888,23 @@ void GamePauseScreen::OnReportFeedback(UI::EventParams &e) {
 	screenManager()->push(new ReportScreen(gamePath_));
 }
 
-void GamePauseScreen::OnRewind(UI::EventParams &e) {
-	SaveState::Rewind(&AfterSaveStateAction);
-
-	TriggerFinish(DR_CANCEL);
-}
-
-void GamePauseScreen::OnLoadUndo(UI::EventParams &e) {
-	SaveState::UndoLoad(saveStatePrefix_, &AfterSaveStateAction);
-
-	TriggerFinish(DR_CANCEL);
-}
-
-void GamePauseScreen::OnLastSaveUndo(UI::EventParams &e) {
-	SaveState::UndoLastSave(saveStatePrefix_);
-
-	RecreateViews();
-}
-
 void GamePauseScreen::OnCreateConfig(UI::EventParams &e) {
 	std::shared_ptr<GameInfo> info = g_gameInfoCache->GetInfo(NULL, gamePath_, GameInfoFlags::PARAM_SFO);
 	if (info->Ready(GameInfoFlags::PARAM_SFO)) {
-		std::string gameId = info->id;
-		g_Config.CreateGameConfig(gameId);
-		g_Config.SaveGameConfig(gameId, info->GetTitle());
-		if (info) {
-			info->hasConfig = true;
-		}
-		RecreateViews();
+		auto ga = GetI18NCategory(I18NCat::GAME);
+		auto di = GetI18NCategory(I18NCat::DIALOG);
+		screenManager()->push(new UI::MessagePopupScreen(info->GetTitle(), ga->T("Are you sure you want to create a game-specific config?"), di->T("Yes"), di->T("No"),
+			[this, info](bool result) {
+			if (result) {
+				std::string gameId = info->id;
+				g_Config.CreateGameConfig(gameId);
+				g_Config.SaveGameConfig(gameId, info->GetTitle());
+				if (info) {
+					info->hasConfig = true;
+				}
+				RecreateViews();
+			}
+		}));
 	}
 }
 
@@ -860,6 +912,7 @@ void GamePauseScreen::OnDeleteConfig(UI::EventParams &e) {
 	auto di = GetI18NCategory(I18NCat::DIALOG);
 	const bool trashAvailable = System_GetPropertyBool(SYSPROP_HAS_TRASH_BIN);
 	screenManager()->push(
+		// TODO: This string should be changed to better match the one in OnCreateConfig.
 		new UI::MessagePopupScreen(di->T("Delete"), di->T("DeleteConfirmGameConfig", "Do you really want to delete the settings for this game?"),
 			trashAvailable ? di->T("Move to trash") : di->T("Delete"), di->T("Cancel"), [this](bool yes) {
 		if (!yes) {

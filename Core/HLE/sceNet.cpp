@@ -228,7 +228,7 @@ bool LoadDNSForGameID(std::string_view gameID, std::string_view jsonStr, InfraDN
 				dns->revivalTeamURL = revived.getStringOr("url", "");
 			}
 		}
-		dns->connectAdHocForGrouping = def.getBool("connect_adhoc_for_grouping", false);
+		dns->connectAdHocForGrouping = def.getBoolOr("connect_adhoc_for_grouping", false);
 	}
 
 	const JsonNode *games = root.getArray("games");
@@ -290,7 +290,7 @@ bool LoadDNSForGameID(std::string_view gameID, std::string_view jsonStr, InfraDN
 		dns->gameName = game.getStringOr("name", "");
 		dns->dns = game.getStringOr("dns", dns->dns.c_str());
 		dns->dyn_dns = game.getStringOr("dyn_dns", "");
-		dns->connectAdHocForGrouping = game.getBool("connect_adhoc_for_grouping", dns->connectAdHocForGrouping);
+		dns->connectAdHocForGrouping = game.getBoolOr("connect_adhoc_for_grouping", dns->connectAdHocForGrouping);
 		if (game.hasChild("domains", JSON_OBJECT)) {
 			const JsonGet domains = game.getDict("domains");
 			for (const auto &iter : domains.value_) {
@@ -409,7 +409,7 @@ bool PollInfraJsonDownload(std::string *jsonOutput) {
 		std::unique_ptr<uint8_t[]> jsonStr(g_VFS.ReadFile("infra-dns.json", &jsonSize));
 		if (!jsonStr) {
 			jsonOutput->clear();
-			return true;  // A clear output but returning true means something vent very wrong.
+			return true;  // A clear output but returning true means something went very wrong.
 		}
 		*jsonOutput = std::string((const char *)jsonStr.get(), jsonSize);
 		// In case there's an old request, get rid of it.
@@ -521,7 +521,7 @@ void InitLocalhostIP() {
 	g_localhostIP.in.sin_addr.s_addr = htonl(localIP);
 	g_localhostIP.in.sin_port = 0;
 
-	std::string serverStr(StripSpaces(g_Config.proAdhocServer));
+	std::string serverStr(StripSpaces(g_Config.sProAdhocServer));
 	isLocalServer = (!strcasecmp(serverStr.c_str(), "localhost") || serverStr.find("127.") == 0);
 }
 
@@ -653,7 +653,10 @@ void __NetShutdown() {
 	__UPnPShutdown();
 #endif
 
-	free(dummyPeekBuf64k);
+	if (dummyPeekBuf64k) {
+		free(dummyPeekBuf64k);
+		dummyPeekBuf64k = NULL;
+	}
 }
 
 static void __UpdateApctlHandlers(u32 oldState, u32 newState, u32 flag, u32 error) {

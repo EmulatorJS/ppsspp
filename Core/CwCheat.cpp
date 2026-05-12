@@ -1064,6 +1064,8 @@ void CWCheatEngine::ExecuteOp(const CheatOperation &op, const CheatCode &cheat, 
 						if ((line.part1 >> 28) == 0x3) {
 							walkOffset = -walkOffset;
 						}
+						// TODO: I've seen crashes here. Presumably an unaligned pointer just off the edge of memory.
+						// We should probably check pointer validity and invalidate the cheat if this happens.
 						base = Memory::Read_U32(base + walkOffset);
 						switch (line.part2 >> 28) {
 						case 0x2:
@@ -1164,4 +1166,28 @@ bool CheatsInEffect() {
 	if (!cheatEngine || !cheatsEnabled || Achievements::HardcoreModeActive())
 		return false;
 	return cheatEngine->HasCheats();
+}
+
+bool DetectCheatTitle(std::string_view name, std::string_view *title) {
+	// Use Saramagrean title convention (the most common cheats.db file).
+	const size_t firstOffset = name.find("_[>>>");
+	const size_t secondOffset = name.rfind("<<<]_");
+	const bool isTitle = firstOffset != std::string::npos && secondOffset != std::string::npos && firstOffset < secondOffset;
+	if (!isTitle) {
+		return false;
+	}
+	// Extract the title substring.
+	*title = std::string_view(name.data() + firstOffset + 5, secondOffset - (firstOffset + 5));
+	return true;
+}
+
+bool DetectCheatPostComment(std::string_view name, std::string_view *comment) {
+	const size_t firstOffset = name.find("\xE2\x86\x91[#");  // Up arrow and [#
+	const size_t secondOffset = name.rfind(']');
+	const bool isPostComment = firstOffset != std::string::npos && secondOffset != std::string::npos && secondOffset > firstOffset;
+	if (!isPostComment) {
+		return false;
+	}
+	*comment = std::string_view(name.data() + firstOffset + 5, secondOffset - (firstOffset + 5));
+	return true;
 }

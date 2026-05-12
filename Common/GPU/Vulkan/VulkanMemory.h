@@ -94,3 +94,20 @@ private:
 	int curBlockIndex_ = -1;
 	const char *name_;
 };
+
+// Just a plain old static buffer in GPU memory. You can upload to it
+// using a PushPool.
+class VulkanBuffer {
+public:
+	// Can be called again to resize/recreate. Will not preserve any data.
+	void Create(VulkanContext *vulkan, const char *name, VkDeviceSize size, VkBufferUsageFlags usage);
+	void Destroy(VulkanContext *vulkan);
+
+	VkBuffer Buffer() const { return buffer_; }
+	VkDeviceSize Size() const { return size_; }
+
+private:
+	VkBuffer buffer_ = VK_NULL_HANDLE;
+	VmaAllocation allocation_ = VK_NULL_HANDLE;
+	VkDeviceSize size_ = 0;  // convenience
+};

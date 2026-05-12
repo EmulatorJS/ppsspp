@@ -40,6 +40,17 @@
 			<string>AppIcon</string>
 		</dict>
 	</dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>org.ppsspp.ppsspp-free</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>ppsspp</string>
+			</array>
+		</dict>
+	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
@@ -63,7 +74,10 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 	</array>
+	<key>UIRequiresFullScreen</key>
+	<true/>
 	<key>UILaunchImageFile</key>
 	<string>Default.png</string>
 	<key>UIFileSharingEnabled</key>

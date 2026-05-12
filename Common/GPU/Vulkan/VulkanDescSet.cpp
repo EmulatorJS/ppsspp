@@ -5,7 +5,12 @@ VulkanDescSetPool::~VulkanDescSetPool() {
 }
 
 void VulkanDescSetPool::Create(VulkanContext *vulkan, const BindingType *bindingTypes, uint32_t bindingTypesCount, uint32_t descriptorCount) {
-	_assert_msg_(descPool_ == VK_NULL_HANDLE, "VulkanDescSetPool::Create when already exists");
+	// Seeing confusing crash reports of this, so reduced to a debug asserts and trying to limp along.
+	_dbg_assert_msg_(descPool_ == VK_NULL_HANDLE, "VulkanDescSetPool::Create when already exists");
+	if (descPool_) {
+		ERROR_LOG(Log::G3D, "VulkanDescSetPool::Create when already exists - unexpected");
+		descPool_ = VK_NULL_HANDLE;
+	}
 
 	vulkan_ = vulkan;
 	info_ = { VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO };
@@ -15,6 +20,7 @@ void VulkanDescSetPool::Create(VulkanContext *vulkan, const BindingType *binding
 	uint32_t storageImageCount = 0;
 	uint32_t storageBufferCount = 0;
 	uint32_t combinedImageSamplerCount = 0;
+	uint32_t uniformBufferCount = 0;
 	uint32_t uniformBufferDynamicCount = 0;
 	for (uint32_t i = 0; i < bindingTypesCount; i++) {
 		switch (bindingTypes[i]) {
@@ -24,6 +30,9 @@ void VulkanDescSetPool::Create(VulkanContext *vulkan, const BindingType *binding
 		case BindingType::STORAGE_BUFFER_VERTEX:
 		case BindingType::STORAGE_BUFFER_COMPUTE: storageBufferCount++; break;
 		case BindingType::STORAGE_IMAGE_COMPUTE: storageImageCount++; break;
+		case BindingType::UNIFORM_BUFFER_COMPUTE: uniformBufferCount++; break;
+		default:
+			_dbg_assert_(false);
 		}
 	}
 	if (combinedImageSamplerCount) {
@@ -31,6 +40,9 @@ void VulkanDescSetPool::Create(VulkanContext *vulkan, const BindingType *binding
 	}
 	if (uniformBufferDynamicCount) {
 		sizes_.push_back(VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, uniformBufferDynamicCount * descriptorCount });
+	}
+	if (uniformBufferCount) {
+		sizes_.push_back(VkDescriptorPoolSize{VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, uniformBufferCount * descriptorCount});
 	}
 	if (storageBufferCount) {
 		sizes_.push_back(VkDescriptorPoolSize{ VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, storageBufferCount * descriptorCount });

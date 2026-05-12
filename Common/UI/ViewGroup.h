@@ -51,7 +51,11 @@ public:
 		return view;
 	}
 
-	bool SetFocus() override;
+	// Note: This deletes the old view, if found. Returns whether the view was found.
+	// If it fails, the newView is deleted.
+	bool ReplaceSubview(View *view, View *newView);
+
+	bool SetFocus(FocusFlags cause) override;
 	bool SubviewFocused(View *view) override;
 	virtual void RemoveSubview(View *view);
 
@@ -59,8 +63,8 @@ public:
 	View *GetDefaultFocusView() { return defaultFocusView_; }
 
 	// Assumes that layout has taken place.
-	NeighborResult FindNeighbor(View *view, FocusDirection direction, NeighborResult best);
-	virtual NeighborResult FindScrollNeighbor(View *view, const Point2D &target, FocusDirection direction, NeighborResult best);
+	NeighborResult FindNeighbor(View *view, FocusMove direction, NeighborResult best);
+	virtual NeighborResult FindScrollNeighbor(View *view, const Point2D &target, FocusMove direction, NeighborResult best);
 
 	bool CanBeFocused() const override { return false; }
 	bool IsViewGroup() const override { return true; }
@@ -82,7 +86,7 @@ public:
 	std::string DescribeLog() const override { return "ViewGroup: " + View::DescribeLog(); }
 	std::string DescribeText() const override;
 
-	void Recurse(void (*func)(View *view)) override;
+	void Recurse(std::function<void(View *)> func) override;
 
 protected:
 	std::string DescribeListUnordered(std::string_view heading) const;
@@ -280,6 +284,7 @@ public:
 
 	void Update() override;
 
+	// If you call this at creation, call it AFTER adding the subviews!
 	void SetOpen(bool open) {
 		_dbg_assert_(open_);
 		*open_ = open;
@@ -291,6 +296,9 @@ public:
 		header_->SetOpenPtr(open);
 		open_ = open;
 		UpdateVisibility();
+	}
+	CollapsibleHeader *Header() {
+		return header_;
 	}
 
 private:

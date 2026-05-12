@@ -304,6 +304,7 @@ else ifeq ($(platform), emscripten)
 	GLES = 1
 	TARGET := $(TARGET_NAME)_libretro_emscripten.bc
 	PLATCFLAGS += -msimd128 -msse3 -mssse3 -msse4.1 -pthread -D__EMSCRIPTEN__ -DNO_MMAP
+	PLATCFLAGS += -O3
 	PLATFORM_EXT = emscripten
 	STATIC_LINKING = 1
 

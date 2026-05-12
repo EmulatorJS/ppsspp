@@ -528,7 +528,6 @@ static void check_variables(CoreParameter &coreParam)
          g_Config.iLanguage = PSP_SYSTEMPARAM_LANGUAGE_CHINESE_SIMPLIFIED;
    }
 
-#ifndef __EMSCRIPTEN__
    var.key = "ppsspp_cpu_core";
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
    {
@@ -546,9 +545,6 @@ static void check_variables(CoreParameter &coreParam)
        // to experiment in future iOS versions or something...
        g_Config.iCpuCore = (int)CPUCore::IR_INTERPRETER;
    }
-#else
-   g_Config.iCpuCore = (int)CPUCore::INTERPRETER;
-#endif
 
    var.key = "ppsspp_fast_memory";
    if (environ_cb(RETRO_ENVIRONMENT_GET_VARIABLE, &var) && var.value)
@@ -1499,9 +1495,11 @@ bool retro_load_game(const struct retro_game_info *game)
 
    useEmuThread              = ctx->GetGPUCore() == GPUCORE_GLES;
 
-   // default to interpreter to allow startup in platforms w/o JIT capability
-   // TODO: I guess we should auto detect? And also, default to IR Interpreter...
+#ifdef __EMSCRIPTEN__
+   g_Config.iCpuCore         = (int)CPUCore::IR_INTERPRETER;
+#else
    g_Config.iCpuCore         = (int)CPUCore::INTERPRETER;
+#endif
 
    CoreParameter coreParam   = {};
    coreParam.enableSound     = true;
@@ -1990,6 +1988,8 @@ bool System_GetPropertyBool(SystemProperty prop)
 #if PPSSPP_PLATFORM(IOS)
       bool can_jit;
       return (environ_cb(RETRO_ENVIRONMENT_GET_JIT_CAPABLE, &can_jit) && can_jit);
+#elif defined(__EMSCRIPTEN__)
+      return false;
 #else
       return true;
 #endif

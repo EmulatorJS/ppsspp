@@ -136,7 +136,7 @@ struct retro_core_option_v2_definition option_defs_us[] = {
          { NULL, NULL },
       },
 #ifdef __EMSCRIPTEN__
-      "Interpreter"
+      "IR JIT"
 #else
       "JIT"
 #endif

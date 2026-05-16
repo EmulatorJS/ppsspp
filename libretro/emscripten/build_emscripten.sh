@@ -14,6 +14,8 @@ cd ../
 sed -i 's|return getauxval(hwcap_type);|return 1;|g' ext/cpu_features/src/hwcaps.c
 sed -i 's|#include <sys/auxv.h>||g' ext/cpu_features/src/hwcaps.c
 
+sed -i 's|#ifndef __linux__|#ifdef SO_NOSIGPIPE|g' ext/aemu_postoffice/client/sock_impl_linux.c
+
 cd ext/armips/ext/
 rm -rf filesystem
 git clone https://github.com/gulrak/filesystem.git filesystem

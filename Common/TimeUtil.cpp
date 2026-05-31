@@ -268,10 +268,7 @@ void sleep_ms(int ms, const char *reason) {
 #elif defined(HAVE_LIBNX)
 	svcSleepThread(ms * 1000000);
 #elif defined(__EMSCRIPTEN__)
-	if (emscripten_is_main_browser_thread())
-		emscripten_sleep(ms);
-	else
-		emscripten_thread_sleep(ms);
+	emscripten_thread_sleep(ms);
 #else
 	usleep(ms * 1000);
 #endif
@@ -289,10 +286,7 @@ void sleep_us(int us, const char *reason) {
 #elif defined(HAVE_LIBNX)
 	svcSleepThread(us * 1000);
 #elif defined(__EMSCRIPTEN__)
-	if (emscripten_is_main_browser_thread())
-		emscripten_sleep(us / 1000);
-	else
-		emscripten_thread_sleep(us / 1000);
+	emscripten_thread_sleep(us / 1000);
 #else
 	usleep(us);
 #endif
